@@ -1,0 +1,7 @@
+{
+  "summary": "GOVERNANCE & RELIABILITY PROTOCOL - Rule 1: Absolute Path Verification for CWD. Rule 2: End-to-End Handshake Duty (frontend + backend tests required). Rule 3: Pure State Integrity (no side effects in React state, decouple logic from render loop). Rule 4: Zero-Fluff Technical Fidelity. Rule 5: Payload Purity (fuzzy-match manuscript sections).",
+  "timestamps": "2026-04-22",
+  "references": [
+    "c:/Users/saint/.gemini/antigravity/playground/dark-schrodinger/GOVERNANCE_PROTOCOL.md"
+  ]
+}
