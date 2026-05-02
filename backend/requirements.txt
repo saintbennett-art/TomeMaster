@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+pydantic
+python-multipart
+beautifulsoup4
+reportlab
+python-docx
+google-genai
+pillow
+ebooklib
+openai
+pytesseract
+python-dotenv
+pymupdf
+httpx

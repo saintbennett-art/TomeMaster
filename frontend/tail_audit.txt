@@ -1,0 +1,20 @@
+﻿                           
+                           {/* Decorative cyber grid overlay on the text container wall */}
+                           <div className={styles.cyberGrid} />
+                       </div>
+                    </div>
+                 ) : (
+                    <div className="w-full h-[400px] flex flex-col items-center justify-center text-zinc-500 p-8 text-center gap-4">
+                       <Loader2 className="w-10 h-10 animate-spin opacity-20" />
+                       <p className="text-sm tracking-wide">{transcriptionStatus?.status === 'running' ? 'Warming up optical array...' : 'Initializing Local Filesystem...'}</p>
+                    </div>
+                 )}
+              </div>
+           </div>
+        </div>
+      )}
+      
+    </main>
+  );
+}
+

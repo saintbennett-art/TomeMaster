@@ -1,0 +1,72 @@
+[
+  {
+    "label": "GEMINI_3.1_PRO",
+    "provider": "gemini",
+    "model": "gemini-3.1-pro-preview",
+    "status": "SUCCESS",
+    "duration": "0.01s",
+    "length": 297,
+    "fidelity": "HIGH",
+    "suggestions_count": 0
+  },
+  {
+    "label": "GEMINI_2.5_PRO",
+    "provider": "gemini",
+    "model": "gemini-2.5-pro",
+    "status": "SUCCESS",
+    "duration": "0.00s",
+    "length": 297,
+    "fidelity": "HIGH",
+    "suggestions_count": 0
+  },
+  {
+    "label": "GEMINI_2.1_PRO",
+    "provider": "gemini",
+    "model": "gemini-2.1-pro",
+    "status": "SUCCESS",
+    "duration": "0.00s",
+    "length": 297,
+    "fidelity": "HIGH",
+    "suggestions_count": 0
+  },
+  {
+    "label": "GEMINI_3_FLASH",
+    "provider": "gemini",
+    "model": "gemini-3-flash-preview",
+    "status": "SUCCESS",
+    "duration": "0.00s",
+    "length": 297,
+    "fidelity": "HIGH",
+    "suggestions_count": 0
+  },
+  {
+    "label": "GPT_4O",
+    "provider": "openai",
+    "model": "gpt-4o",
+    "status": "SUCCESS",
+    "duration": "0.00s",
+    "length": 297,
+    "fidelity": "HIGH",
+    "suggestions_count": 0
+  },
+  {
+    "label": "LOCAL_DEEPSEEK_R1_8B",
+    "provider": "ollama",
+    "model": "deepseek-r1:8b",
+    "status": "SUCCESS",
+    "duration": "308.37s",
+    "length": 210,
+    "fidelity": "HIGH",
+    "suggestions_count": 0
+  },
+  {
+    "label": "LOCAL_GEMMA_2B",
+    "provider": "ollama",
+    "model": "gemma:2b",
+    "status": "SUCCESS",
+    "duration": "14.05s",
+    "length": 456,
+    "fidelity": "HIGH",
+    "suggestions_count": 0
+  }
+]

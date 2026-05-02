@@ -1,0 +1,202 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+:root {
+  --safe-top: max(env(safe-area-inset-top, 0px), 16px);
+  /* Night Mode (Dark) Tokens - The 'Awesome' Original Baseline */
+  --background: #09090b;
+  --foreground: #fafafa;
+  --surface: #121215;
+  --surface-hover: #1c1c1f;
+  --border: #27272a;
+  --border-strong: #3f3f46;
+  --accent: #6366f1; /* Indigo */
+  --accent-foreground: #ffffff;
+  --muted: #a1a1aa;
+  --muted-foreground: #71717a;
+}
+
+[data-theme='light'] {
+  /* Day Mode (Light) Tokens - The 'Sovereign Paper' Editorial Aesthetic */
+  --background: #f5f5dc; /* Pure Beige/Cream Base - Absolute Consistency */
+  --foreground: #000000; /* Absolute Black for maximum snap */
+  --surface: #fdfdf0;
+  --surface-hover: #ebebd3;
+  --border: #b8b8a0; /* Distinct border to avoid text-color blend */
+  --border-strong: #8a8a78;
+  --accent: #059669; /* Antigravity Emerald Core */
+  --accent-foreground: #ffffff;
+  --muted: #000000; /* Force black for specialist descriptions */
+  --muted-foreground: #1c1c1c; /* Ultra-dark for maximum contrast */
+}
+
+[data-theme='high-contrast'] {
+  /* Accessibility Mode: Extreme High Contrast for Narrative Forensics */
+  --background: #000000;
+  --foreground: #ffffff;
+  --surface: #111111;
+  --surface-hover: #222222;
+  --border: #ffff00; /* High-Visibility Yellow */
+  --border-strong: #ffffff;
+  --accent: #ffff00; /* Absolute Yellow for maximum visibility */
+  --accent-foreground: #000000;
+  --muted: #ffff00;
+  --muted-foreground: #ffffff;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* 🛡️ TYPOGRAPHY ENGINE STABILIZATION: Ensuring H1s are visible in all modes */
+.prose h1, .prose h2, .prose h3, .prose h4 {
+  color: var(--foreground) !important;
+}
+.prose {
+  color: var(--foreground) !important;
+  max-width: none;
+}
+.prose strong, .prose b {
+  color: var(--foreground) !important;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  transition: background 0.3s ease, color 0.3s ease;
+  font-family: Arial, Helvetica, sans-serif;
+  box-sizing: border-box;
+}
+
+/* Document Formatting Preservation */
+.ProseMirror hr.page-break {
+  display: block;
+  border: 0;
+  border-top: 2px dashed #4b5563; /* Tailwind gray-600 */
+  margin: 4rem 0;
+  position: relative;
+  overflow: visible;
+}
+
+.ProseMirror hr.page-break::before {
+  content: 'PAGE BREAK';
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: var(--background); /* Theme Aware */
+  padding: 0 16px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  font-family: monospace;
+}
+
+.ProseMirror .toc-entry {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.25rem;
+}
+
+.ProseMirror hr.pdf-page-marker {
+  display: block !important;
+  border: 0;
+  border-top: 1px dashed #334155; /* subtle tailwind slate-700 */
+  margin: 1.5rem 0;
+  position: relative;
+  overflow: visible;
+}
+
+.ProseMirror hr.pdf-page-marker::after {
+  content: 'PAGE ' attr(data-page);
+  position: absolute;
+  top: -8px;
+  right: 0;
+  background-color: var(--background); /* Theme Aware */
+  padding: 0 8px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  font-family: monospace;
+}
+
+.ProseMirror h1 {
+  page-break-before: always;
+  break-before: page;
+  margin-top: 4rem;
+  padding-top: 2rem;
+  border-top: 1px dashed #333;
+}
+
+.pdf-page-marker {
+  display: none !important;
+}
+
+/* Custom Spellcheck Styles */
+.ProseMirror {
+  spellcheck: false;
+}
+
+.misspelled-word {
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: #ef4444;
+  text-decoration-thickness: 2px;
+  background-color: rgba(239, 68, 68, 0.1);
+  cursor: pointer;
+}
+
+.grammar-squiggle {
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: #3b82f6;
+  text-decoration-thickness: 2px;
+  background-color: rgba(59, 130, 246, 0.1);
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.grammar-squiggle:hover {
+  background-color: rgba(59, 130, 246, 0.25);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+.bright-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.bright-scrollbar::-webkit-scrollbar-track {
+  background: var(--background);
+  border-radius: 4px;
+}
+.bright-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 4px;
+}
+.bright-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
