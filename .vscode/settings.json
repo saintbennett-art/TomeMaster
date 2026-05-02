@@ -1,0 +1,68 @@
+{
+    "files.exclude": {
+        "**/.git": true,
+        "**/.svn": true,
+        "**/.hg": true,
+        "**/CVS": true,
+        "**/.DS_Store": true,
+        "**/node_modules": true,
+        "**/venv": true,
+        "**/.next": true,
+        "**/engine_p1.txt": true,
+        "**/engine_p2.txt": true,
+        "**/engine_p3.txt": true,
+        "**/temp_*.txt": true,
+        "**/PRoeditor_Analysis_Report.md": true,
+        "**/dist": true,
+        "**/build": true,
+        "backend/backups": true,
+        "**/.gemini/**": true,
+        "**/.gemini": true,
+        "**/artifacts/**": true
+    },
+    "search.exclude": {
+        "**/node_modules": true,
+        "**/venv": true,
+        "**/.next": true,
+        "**/dist": true,
+        "**/build": true,
+        "**/engine_p*.txt": true,
+        "**/.gemini/**": true,
+        "**/.gemini": true,
+        "**/artifacts/**": true
+    },
+    "python.analysis.exclude": [
+        "**/engine_p*.txt",
+        "**/node_modules",
+        "**/venv",
+        "**/temp_*.txt",
+        "**/.gemini/**",
+        "**/.gemini",
+        "**/artifacts/**"
+    ],
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportGeneralTypeIssues": "none",
+        "reportUnusedImport": "none",
+        "reportUnusedVariable": "none"
+    },
+    "python.analysis.memoryLimit": 512,
+    "python.analysis.useLibraryCodeForTypes": false,
+    "python.analysis.indexing": false,
+    "typescript.implementationsCodeLens.enabled": false,
+    "typescript.referencesCodeLens.enabled": false,
+    "typescript.tsserver.maxTsServerMemory": 512,
+    "editor.codeLens": false,
+    "editor.suggest.snippetsPreventQuickSuggestions": true,
+    "editor.quickSuggestions": {
+        "other": "off",
+        "comments": "off",
+        "strings": "off"
+    },
+    "antigravity.searchMaxWorkspaceFileCount": 1000,
+    "antigravity.persistentLanguageServer": false,
+    "window.reopenFolders": "one",
+    "extensions.disabled": [
+        "ms-edgedevtools.vscode-edge-devtools",
+        "meta.pyrefly"
+    ]
+}

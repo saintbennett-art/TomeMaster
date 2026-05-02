@@ -1,0 +1,158 @@
+
+def _simulate_creative(feature: str) -> str:
+    """Returns ultra-high-fidelity mock data for Creative Muse features in Demo Mode."""
+    if feature == "moodboard":
+        return json.dumps({
+            "prompt": "A cinematic, atmospheric landscape of a fog-drenched Victorian street at dawn. Low-angle lighting catching the cobblestones. Ethereal, moody, muted blues and golds.",
+            "elements": ["Atmospheric Fog", "Victorian Architecture", "Muted Gold Lighting"],
+            "image_url": "https://images.unsplash.com/photo-1542385151-efd9000785a0?auto=format&fit=crop&q=80&w=800"
+        })
+    elif feature == "world_bible":
+        return json.dumps({
+            "characters": [
+                {"name": "Elias Thorne", "role": "Protagonist", "traits": "Stoic, Scarred, Loyal", "details": "Wears a tattered navy coat. Carrying a silver locket."},
+                {"name": "Seraphina", "role": "Support", "traits": "Agile, Sharp-tongued, Mysterious", "details": "Green eyes, quick with a blade."}
+            ],
+            "locations": [
+                {"name": "The Rusty Anchor", "type": "Tavern", "description": "Smells of salt and stale ale. Dim lanterns."},
+                {"name": "Whispering Woods", "type": "Forest", "description": "Trees that seem to breathe. Permanent twilight."}
+            ]
+        })
+    return "{}"
+
+# ─── Build the prompt string for a given persona ──────────────────────────────
+def _build_prompt(text: str, persona: str, user_chapters: list[dict] = None) -> tuple[str, bool]:
+    """Returns (prompt_string, is_json_mode). Always True for all agents now."""
+    if persona == "Developmental Editor":
+        # Branched Pacing Intelligence:
+        if not user_chapters or len(user_chapters) == 0:
+            branch_instruction = """
+            [MANUSCRIPT HAS NO EXISTING STRUCTURE - BLANK STATE] 
+            You ARE the first architect. Identify natural narrative pauses and suggest a FULL, balanced Chapter structure from scratch.
+            CRITICAL: Since this is a Blank State, you MUST provide the FIRST full emotional and advisory blueprint for this work.
+            """
+        else:
+            # Disruptive Pacing Intelligence: Force a re-audit of the existing structure.
+            chap_summary = "\n".join([f"- Chapter {c.get('chapter_number', i+1)}: '{c.get('suggested_title', 'Untitled')}' (~{c.get('reading_time_mins', '??')} mins) at anchor: '{c.get('starting_words', '')}'" for i, c in enumerate(user_chapters)])
+            branch_instruction = f"""
+            [DISRUPTIVE NARRATIVE AUDIT - EXISTING STRUCTURE DETECTED] 
+            Current Chapter Pacing:
+            {chap_summary}
+            
+            DIAGNOSTIC TASK: Identify all chapters exceeding 20 minutes as "Rhythm Violations."
+            ARCHITECTURAL TASK: You are NOT bound by the author's current chapter breaks. If a chapter is too long, you MUST suggest one or more new breaks within its text. 
+            
+            CRITICAL NARRATIVE WEIGHT RULE: Do NOT suggest 'fragment' chapters. A suggested chapter should generally be of professional length (at least 1,500-2,500 words). Never create a chapter that is only two or three paragraphs long unless it is a high-climax dramatic cliffhanger. If chapters are too short/fragmented, you MUST suggest mergers.
+            
+            GOAL: A perfectly balanced, professional narrative rhythm with substantial, self-contained arcs.
+            """
+
+        prompt = f"""
+        You are an elite Disruptive Narrative Architect. 
+        {branch_instruction}
+        
+        CRITICAL FORMATTING RULE: Use standard straight apostrophes (') and straight double quotes (") exclusively in all feedback, titles, and suggestions. Do NOT use curved or 'smart' quotes.
+        
+        MANDATORY METADATA: For EVERY SINGLE chapter in your final proposed list, you MUST provide:
+        1. 'emotional_intensity' (1-10).
+        2. 'content_warnings': Array of OBJECTS. 
+           EACH OBJECT MUST HAVE:
+           - 'label': The text of the warning (e.g., "Graphic Violence"). Use "None" ONLY if the chapter is perfectly safe.
+           - 'starting_words': EXACTLY 10 to 15 unique, consecutive words of the paragraph where this issue begins. 
+           CRITICAL: These anchors should be a unique narrative fingerprint. Do not use generic words.
+        3. 'starting_words': EXACTLY 10 to 15 unique, consecutive words of the paragraph where this chapter (or break) begins.
+        
+        If you find a pacing violation in the middle of an existing chapter, find the nearest narrative pause and create a NEW chapter entry with its own unique 'starting_words' anchor (10-15 words).
+        
+        You MUST return a COMPLETE list of all chapters for the text provided. Do not return an empty list.
+        
+        Format the output as a strict JSON object:
+        {{
+          "chapters": [
+            {{
+                "chapter_number": 1, 
+                "suggested_title": "The Awakening", 
+                "emotional_intensity": 8,
+                "content_warnings": [
+                    {{ "label": "Graphic Violence", "starting_words": "The blood spray hit the wall before he could respond to the sudden dark movement..." }}
+                ],
+                "reasoning": "Initial hook; introduces the core conflict with high intensity.", 
+                "starting_words": "The iron gates groaned as the heavy motor struggled to pull them across the frozen gravel driveway..."
+            }}
+          ]
+        }}
+        Manuscript Text:
+        {text}
+        """
+        return prompt, True
+    elif persona == "Sensitivity Reader":
+        prompt = f"""
+        You are a professional Sensitivity Reader and Cultural Tropes Expert. Analyze the text for demographic representation, cultural nuances, potential trigger warnings, and problematic tropes.
+        
+        1. "feedback": A detailed Markdown report.
+        2. "suggestions": A list of actionable items (e.g. "Add a content warning", "Rephrase this description").
+        
+        CRITICAL FORMATTING RULE: Use standard straight apostrophes (') and straight double quotes (") exclusively.
+        
+        Format:
+        {{
+            "feedback": "markdown...",
+            "suggestions": [
+                {{ "id": "s-1", "type": "insert", "label": "Add Warning", "content": "> [!CAUTION]\\n> Narrative contains intense themes...", "reason": "Necessary for reader safety." }}
+            ]
+        }}
+
+        Manuscript Text:
+        {text}
+        """
+        return prompt, True
+    elif persona == "Marketing Executive":
+        prompt = f"""
+        You are a top-tier Publishing Marketing Executive. Generate pitch hooks, audience demographics, and a back-cover blurb.
+        
+        Return a strict JSON object with:
+        1. "feedback": A slick Markdown report.
+        2. "suggestions": A list of items to insert into the manuscript (e.g. "Insert blurb at top").
+        
+        Format:
+        {{
+            "feedback": "markdown...",
+            "suggestions": [
+                {{ "id": "m-1", "type": "insert", "label": "Add Blurb", "content": "BLURB_TEXT", "reason": "Hook the reader early." }}
+            ]
+        }}
+        Manuscript Text:
+        {text}
+        """
+        return prompt, True
+    elif persona == "Hollywood Screenwriter":
+        prompt = f"""
+        You are an elite Hollywood Showrunner. Evaluate franchise potential and provide a cinematic blueprint.
+        
+        Return a strict JSON object with:
+        1. "feedback": A visionary Markdown report.
+        2. "suggestions": Actionable cinematic improvements.
+        
+        Format:
+        {{
+            "feedback": "markdown...",
+            "suggestions": []
+        }}
+
+        Manuscript Text:
+        {text}
+        """
+        return prompt, True
+    else:
+        prompt = f"""
+        You are a highly specialized Consulting Editor focusing on: {persona}.
+        Provide feedback and suggestions.
+        
+        Return a strict JSON object with:
+        1. "feedback": Markdown.
+        2. "suggestions": [ {{ "id": "uuid", "type": "insert|replace", "label": "Action Name", "content": "...", "reason": "..." }} ]
+
+        Manuscript Text:
+        {text}
+        """
+        return prompt, True

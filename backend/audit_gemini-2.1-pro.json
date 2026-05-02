@@ -1,0 +1,38 @@
+{
+  "feedback": "### 1. CRUTCH WORDS & PHRASES\n**[it dissolved things]** -> **Lexical Ambiguity**: The noun 'things' is a low-fidelity placeholder that diminishes the visceral impact of the environmental hazard. -> **Suggestion**: Replace with specific material substrates (e.g., 'polymers', 'alloys', 'synthetic flesh').\n\n### 2. CLICH\u00c9S\n**[The rain didn't just fall... it dissolved]** -> **Rhetorical Formulaism**: The 'not only X but Y' construction is a well-worn narrative trope that telegraphs the subversion of expectations too predictably. -> **Suggestion**: Use a direct, high-impact declarative to establish the setting's lethality.\n\n### 3. IMMERSION BREAKS\n**[None detected]** -> The narrative maintains a consistent third-person limited perspective without breaking the fourth wall or addressing the reader directly.\n\n### 4. VERBOSE DESCRIPTIONS\n**[Elias stood under]** -> **Stasis Verb**: 'Stood' is a passive, low-energy verb that fails to convey the character's physical relationship to the corrosive environment. -> **Suggestion**: Use a more active or reactive verb to imply tension (e.g., 'huddled', 'recoiled', 'sheltered').\n\n---\n*Audit Engine: gemini-3-flash-preview | Credits: 0.02 Crunch Credits (Flash)*",
+  "suggestions": [
+    {
+      "id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2g3h4i5j",
+      "type": "replace",
+      "label": "Precision Noun Injection",
+      "original": "things",
+      "suggestion": "synthetic membranes",
+      "reason": "Replaces a vague noun with high-fidelity technical terminology to ground the sci-fi setting."
+    },
+    {
+      "id": "b2c3d4e5-f6g7-4b6c-9d0e-1f2g3h4i5j6k",
+      "type": "replace",
+      "label": "Structural Compression",
+      "original": "The rain didn't just fall in Sector 9; it dissolved things.",
+      "suggestion": "In Sector 9, the rain was a solvent.",
+      "reason": "Eliminates a formulaic rhetorical structure in favor of a punchy, authoritative opening."
+    },
+    {
+      "id": "c3d4e5f6-g7h8-4c7d-0e1f-2g3h4i5j6k7l",
+      "type": "replace",
+      "label": "Active Verb Enhancement",
+      "original": "stood",
+      "suggestion": "huddled",
+      "reason": "Replaces a static verb with one that implies a physical response to the environmental threat."
+    }
+  ],
+  "_usage": {
+    "total_tokens": 2800
+  },
+  "_accounting": {
+    "model_audit": "gemini-3-flash-preview",
+    "credits_consumed": 0.02,
+    "unit": "Crunch Credits (Flash)",
+    "succeeded": true
+  }
+}

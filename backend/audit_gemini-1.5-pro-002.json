@@ -1,0 +1,38 @@
+{
+  "feedback": "### 1. CRUTCH WORDS & PHRASES\n- **[it dissolved things]** -> **Vague Noun Usage** -> Replace 'things' with a specific environmental target to ground the scene.\n\n### 2. CLICH\u00c9S\n- **[The rain didn't just fall]** -> **Rhetorical Trope** -> The 'not just X but Y' structure is a common narrative crutch. Direct, assertive phrasing increases narrative tension.\n- **[his cybernetic eye clicking]** -> **Genre Clich\u00e9** -> The 'clicking cybernetic eye' is a frequent trope in speculative fiction. Consider a more unique sensory or mechanical detail.\n\n### 3. IMMERSION BREAKS\n- *No violations found in the provided text.*\n\n### 4. VERBOSE DESCRIPTIONS\n- **[Elias stood under]** -> **Static Verb** -> 'Stood' is a low-energy verb. Consider a verb that implies weight, tension, or a specific physical relationship to the environment.\n\n---\n*Audit Engine: gemini-3-flash-preview | Credits: 0.03 Crunch Credits (Flash)*",
+  "suggestions": [
+    {
+      "id": "8f2e1a9b-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+      "type": "replace",
+      "label": "Noun Specificity",
+      "original": "dissolved things",
+      "suggestion": "corroded the structural plating",
+      "reason": "Replaces the weak noun 'things' with genre-appropriate technical detail."
+    },
+    {
+      "id": "7a1b2c3d-4e5f-6g7h-8i9j-0k1l2m3n4o5p",
+      "type": "replace",
+      "label": "Syntactic Compression",
+      "original": "The rain didn't just fall in Sector 9; it dissolved things.",
+      "suggestion": "In Sector 9, the rain functioned as a solvent, liquefying the landscape.",
+      "reason": "Eliminates the 'didn't just' clich\u00e9 for a more authoritative narrative voice."
+    },
+    {
+      "id": "5e4d3c2b-1a0z-9y8x-7w6v-5u4t3s2r1q0p",
+      "type": "replace",
+      "label": "Dynamic Posture",
+      "original": "Elias stood under",
+      "suggestion": "Elias sheltered beneath",
+      "reason": "Replaces a static verb with one that implies a reactive relationship to the hostile environment."
+    }
+  ],
+  "_usage": {
+    "total_tokens": 3713
+  },
+  "_accounting": {
+    "model_audit": "gemini-3-flash-preview",
+    "credits_consumed": 0.03,
+    "unit": "Crunch Credits (Flash)",
+    "succeeded": true
+  }
+}

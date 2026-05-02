@@ -1,0 +1,328 @@
+from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from typing import Optional
+from services import document_parser, exporter, transcriber_service
+
+router = APIRouter()
+
+@router.post("/upload")
+async def upload_document(file: UploadFile = File(...), api_key: str = "", is_demo: bool = False, recovery: bool = False):
+    """Receives a document (.txt, .docx, .pdf, or .epub for recovery), parses standard text and metadata."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file uploaded")
+    
+    content = await file.read()
+    text = ""
+    html = ""
+    toc = []
+    
+    filename_lower = file.filename.lower()
+    if filename_lower.endswith(".txt"):
+        text = document_parser.parse_txt(content)
+        html = f"<p>{text.replace(chr(10), '<br>')}</p>"
+    elif filename_lower.endswith(".docx"):
+        parsed = document_parser.parse_docx(content)
+        text = parsed["text"]
+        html = parsed["html"]
+        toc = parsed["toc"]
+    elif filename_lower.endswith(".pdf"):
+        # PDF Manuscripts are automatically routed through the fast Native OR slow OCR tracker
+        parsed = document_parser.parse_pdf_smart(content, api_key)
+        text = parsed["text"]
+        html = parsed["html"]
+        toc = parsed["toc"]
+    elif filename_lower.endswith(".epub"):
+        if not recovery:
+            raise HTTPException(
+                status_code=403,
+                detail="Sovereign Protocol Violation: Private EPUB recovery is locked. Standard users cannot load external EPUB books into the program."
+            )
+        parsed = document_parser.parse_epub(content)
+        text = parsed["text"]
+        html = parsed["html"]
+        toc = parsed["toc"]
+    else:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Unsupported format: '{file.filename}'. Tome-Master currently supports .txt, .docx, and .pdf. If you are using an older Word 97 (.doc) file, please 'Save As' .docx and try again."
+        )
+        
+    if is_demo:
+        truncated = document_parser.truncate_for_demo({"text": text, "html": html, "toc": toc})
+        text = truncated["text"]
+        html = truncated["html"]
+        toc = truncated["toc"]
+
+    word_count = len(text.split())
+    
+    return {
+        "filename": file.filename,
+        "word_count": word_count,
+        "content_preview": text[:500] + "..." if len(text) > 500 else text,
+        "content": html,
+        "toc": toc,
+        "raw_text": text
+    }
+
+@router.post("/upload/stream")
+async def upload_document_stream(file: UploadFile = File(...), api_key: str = "", is_demo: bool = False):
+    """Streams the parsed document live to the client as Ndjson."""
+    import json
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file uploaded")
+    
+    content = await file.read()
+    
+    # If it's a Txt or Docx we just return it immediately as a single 'done' packet because they resolve in milliseconds anyway!
+    if not file.filename.lower().endswith(".pdf"):
+        # We invoke standard handling, then yield the final state!
+        if file.filename.lower().endswith(".txt"):
+            text = document_parser.parse_txt(content)
+            html = f"<p>{text.replace(chr(10), '<br>')}</p>"
+            toc = []
+        elif file.filename.lower().endswith(".docx"):
+            parsed = document_parser.parse_docx(content)
+            text = parsed["text"]
+            html = parsed["html"]
+            toc = parsed["toc"]
+        
+        if is_demo:
+            truncated = document_parser.truncate_for_demo({"text": text, "html": html, "toc": toc})
+            text = truncated["text"]
+            html = truncated["html"]
+            toc = truncated["toc"]
+
+        def fake_stream():
+            yield json.dumps({
+                "type": "page",
+                "page": 1,
+                "total_pages": 1,
+                "html": html,
+                "text": text,
+                "toc_item": None
+            }) + "\n"
+            yield json.dumps({"type": "done", "message": "File parsed instantly."}) + "\n"
+        return StreamingResponse(fake_stream(), media_type="application/x-ndjson")
+        
+    return StreamingResponse(
+        document_parser.stream_pdf_smart(content, api_key, is_demo=is_demo, folder_path=None), 
+        media_type="application/x-ndjson"
+    )
+
+
+class ExportRequest(BaseModel):
+    content: str
+    chapters: list = []
+    title: str = "Manuscript Title"
+    author: str = "Author Name"
+    format: str = "chicago"
+    cover_image: Optional[str] = None
+
+@router.post("/export/docx")
+async def export_docx(req: ExportRequest):
+    """Exports structured manuscript back to a Chicago Style DOCX."""
+    if not req.content:
+        raise HTTPException(status_code=400, detail="Content is required")
+        
+    try:
+        with open("last_export_req.txt", "w", encoding="utf-8") as f:
+            f.write(req.content)
+            
+        doc_stream = exporter.generate_docx(req.content, req.chapters, req.title, req.author, req.format, req.cover_image)
+        safe_title = str(req.title).replace('"', '').replace('\n', '').replace('\r', '')
+        
+        return StreamingResponse(
+            doc_stream, 
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", 
+            headers={"Content-Disposition": f'attachment; filename="{safe_title}.docx"'}
+        )
+    except Exception as e:
+        with open("last_export_error.txt", "a", encoding="utf-8") as f:
+            import traceback
+            f.write("DOCX ERR:\n" + traceback.format_exc() + "\n\n")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/export/pdf")
+async def export_pdf(req: ExportRequest):
+    """Exports structured manuscript back to a Chicago Style PDF."""
+    if not req.content:
+        raise HTTPException(status_code=400, detail="Content is required")
+        
+    try:
+        with open("last_export_req.txt", "w", encoding="utf-8") as f:
+            f.write(req.content)
+            
+        pdf_stream = exporter.generate_pdf(req.content, req.chapters, req.title, req.author, req.format, req.cover_image)
+        safe_title = str(req.title).replace('"', '').replace('\n', '').replace('\r', '')
+        
+        return StreamingResponse(
+            pdf_stream, 
+            media_type="application/pdf", 
+            headers={"Content-Disposition": f'attachment; filename="{safe_title}.pdf"'}
+        )
+    except Exception as e:
+        with open("last_export_error.txt", "a", encoding="utf-8") as f:
+            import traceback
+            f.write("PDF ERR:\n" + traceback.format_exc() + "\n\n")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/export/epub")
+async def export_epub(req: ExportRequest):
+    """Exports structured manuscript back to a standard EPUB for Kindle."""
+    if not req.content:
+        raise HTTPException(status_code=400, detail="Content is required")
+        
+    try:
+        epub_stream = exporter.generate_epub(req.content, req.chapters, req.title, req.author, req.format, req.cover_image)
+        safe_title = str(req.title).replace('"', '').replace('\n', '').replace('\r', '')
+        
+        return StreamingResponse(
+            epub_stream, 
+            media_type="application/epub+zip", 
+            headers={"Content-Disposition": f'attachment; filename="{safe_title}.epub"'}
+        )
+    except Exception as e:
+        with open("last_export_error.txt", "a", encoding="utf-8") as f:
+            import traceback
+            f.write("EPUB ERR:\n" + traceback.format_exc() + "\n\n")
+        raise HTTPException(status_code=500, detail=str(e))
+
+from services import transcriber_service
+
+class TranscriptionRequest(BaseModel):
+    api_key: str = ""
+    provider: str = "gemini"
+    folder_path: Optional[str] = None
+    reset_cache: bool = False
+    mode: str = "batch"
+    model: Optional[str] = None
+    fallback_provider: Optional[str] = None
+    fallback_model: Optional[str] = None
+
+class AuditResolutionRequest(BaseModel):
+    page_number: str
+    apply_offset: bool = False
+
+class OffsetRequest(BaseModel):
+    delta: int
+
+@router.post("/transcribe/start")
+def start_transcription(req: TranscriptionRequest):
+    """Drops a native folder picker over the browser and triggers the OCR background thread."""
+    # Pass the AI key and provider explicitly provided by the React Settings modal
+    success, used_folder = transcriber_service.start_transcription_background(
+        req.api_key, req.provider, req.folder_path, req.reset_cache, req.mode, req.model,
+        fallback_provider=req.fallback_provider, fallback_model=req.fallback_model
+    )
+    if not success:
+        return {"status": "cancelled"}
+    return {"status": "started", "folder_path": used_folder}
+
+@router.post("/transcribe/clear")
+def clear_transcription():
+    """Wipes the current transcription state for a fresh project start."""
+    transcriber_service.clear_transcription_state()
+    return {"status": "cleared"}
+
+@router.post("/transcribe/resolve")
+def resolve_audit(req: AuditResolutionRequest):
+    """Resumes a paused transcription after user input."""
+    success = transcriber_service.resolve_audit_input(req.page_number, req.apply_offset)
+    return {"status": "success" if success else "failed"}
+
+@router.post("/transcribe/offset")
+def set_offset(req: OffsetRequest):
+    """Adjusts the global page numbering offset."""
+    transcriber_service.set_transcription_offset(req.delta)
+    return {"status": "offset_applied"}
+
+@router.get("/transcribe/status")
+async def get_transcription_status(summary: bool = False):
+    """
+    Polls the global state. 
+    'summary=True' strips the massive 'text' and 'pages' fields for HUD performance,
+    but includes 'new_pages' from the stream buffer for the editor.
+    """
+    with transcriber_service.TRANSCRIPTION_LOCK:
+        state = dict(transcriber_service.TRANSCRIPTION_STATE)
+        
+        # [SMART STREAM]: Destructive fetch of the buffer
+        buffer = state.get("stream_buffer", [])
+        transcriber_service.TRANSCRIPTION_STATE["stream_buffer"] = []
+        
+        if summary:
+            # Drop heavy data for lightweight polling
+            state.pop("text", None)
+            state.pop("pages", None)
+            # Add the incremental updates
+            state["new_pages"] = buffer
+            
+        return state
+
+@router.post("/transcribe/resort")
+async def resort_manuscript(req: TranscriptionRequest):
+    """Triggers a physical re-sort of the manuscript from the cache."""
+    success = transcriber_service.resort_from_cache(req.folder_path)
+    if success:
+        return {"status": "success"}
+    return {"status": "failed", "message": "Cache not found or corrupt."}
+
+@router.get("/anchor")
+async def anchor_project_folder():
+    """Directorial Anchor: Invokes the native folder picker and returns the selected path to the UI."""
+    folder = transcriber_service.pick_directory()
+    if (not folder):
+        return {"status": "cancelled", "folder_path": None}
+    
+    # [PROJECT PULSE]: Perform immediate baseline scan to hydrate UI and Editor
+    transcriber_service.ingest_project_baseline(folder)
+    
+    return {"status": "anchored", "folder_path": folder}
+
+@router.get("/transcribe/ingest")
+async def ingest_project_baseline(folder_path: str):
+    """Ingests the project baseline."""
+    success = transcriber_service.ingest_project_baseline(folder_path)
+    return {"status": "success" if success else "failed"}
+
+@router.get("/transcribe/resort")
+async def resort_manuscript(folder_path: str):
+    """Triggers manuscript unification."""
+    from services.transcriber_service import TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK
+    
+    # [RE-COUNT]: Scan immediately to prevent flicker
+    import os, glob
+    rtfs = glob.glob(os.path.join(folder_path, "*.rtf"))
+    src_subdir = os.path.join(folder_path, "_manuscript_source")
+    if os.path.exists(src_subdir):
+        rtfs.extend(glob.glob(os.path.join(src_subdir, "*.rtf")))
+    count = len(rtfs)
+    
+    # [STATUS LOCK]: Force the engine into 'sewing' mode BEFORE the thread starts
+    with TRANSCRIPTION_LOCK:
+        TRANSCRIPTION_STATE["status"] = "sewing"
+        TRANSCRIPTION_STATE["processed_images"] = 0
+        TRANSCRIPTION_STATE["total_images"] = count if count > 0 else TRANSCRIPTION_STATE.get("total_images", 0)
+        TRANSCRIPTION_STATE["error_message"] = f"Assembling manuscript: {count} pages ready for unification..."
+    
+    # [THREADED SEWING]: Run in background to prevent timeout
+    import threading
+    thread = threading.Thread(target=transcriber_service.resort_from_cache, args=(folder_path,))
+    thread.daemon = True
+    thread.start()
+    return {"status": "sewing"}
+
+@router.get("/photo")
+async def get_project_photo(folder_path: str, filename: str):
+    """Securely fetches a photo from the anchored project directory."""
+    import os
+    from fastapi.responses import FileResponse
+    # Resolve and validate path
+    safe_folder = folder_path.strip().replace('\\', '/')
+    photo_path = os.path.join(safe_folder, filename)
+    
+    if not os.path.exists(photo_path):
+        raise HTTPException(status_code=404, detail="Photo not found")
+        
+    return FileResponse(photo_path)

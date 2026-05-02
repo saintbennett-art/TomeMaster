@@ -1,0 +1,127 @@
+import os
+import asyncio
+import json
+import datetime
+import httpx
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
+# ─── API Cost Tracking System ────────────────────────────────────────────────
+USAGE_LOG_PATH = "api_usage_log.jsonl"
+
+def _log_api_usage(persona: str, provider: str, model: str, usage_metrics: dict):
+    """Securely appends real-time token consumitations to a local JSONL audit ledger."""
+    if not usage_metrics or "total_tokens" not in usage_metrics:
+        return
+        
+    entry = {
+        "timestamp": datetime.datetime.now().isoformat(),
+        "persona": persona,
+        "provider": provider,
+        "model": model,
+        "metrics": usage_metrics
+    }
+    
+    try:
+        with open(USAGE_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        print(f"WARNING: Failed to write to usage ledger: {e}")
+
+# ─── Gemini helpers ──────────────────────────────────────────────────────────
+from google import genai
+
+def _get_gemini_client(api_key: str = None):
+    # Absolute Signal Sanitization: Reject ghost strings from the UI (null, undefined, etc.)
+    env_key = os.environ.get("GEMINI_API_KEY")
+    sanitized_key = api_key
+    if not sanitized_key:
+        sanitized_key = env_key
+    elif str(sanitized_key).lower().strip() in ["null", "undefined", "none", "token", ""]:
+        sanitized_key = env_key
+        
+    return genai.Client(api_key=sanitized_key)
+
+# ─── Default client for the emotional-arc endpoint (uses settings key) ────────────
+async def analyze_emotional_arc(text: str, provider: str = "gemini", api_key: str = None, model: str = None):
+    if provider == "simulator":
+        return json.loads(_simulate_creative("emotional_arc"))
+
+    client = _get_gemini_client(api_key)
+    
+    selected_model = model if model else "gemini-1.5-pro" # Defaulting to stable Pro
+
+    prompt = f"""
+    Analyze the emotional arc and tension in the following manuscript text. 
+    Break the text down into 10 roughly equal chronological segments.
+    For each segment, provide a tension score from 1 (very calm) to 10 (highest climax/stress)
+    and a very brief 3-word summary of what happens.
+    
+    Format the output as strict JSON in this format:
+    [
+      {{"segment": 1, "score": 5, "summary": "Character wakes up"}},
+      ...
+    ]
+    
+    CRITICAL: Use standard straight apostrophes (') and straight double quotes (") exclusively in your summaries.
+    
+    Manuscript Text:
+    {text}
+    """
+    
+    # [SOVEREIGN HANDOFF]: v2 SDK uses client.aio.models.generate_content for async
+    response = await client.aio.models.generate_content(
+        model=selected_model,
+        contents=prompt,
+        config={"response_mime_type": "application/json"}
+    )
+    return response.text
+
+# ─── Simulated Canned Responses for Zero-Key Demo Mode ───────────────────────
+def _simulate_persona(persona: str) -> str:
+    """Returns a highly professional, persona-specific critique for Demo Mode."""
+    responses = {
+        "Developmental Editor": {
+            "feedback": """### 🎭 Developmental Edit: Structural Analysis
+I have scanned the rhythmic structure of your narrative and identified its core emotional spikes. 
+
+**Key Observation:** Your pacing currently feels 'flat' in the transition between introductory world-building and the first major conflict. 
+
+**Recommendation:** I suggest a chapter break at the next major emotional shift. Grant the reader "breathing room" by ending the current sequence on a questioning note rather than a resolution. This will drive higher "One More Page" momentum.""",
+            "suggestions": [
+                {"id": "sim-1", "type": "insert", "label": "Insert Chapter Break", "content": "--- \n\n# Chapter Suggestion \n\n", "reason": "Pacing improvement at emotional peak."}
+            ],
+            "chapters": [
+                {"chapter_number": 1, "suggested_title": "The Awakening", "emotional_intensity": 5, "starting_words": "The exact first 10 words..."}
+            ]
+        },
+        "Copy Editor": {
+            "feedback": "### 🔍 Grammar & Style Analysis\n\nI have identified several stylistic inconsistencies that could be tightened. Review the interactive suggestions in the editor.",
+            "suggestions": [
+              {
+                "id": "sim-2",
+                "original": "The man runned fast.",
+                "suggestion": "The man ran fast.",
+                "reason": "Incorrect verb tense (Simulated Example)."
+              }
+            ],
+            "edits": [
+              {"original": "The man runned fast.", "suggestion": "The man ran fast.", "reason": "Incorrect verb tense."}
+            ]
+        },
+        "Marketing Executive": {
+            "feedback": """### 📈 Pitch & Hook Marketing Strategy
+**Elevator Pitch:** "A high-stakes thriller where silence is the only weapon."
+**Target Audience:** Readers of *Gillian Flynn* and fans of psychological tension.""",
+            "suggestions": [
+                {"id": "sim-3", "type": "insert", "label": "Add Back-Cover Blurb", "content": "\n\n> Everything changed the day the letters stopped. Now, she has to find the sound in the silence... before it finds her.", "reason": "Compelling hook for the beginning of the document."}
+            ]
+        }
+    }
+    
+    res = responses.get(persona, {
+        "feedback": f"### {persona} Consultant Critique\n\nI have reviewed your text and find it displays significant technical promise. Focus on tightening your secondary character arcs.\n\n*Note: This is a simulated critique.*",
+        "suggestions": []
+    })
+    return json.dumps(res)

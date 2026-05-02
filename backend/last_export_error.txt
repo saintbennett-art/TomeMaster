@@ -1,0 +1,41 @@
+PDF ERR:
+Traceback (most recent call last):
+  File "C:\Users\saint\.gemini\antigravity\playground\dark-schrodinger\backend\routers\document.py", line 81, in export_pdf
+    pdf_stream = exporter.generate_pdf(req.content, req.chapters, req.title, req.author)
+  File "C:\Users\saint\.gemini\antigravity\playground\dark-schrodinger\backend\services\exporter.py", line 239, in generate_pdf
+    doc.build(story); file_stream.seek(0); return file_stream
+    ~~~~~~~~~^^^^^^^
+  File "C:\Users\saint\.gemini\antigravity\playground\dark-schrodinger\backend\venv\Lib\site-packages\reportlab\platypus\doctemplate.py", line 1109, in build
+    self._endBuild()
+    ~~~~~~~~~~~~~~^^
+  File "C:\Users\saint\.gemini\antigravity\playground\dark-schrodinger\backend\venv\Lib\site-packages\reportlab\platypus\doctemplate.py", line 1044, in _endBuild
+    if getattr(self,'_doSave',1): self.canv.save()
+                                  ~~~~~~~~~~~~~~^^
+  File "C:\Users\saint\.gemini\antigravity\playground\dark-schrodinger\backend\venv\Lib\site-packages\reportlab\pdfgen\canvas.py", line 1302, in save
+    self._doc.SaveToFile(self._filename, self)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\saint\.gemini\antigravity\playground\dark-schrodinger\backend\venv\Lib\site-packages\reportlab\pdfbase\pdfdoc.py", line 212, in SaveToFile
+    data = self.GetPDFData(canvas)
+  File "C:\Users\saint\.gemini\antigravity\playground\dark-schrodinger\backend\venv\Lib\site-packages\reportlab\pdfbase\pdfdoc.py", line 238, in GetPDFData
+    return self.format()
+           ~~~~~~~~~~~^^
+  File "C:\Users\saint\.gemini\antigravity\playground\dark-schrodinger\backend\venv\Lib\site-packages\reportlab\pdfbase\pdfdoc.py", line 420, in format
+    IOf = IO.format(self)
+  File "C:\Users\saint\.gemini\antigravity\playground\dark-schrodinger\backend\venv\Lib\site-packages\reportlab\pdfbase\pdfdoc.py", line 867, in format
+    fcontent = format(self.content, document, toplevel=1)   # yes this is at top level
+  File "C:\Users\saint\.gemini\antigravity\playground\dark-schrodinger\backend\venv\Lib\site-packages\reportlab\pdfbase\pdfdoc.py", line 67, in format
+    f = element.format(document)
+  File "C:\Users\saint\.gemini\antigravity\playground\dark-schrodinger\backend\venv\Lib\site-packages\reportlab\pdfbase\pdfdoc.py", line 1633, in format
+    return D.format(document)
+           ~~~~~~~~^^^^^^^^^^
+  File "C:\Users\saint\.gemini\antigravity\playground\dark-schrodinger\backend\venv\Lib\site-packages\reportlab\pdfbase\pdfdoc.py", line 680, in format
+    L = [(format(PDFName(k),document)+b" "+format(dict[k],document)) for k in keys]
+                                           ~~~~~~^^^^^^^^^^^^^^^^^^
+  File "C:\Users\saint\.gemini\antigravity\playground\dark-schrodinger\backend\venv\Lib\site-packages\reportlab\pdfbase\pdfdoc.py", line 67, in format
+    f = element.format(document)
+  File "C:\Users\saint\.gemini\antigravity\playground\dark-schrodinger\backend\venv\Lib\site-packages\reportlab\pdfbase\pdfdoc.py", line 1797, in format
+    if f is None: raise ValueError("format not resolved, probably missing URL scheme or undefined destination target for '%s'" % self.name)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: format not resolved, probably missing URL scheme or undefined destination target for 'chap_0'
+
+

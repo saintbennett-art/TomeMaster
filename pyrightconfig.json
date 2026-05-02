@@ -1,0 +1,19 @@
+{
+    "exclude": [
+        "**/node_modules",
+        "**/__pycache__",
+        "**/venv",
+        "**/.next",
+        "**/dist",
+        "**/build",
+        "frontend/**",
+        "scratch/**"
+    ],
+    "ignore": [
+        "**/node_modules"
+    ],
+    "typeCheckingMode": "off",
+    "useLibraryCodeForTypes": false,
+    "reportMissingImports": false,
+    "reportMissingTypeStubs": false
+}

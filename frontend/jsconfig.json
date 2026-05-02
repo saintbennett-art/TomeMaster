@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "exclude": [
+    "node_modules",
+    ".next",
+    "out",
+    "backend",
+    "**/*.rtf",
+    "**/_tome_master_cache.json",
+    "**/ai_usage_ledger.jsonl"
+  ]
+}

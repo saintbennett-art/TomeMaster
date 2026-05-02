@@ -1,0 +1,57 @@
+.progressBar {
+    height: 100%;
+    background-color: var(--progress-color, #6366f1);
+    transition: all 0.5s ease-out;
+}
+
+.cyberGrid {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.02;
+    background-image: linear-gradient(#4f46e5 1px, transparent 1px), 
+                      linear-gradient(90deg, #4f46e5 1px, transparent 1px);
+    background-size: 40px 40px;
+}
+
+.scanningLaser {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 40px;
+    background: linear-gradient(to bottom, rgba(99, 102, 241, 0.3), transparent);
+    transform: translateY(-100%);
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.scanningActive {
+    animation: scan 3s ease-in-out infinite;
+}
+
+@keyframes scan {
+    0% { transform: translateY(-100%); }
+    50% { transform: translateY(600%); }
+    100% { transform: translateY(-100%); }
+}
+@keyframes heartbeat {
+    0% { box-shadow: inset 0 0 0px rgba(99, 102, 241, 0); }
+    50% { box-shadow: inset 0 0 30px rgba(99, 102, 241, 0.1); }
+    100% { box-shadow: inset 0 0 0px rgba(99, 102, 241, 0); }
+}
+
+.heartbeat {
+    animation: heartbeat 1.5s ease-in-out infinite;
+    transition: all 0.5s ease-in-out;
+}
+@keyframes liaisonPulse {
+    0% { background-color: var(--surface); box-shadow: inset 0 0 0px rgba(99, 102, 241, 0); }
+    50% { background-color: rgba(99, 102, 241, 0.05); box-shadow: inset 0 0 20px rgba(99, 102, 241, 0.2); }
+    100% { background-color: var(--surface); box-shadow: inset 0 0 0px rgba(99, 102, 241, 0); }
+}
+
+.liaisonPulse {
+    animation: liaisonPulse 2s ease-in-out infinite;
+    border-bottom-color: rgba(99, 102, 241, 0.4) !important;
+}
