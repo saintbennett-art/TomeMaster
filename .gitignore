@@ -24,6 +24,11 @@ project_ledger.json
 *.png
 *.webp
 
+# Secrets & machine-bound licenses — NEVER commit these
+backend/.env
+backend/*.lic
+*.lic
+
 # OS generated files
 .DS_Store
 Thumbs.db

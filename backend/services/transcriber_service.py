@@ -953,23 +953,6 @@ def ingest_project_baseline(folder_path: str):
         manuscript_exists = os.path.exists(manuscript_path)
         lock_exists = os.path.exists(lock_path)
         
-        # [SOVEREIGN TRUST]: Archive scan removed per strict directive. 
-        # We rely on the Ledger for global history and the Root for active work.
-        total_images = TRANSCRIPTION_STATE.get("total_images", 0)
-        total_rtfs = TRANSCRIPTION_STATE.get("processed_images", 0)
-        
-        # [DYNAMIC SYNC]: If the root has more images than the ledger knows, update the ledger.
-        # This handles the 'New Birth' or 'Surgical Injection' scenarios.
-        root_image_count = len(all_images)
-        if root_image_count > 0:
-            # Note: We don't just add them; we assume the ledger's total_images 
-            # was the count of what went into Archive. 
-            # So the 'Current Reality' is Archive (Ledger) + Root.
-            total_images = TRANSCRIPTION_STATE.get("total_images", 0) + root_image_count
-            
-        # Update RTF count with what we just found in the root
-        total_rtfs = TRANSCRIPTION_STATE.get("processed_images", 0) + len(root_rtf_names)
-                        
         # [GAP DISCOVERY]: Count missing pages to signal the Industrial Scout
         missing_count = 0
         if manuscript_exists:
@@ -979,10 +962,9 @@ def ingest_project_baseline(folder_path: str):
                     missing_count = len(re.findall(r'\[DIRECTORIAL ALERT: PAGE \d+ MISSING', content))
             except: pass
 
-        # Update state with physical evidence found in the root
+        # [LEDGER LAW]: total_images is immutable — set once by transcription, never touched here.
+        # Only missing_pages_count is updated from the physical manuscript scan.
         with TRANSCRIPTION_LOCK:
-            TRANSCRIPTION_STATE["total_images"] = total_images
-            TRANSCRIPTION_STATE["processed_images"] = total_rtfs
             TRANSCRIPTION_STATE["missing_pages_count"] = missing_count
             
         final_text = None
@@ -1046,8 +1028,6 @@ def ingest_project_baseline(folder_path: str):
             TRANSCRIPTION_STATE.update({
                 "status": new_status,
                 "folder": folder_path,
-                "total_images": total_images,
-                "processed_images": total_rtfs,
                 "error_message": status_msg
             })
             if final_text:
@@ -1123,42 +1103,20 @@ def resort_from_cache(folder_path: str):
             except Exception as e:
                 print(f"BOARDROOM WARNING: Failed to parse manuscript history: {e}")
 
-        # [ARCHIVE RECOVERY]: If no manuscript exists yet (first successful run, or recovery),
-        # read Archive RTFs to reconstruct sealed pages rather than counting them as missing.
-        if not manuscript_pages:
-            archive_dir = os.path.join(folder_path, "Archive")
-            if os.path.exists(archive_dir):
-                recovered = 0
-                for fname in os.listdir(archive_dir):
-                    if not fname.lower().endswith(".rtf"): continue
-                    m = re.search(r'page_(\d+)', fname.lower())
-                    if not m: continue
-                    p_num = int(m.group(1))
-                    try:
-                        with open(os.path.join(archive_dir, fname), "r", encoding="utf-8", errors="ignore") as r:
-                            content = r.read()
-                            clean = strip_rtf(content)
-                            clean = restore_text_flow_if_fragmented(clean)
-                            clean = re.sub(r'^(Page|PAGE)\s*\d+\s*$', '', clean, flags=re.MULTILINE).strip()
-                            manuscript_pages[p_num] = clean
-                            recovered += 1
-                    except Exception as e:
-                        print(f"BOARDROOM WARNING: Archive recovery failed for {fname}: {e}")
-                if recovered:
-                    print(f"BOARDROOM: Archive recovery complete — {recovered} sealed page(s) restored.")
-
         # [ACTIVE DISCOVERY]: Get the pages currently in the Root
         page_to_rtf = {int(re.search(r'page_(\d+)', os.path.basename(f)).group(1)): f for f in all_rtfs if re.search(r'page_(\d+)', os.path.basename(f))}
         root_nums = set(page_to_rtf.keys())
-        
-        # [GLOBAL SCOPE]: The range of the entire project
-        # Always expand to cover all known pages — root RTFs may exceed ledger's total_images
+
+        # [LEDGER LAW]: total_images was set by the transcription job and is the immutable scope.
+        # We read it once here and never write it back.
         total_goal = TRANSCRIPTION_STATE.get("total_images", 0)
+        # Safety: if physical RTFs in root or manuscript have a higher page number than the ledger,
+        # expand — but this should never happen in a clean run.
         if manuscript_pages or root_nums:
             dynamic_max = max(max(manuscript_pages.keys(), default=-1), max(root_nums, default=-1))
             if dynamic_max + 1 > total_goal:
                 total_goal = dynamic_max + 1
-                print(f"BOARDROOM: total_goal expanded to {total_goal} to cover all root artifacts.")
+                print(f"BOARDROOM WARNING: total_goal expanded to {total_goal} — ledger total_images ({TRANSCRIPTION_STATE.get('total_images', 0)}) is lower than physical evidence. Check transcription count.")
 
         print(f"BOARDROOM: resort_from_cache — {len(root_nums)} root RTFs, {len(manuscript_pages)} existing pages, total_goal={total_goal}")
             
@@ -1215,11 +1173,10 @@ def resort_from_cache(folder_path: str):
                         final_text_list.append(manuscript_pages[i])
 
                     else:
-                        # [GAP]: Page still missing — write marker to file AND surface it in the editor
+                        # [GAP]: Page still missing — write marker to file only, not the editor
                         gap_marker = f"[DIRECTORIAL ALERT: PAGE {i} MISSING - Awaiting Transcription Injection or Author Insertion]"
                         f.write(f"--- [PAGE START: page_{i}.rtf] ---\n")
                         f.write(gap_marker + "\n\n")
-                        final_text_list.append(gap_marker)
                 
                 # 3. Post-Process Unknowns (Epilogue)
                 if unknown_rtfs:
@@ -1283,9 +1240,8 @@ def resort_from_cache(folder_path: str):
 
                 with TRANSCRIPTION_LOCK:
                     TRANSCRIPTION_STATE.update({
-                        "status": "complete" if not still_missing else "complete",
+                        "status": "complete",
                         "processed_images": total_goal - len(still_missing),
-                        "total_images": total_goal,
                         "missing_pages_count": len(still_missing),
                         "text": "\n\n".join(final_text_list),
                         "error_message": completion_msg
@@ -1460,9 +1416,11 @@ def start_transcription_background(api_key: str, provider: str, folder_path: str
     return True, folder
 
 def clear_transcription_state():
-    """Wipes the global state to allow for a fresh project start."""
+    """Wipes the global state and disk artifacts to allow for a fresh project start."""
     global TRANSCRIPTION_STATE
+    folder = None
     with TRANSCRIPTION_LOCK:
+        folder = TRANSCRIPTION_STATE.get("folder")
         TRANSCRIPTION_STATE.update({
             "status": "idle",
             "folder": None,
@@ -1483,8 +1441,22 @@ def clear_transcription_state():
             "waiting_for_input": False,
             "last_processed_file": None
         })
-    print("[DIRECTORIAL CLEANSE]: Application memory cleared for new project.")
+
+    # [EDITORIAL CLEANSE]: Remove disk artifacts so hydration cannot resurrect cleared content
+    if folder:
+        manuscript_path = os.path.join(folder, "Unified_Manuscript.md")
+        lock_path = manuscript_path + ".STITCH_LOCK"
+        for path in [manuscript_path, lock_path]:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                    print(f"[DIRECTORIAL CLEANSE]: Removed {os.path.basename(path)}")
+            except Exception as e:
+                print(f"[DIRECTORIAL CLEANSE WARNING]: Could not remove {path}: {e}")
+
+    print("[DIRECTORIAL CLEANSE]: Application memory and disk state cleared for new project.")
     return True
+
 
 def resolve_audit_input(page_number: str, apply_offset: bool = False):
     """Called by the frontend to resolve an 'UNKNOWN' or 'COLLISION' event."""
