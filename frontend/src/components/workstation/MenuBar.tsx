@@ -8,6 +8,7 @@ import {
     Layers, ListOrdered, FileText
 } from "lucide-react";
 import { useWorkstationState, useWorkstationActions } from "@/context/WorkstationContext";
+import { API_BASE_HOLDER } from "@/lib/apiClient";
 
 interface MenuBarProps {
     onExport?: () => void;
@@ -56,10 +57,17 @@ const MenuBar: React.FC<MenuBarProps> = ({
             { label: "Redo", icon: Redo2, shortcut: "Ctrl+Y", action: onRedo || (() => {}) },
             { type: "separator" },
             { label: "Sanitize Prose", icon: ShieldCheck, action: onGrammarCheck || (() => notify("Starting copy-editor audit...")) },
-            { label: "Clear Workspace", icon: Eraser, action: () => {
-                if (confirm("Clear all prose? This cannot be undone.")) {
+            { label: "Clear Workspace", icon: Eraser, action: async () => {
+                if (confirm("Clear all prose and wipe the manuscript state? This cannot be undone.")) {
                     setContent("");
                     setHtmlContent("");
+                    localStorage.removeItem('tome_master_shadow_path');
+                    try {
+                        await fetch(`${API_BASE_HOLDER.current}/transcribe/clear`, { method: "POST" });
+                    } catch (e) {
+                        console.warn("[CLEANSE]: Backend clear failed — state may persist until restart.", e);
+                    }
+                    notify("Workspace cleared. State wiped from memory and disk.");
                 }
             }},
         ],

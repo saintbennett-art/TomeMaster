@@ -301,8 +301,6 @@ async def resort_manuscript_get(folder_path: str):
 
     with TRANSCRIPTION_LOCK:
         TRANSCRIPTION_STATE["status"] = "stitching"
-        TRANSCRIPTION_STATE["processed_images"] = 0
-        TRANSCRIPTION_STATE["total_images"] = count if count > 0 else TRANSCRIPTION_STATE.get("total_images", 0)
         TRANSCRIPTION_STATE["error_message"] = f"Assembling manuscript: {count} pages ready for unification..."
 
     if not transcriber_service._stitching_active.is_set():

@@ -194,8 +194,6 @@ export default function Home() {
           scrollToText={scrollToText}
           onScrollComplete={() => setScrollToText(null)}
           onPreviewChapter={handleChapterClick}
-          syncTrigger={syncTrigger}
-          analysisTrigger={analysisTrigger}
           onCoverUpload={handleCoverUpload}
         />
       </div>
