@@ -40,7 +40,8 @@ export async function uploadManuscript(file: File, isDemo: boolean = false, sign
   const provider = typeof window !== 'undefined' ? (localStorage.getItem('tome_master_provider') || 'gemini') : 'gemini';
   const apiKey = typeof window !== 'undefined' ? (localStorage.getItem(`tome_master_key_${provider}`) || '') : '';
 
-  const res = await fetch(`${API_BASE_HOLDER.current}/document/upload?api_key=${encodeURIComponent(apiKey)}&is_demo=${isDemo}&recovery=${isRecovery}`, {
+  formData.append("api_key", apiKey);
+  const res = await fetch(`${API_BASE_HOLDER.current}/document/upload?is_demo=${isDemo}&recovery=${isRecovery}`, {
     method: "POST",
     body: formData,
     signal
@@ -61,7 +62,8 @@ export async function uploadManuscriptStream(file: File, onChunk: (data: any) =>
   const provider = typeof window !== 'undefined' ? (localStorage.getItem('tome_master_provider') || 'gemini') : 'gemini';
   const apiKey = typeof window !== 'undefined' ? (localStorage.getItem(`tome_master_key_${provider}`) || '') : '';
 
-  const res = await fetch(`${API_BASE_HOLDER.current}/document/upload/stream?api_key=${encodeURIComponent(apiKey)}&is_demo=${isDemo}`, {
+  formData.append("api_key", apiKey);
+  const res = await fetch(`${API_BASE_HOLDER.current}/document/upload/stream?is_demo=${isDemo}`, {
     method: "POST",
     body: formData,
     signal
@@ -499,7 +501,7 @@ export async function fetchExpenditure() {
 }
 
 export async function fetchOllamaStatus(apiKey?: string) {
-  const url = apiKey ? `${API_BASE_HOLDER.current}/ai/ollama-status?api_key=${encodeURIComponent(apiKey)}` : `${API_BASE_HOLDER.current}/ai/ollama-status`;
+  const url = `${API_BASE_HOLDER.current}/ai/ollama-status`;
   const res = await safeFetch(url);
   if ('isNetworkError' in res) return { status: "not_found", models: [], error: "OFFLINE" };
   if (!res.ok) throw new Error("Failed to check Ollama status");
@@ -627,7 +629,11 @@ export async function refineProse(text: string, provider?: string, apiKey?: stri
 
 export async function getBriefing(folderPath: string, provider?: string, apiKey?: string): Promise<string> {
     try {
-        const response = await fetch(`${API_BASE_HOLDER.current}/analysis/briefing?folder_path=${encodeURIComponent(folderPath)}&provider=${provider || 'openai'}&api_key=${apiKey || ''}`);
+        const response = await fetch(`${API_BASE_HOLDER.current}/analysis/briefing`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ folder_path: folderPath, provider: provider || 'openai', api_key: apiKey || '' }),
+        });
         if (!response.ok) return "Operational link established. The boardroom is standing by.";
         const data = await response.json();
         return data.briefing || "Operational link established. Standing by.";
@@ -680,7 +686,11 @@ export async function saveSnapshot(dataUrl: string, folderPath: string): Promise
 
 export async function fetchCloudModels(apiKey: string, provider: string): Promise<string[]> {
     try {
-        const res = await fetch(`${API_BASE_HOLDER.current}/ai/models?api_key=${encodeURIComponent(apiKey)}&provider=${provider}`);
+        const res = await fetch(`${API_BASE_HOLDER.current}/ai/models`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ api_key: apiKey, provider }),
+        });
         if (!res.ok) return [];
         const data = await res.json();
         return data.models || [];

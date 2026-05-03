@@ -22,64 +22,66 @@ router = APIRouter()
 
 @router.get("/vault-sync")
 async def sync_vault_from_env():
-    # [SOVEREIGN RECOVERY]: Extract keys from the server bedrock
+    # Returns only presence booleans — never returns raw key values over the wire
     return {
-        "gemini": os.environ.get("GEMINI_API_KEY", ""),
-        "openai": os.environ.get("OPENAI_API_KEY", ""),
-        "anthropic": os.environ.get("ANTHROPIC_API_KEY", "")
+        "gemini": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
+        "openai": bool(os.environ.get("OPENAI_API_KEY", "").strip()),
+        "anthropic": bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()),
+        "groq": bool(os.environ.get("GROQ_API_KEY", "").strip()),
     }
 
 class VaultSaveRequest(BaseModel):
     keys: Dict[str, str]
 
+ALLOWED_VAULT_KEYS = {
+    "gemini": "GEMINI_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "groq": "GROQ_API_KEY",
+}
+
 @router.post("/vault-save")
 async def save_vault_to_env(req: VaultSaveRequest):
-    # [SOVEREIGN ANCHORING]: Write keys back to the server bedrock
-    env_path = ".env" # Check root first
+    env_path = ".env"
     if not os.path.exists(env_path):
         env_path = "backend/.env"
-        
+
     try:
         lines = []
         if os.path.exists(env_path):
             with open(env_path, "r") as f:
                 lines = f.readlines()
-        
-        key_map = {
-            "gemini": "GEMINI_API_KEY",
-            "openai": "OPENAI_API_KEY",
-            "anthropic": "ANTHROPIC_API_KEY",
-            "groq": "GROQ_API_KEY"
-        }
-        
+
         new_lines = []
         updated_keys = set()
-        
+
         for line in lines:
             found = False
-            for provider, env_var in key_map.items():
+            for provider, env_var in ALLOWED_VAULT_KEYS.items():
                 if line.startswith(f"{env_var}="):
-                    if provider in req.keys and req.keys[provider]:
-                        new_lines.append(f"{env_var}={req.keys[provider]}\n")
+                    val = req.keys.get(provider, "").strip()
+                    if val:
+                        new_lines.append(f"{env_var}={val}\n")
                         updated_keys.add(provider)
                         found = True
                         break
             if not found:
                 new_lines.append(line)
-        
-        # Add any keys that weren't already in the file
-        for provider, env_var in key_map.items():
-            if provider in req.keys and req.keys[provider] and provider not in updated_keys:
-                new_lines.append(f"{env_var}={req.keys[provider]}\n")
-        
+
+        for provider, env_var in ALLOWED_VAULT_KEYS.items():
+            val = req.keys.get(provider, "").strip()
+            if val and provider not in updated_keys:
+                new_lines.append(f"{env_var}={val}\n")
+
         with open(env_path, "w") as f:
             f.writelines(new_lines)
-            
-        # Update current process environment so sync works immediately
-        for provider, env_var in key_map.items():
-            if provider in req.keys and req.keys[provider]:
-                os.environ[env_var] = req.keys[provider]
-                
+
+        # Propagate to live process env (strictly whitelisted keys only)
+        for provider, env_var in ALLOWED_VAULT_KEYS.items():
+            val = req.keys.get(provider, "").strip()
+            if val:
+                os.environ[env_var] = val
+
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Vault Anchoring Failure: {str(e)}")
@@ -177,29 +179,38 @@ async def refine_prose_endpoint(req: TextRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/briefing")
-async def get_briefing_endpoint(folder_path: str, provider: str = "openai", api_key: str = None):
+class BriefingRequest(BaseModel):
+    folder_path: str
+    provider: Optional[str] = "openai"
+    api_key: Optional[str] = None
+
+@router.post("/briefing")
+async def get_briefing_endpoint(req: BriefingRequest):
     """[DIRECTORIAL BRIEFING]: Generates a session summary and priority audit."""
     try:
         from services import ledger
-        # [SOVEREIGN AUDIT]: Pulling data from the ledger
-        stats = ledger.get_stats(folder_path)
-        
-        # [INTEL SYNTHESIS]: Constructing the briefing prompt
+        stats = ledger.get_stats(req.folder_path)
         prompt = f"AUDIT THIS PROJECT DATA AND PROVIDE A 3-SENTENCE DIRECTORIAL BRIEFING FOR THE ARCHITECT. FOCUS ON RECENT PROGRESS AND THE TOP 2 NARRATIVE GAPS. DATA: {json.dumps(stats)}"
-        
         result = await ai_service.run_boardroom_parallel(
-            prompt, 
-            ["Sovereign Liaison"], 
-            provider, 
-            api_key, 
+            prompt,
+            ["Sovereign Liaison"],
+            req.provider,
+            req.api_key,
             model="gpt-4o",
             local_mode=False
         )
         briefing = result.get("Sovereign Liaison", {}).get("feedback", "Operational link established. The boardroom is standing by.")
         return {"briefing": briefing}
-    except Exception as e:
+    except Exception:
         return {"briefing": "Directorial link established. Standing by for manuscript resurrection."}
+
+def _validate_project_path(folder_path: str) -> str:
+    """Resolves and validates that a path stays within the user's home directory tree."""
+    resolved = os.path.realpath(os.path.abspath(folder_path))
+    home = os.path.realpath(os.path.expanduser("~"))
+    if not resolved.startswith(home + os.sep) and resolved != home:
+        raise HTTPException(status_code=403, detail="Path outside permitted directory.")
+    return resolved
 
 @router.post("/save-recording")
 async def save_recording_endpoint(
@@ -208,18 +219,19 @@ async def save_recording_endpoint(
 ):
     """[DIRECTORIAL CAPTURE]: Persists a demo recording to the project root."""
     try:
-        # Ensure the directory exists
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path, exist_ok=True)
-            
+        safe_path = _validate_project_path(folder_path)
+        os.makedirs(safe_path, exist_ok=True)
+
         timestamp = int(time.time())
         filename = f"TomeMaster_Demo_{timestamp}.webm"
-        file_path = os.path.join(folder_path, filename)
-        
+        file_path = os.path.join(safe_path, filename)
+
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-            
+
         return {"success": True, "path": file_path, "filename": filename}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -232,23 +244,25 @@ async def save_snapshot_endpoint(req: SnapshotRequest):
     """[ARCHITECTURAL SNAPSHOT]: Archiving the creative state as a high-fidelity image."""
     try:
         import base64
-        
-        # Ensure the directory exists
-        if not os.path.exists(req.folder_path):
-            os.makedirs(req.folder_path, exist_ok=True)
-            
-        # Parse the data URL
-        header, encoded = req.data_url.split(",", 1)
+
+        safe_path = _validate_project_path(req.folder_path)
+        os.makedirs(safe_path, exist_ok=True)
+
+        if "," not in req.data_url:
+            raise HTTPException(status_code=400, detail="Invalid data URL format.")
+        _, encoded = req.data_url.split(",", 1)
         data = base64.b64decode(encoded)
-        
+
         timestamp = int(time.time())
         filename = f"TomeMaster_Snapshot_{timestamp}.png"
-        file_path = os.path.join(req.folder_path, filename)
-        
+        file_path = os.path.join(safe_path, filename)
+
         with open(file_path, "wb") as f:
             f.write(data)
-            
+
         return {"success": True, "path": file_path, "filename": filename}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Snapshot Archival Failure: {str(e)}")
 
@@ -416,7 +430,18 @@ async def get_api_usage():
 async def get_total_expenditure():
     """Returns the estimated total financial expenditure per provider calculated locally."""
     try:
-        return await ai_service.get_total_expenditure_async()
+        USAGE_LOG_PATH = "api_usage_log.jsonl"
+        if not os.path.exists(USAGE_LOG_PATH):
+            return {"totals": {}}
+        totals: Dict[str, float] = {}
+        with open(USAGE_LOG_PATH, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    entry = json.loads(line)
+                    provider = entry.get("provider", "unknown")
+                    tokens = entry.get("metrics", {}).get("total_tokens", 0)
+                    totals[provider] = totals.get(provider, 0) + tokens
+        return {"totals": totals}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -461,14 +486,6 @@ async def export_analysis_docx_endpoint(req: ExportMarkdownRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/moodboard")
-async def get_moodboard(req: CreativeRequest):
-    """Generates visual scene inspiration."""
-    try:
-        return await ai_service.analyze_moodboard_async(req.text, req.provider, req.api_key, model=req.model, local_mode=req.local_mode)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 @router.post("/world-bible")
 async def get_world_bible(req: CreativeRequest):
     """Extracts characters and locations (World-Building Wiki)."""
@@ -506,16 +523,12 @@ class ForecastRequest(BaseModel):
 
 @router.post("/forecast")
 async def get_processing_forecast(req: ForecastRequest):
-    """Returns an AI-driven processing duration estimate."""
+    """Returns a local processing duration estimate based on word and persona count."""
     try:
-        estimate = await ai_service.forecast_boardroom_duration_async(
-            req.word_count,
-            req.persona_count,
-            req.provider,
-            req.api_key,
-            req.model
-        )
-        return {"estimate": estimate}
+        words_per_second = 150
+        persona_overhead = 1.5
+        estimated_seconds = round((req.word_count / words_per_second) * req.persona_count * persona_overhead, 1)
+        return {"estimate": f"~{estimated_seconds}s ({req.persona_count} specialist(s), {req.word_count:,} words)"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -553,7 +566,7 @@ async def sovereign_system_audit():
         available_ram = psutil.virtual_memory().available / (1024**3) # GB
         cpu_count = psutil.cpu_count(logical=False)
         cpu_logical = psutil.cpu_count(logical=True)
-        cpu_usage = psutil.cpu_percentage(interval=0.1)
+        cpu_usage = psutil.cpu_percent(interval=0.1)
         
         fidelity_score = "stable"
         recommendation = "Local Mode Authorized."

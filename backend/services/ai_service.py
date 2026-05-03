@@ -57,9 +57,9 @@ async def analyze_emotional_arc_async(text: str, provider: str = "gemini", api_k
     if provider == "simulator":
         return json.loads(_simulate_creative("emotional_arc"))
 
-    client = _get_ai_client("gemini", api_key)
-    
-    selected_model = model if model else "gemini-1.5-pro" # Defaulting to stable Pro
+    client = _get_ai_client(provider, api_key)
+
+    selected_model = model if model else "gemini-1.5-pro"
 
     prompt = f"""
     Analyze the emotional arc and tension in the following manuscript text. 
@@ -138,17 +138,36 @@ async def generate_moodboard_async(text: str, provider: str = "gemini", api_key:
     
     return data
 
+async def _dispatch_json_prompt(client, provider: str, model: str, prompt: str) -> dict:
+    """Dispatches a JSON-mode prompt to the correct SDK path based on provider."""
+    if provider == "gemini":
+        response = await client.aio.models.generate_content(
+            model=model, contents=prompt,
+            config={"response_mime_type": "application/json"}
+        )
+        return json.loads(response.text)
+    elif provider in ["openai", "groq"]:
+        response = client.chat.completions.create(
+            model=model, messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"}
+        )
+        return json.loads(response.choices[0].message.content)
+    elif provider == "anthropic":
+        response = await client.messages.create(
+            model=model, max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return json.loads(response.content[0].text)
+    raise ValueError(f"Unsupported provider for JSON dispatch: {provider}")
+
 async def run_sentinel_async(content: str, provider: str = "gemini", api_key: str = None, model: str = None):
-    """
-    [CONTINUITY SENTINEL]: Audits for logical faults and character amnesia.
-    """
+    """[CONTINUITY SENTINEL]: Audits for logical faults and character amnesia."""
     client = _get_ai_client(provider, api_key)
     selected_model = model if model else "gemini-1.5-pro"
-
     prompt = f"""
     You are the Continuity Sentinel. Audit the following manuscript text for logical inconsistencies.
     Focus on character details, physical laws, timelines, and geographical discrepancies.
-    
+
     Format the output as JSON:
     {{
       "faults": [
@@ -157,71 +176,46 @@ async def run_sentinel_async(content: str, provider: str = "gemini", api_key: st
       ],
       "health_score": 0
     }}
-    
+
     Manuscript:
     {content[:50000]}
     """
-    
-    response = await client.aio.models.generate_content(
-        model=selected_model,
-        contents=prompt,
-        config={"response_mime_type": "application/json"}
-    )
-    return json.loads(response.text)
+    return await _dispatch_json_prompt(client, provider, selected_model, prompt)
 
 async def run_heatmap_async(content: str, provider: str = "gemini", api_key: str = None, model: str = None):
-    """
-    [NARRATIVE HEATMAP]: Real-time pacing and tension density analysis.
-    """
+    """[NARRATIVE HEATMAP]: Real-time pacing and tension density analysis."""
     client = _get_ai_client(provider, api_key)
     selected_model = model if model else "gemini-1.5-flash"
-
     prompt = f"""
     Analyze the pacing density of this text. Return a series of data points representing narrative tension.
     Format the output as JSON:
     {{
-      "heatmap": [0.2, 0.5, 0.8, 0.4, ...],
+      "heatmap": [0.2, 0.5, 0.8, 0.4],
       "pacing_advice": "Advice on narrative flow..."
     }}
-    
+
     Text:
     {content[:30000]}
     """
-    
-    response = await client.aio.models.generate_content(
-        model=selected_model,
-        contents=prompt,
-        config={"response_mime_type": "application/json"}
-    )
-    return json.loads(response.text)
+    return await _dispatch_json_prompt(client, provider, selected_model, prompt)
 
 async def run_dynamic_arc_async(content: str, provider: str = "gemini", api_key: str = None, model: str = None):
-    """
-    [DYNAMIC ARC]: Interactive plot recommendations based on structural manipulation.
-    """
+    """[DYNAMIC ARC]: Interactive plot recommendations based on structural manipulation."""
     client = _get_ai_client(provider, api_key)
     selected_model = model if model else "gemini-1.5-pro"
-
     prompt = f"""
     Suggest ways to manipulate the narrative arc of this text to increase tension or improve resolution.
     Format the output as JSON:
     {{
       "recommendations": [
-        {{"chapter": 1, "suggestion": "Narrative adjustment recommendation..."}},
-        ...
+        {{"chapter": 1, "suggestion": "Narrative adjustment recommendation..."}}
       ]
     }}
-    
+
     Text:
     {content[:50000]}
     """
-    
-    response = await client.aio.models.generate_content(
-        model=selected_model,
-        contents=prompt,
-        config={"response_mime_type": "application/json"}
-    )
-    return json.loads(response.text)
+    return await _dispatch_json_prompt(client, provider, selected_model, prompt)
 
 async def run_structural_analysis_async(text: str, provider: str = "gemini", api_key: str = None, model: str = None, local_mode: bool = False):
     """
@@ -338,7 +332,7 @@ def _simulate_creative(feature: str) -> str:
     return "{}"
 
 # ─── Build the prompt string for a given persona ──────────────────────────────
-def _build_prompt(text: str, persona: str, user_chapters: list[dict] = None) -> tuple[str, bool]:
+def _build_prompt(text: str, persona: str, user_chapters: list[dict] = None, synthesis_mode: bool = False) -> tuple[str, bool]:
     """Returns (prompt_string, is_json_mode). Always True for all agents now."""
     if persona == "Developmental Editor":
         # Branched Pacing Intelligence:
@@ -656,9 +650,11 @@ async def validate_key_async(provider: str, api_key: str, model: str = None, cus
                 # [SOVEREIGN HANDSHAKE]: Pure portfolio discovery
                 client.models.list()
                 return {"success": True, "message": "Anthropic Handshake Verified"}
-            except Exception:
-                # Fallback for older keys without list access
+            except anthropic.PermissionDeniedError:
+                # Older keys may not have model-list permission but are still valid
                 return {"success": True, "message": "Anthropic Handshake Assumed (Discovery Restricted)"}
+            except anthropic.AuthenticationError as e:
+                return {"success": False, "message": f"Anthropic Key Refused: {str(e)}"}
         elif provider == "groq":
             from openai import OpenAI
             client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")

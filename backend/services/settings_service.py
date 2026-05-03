@@ -31,15 +31,37 @@ def get_settings_path():
     backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(backend_root, SETTINGS_FILE)
 
+_PERMITTED_TOP_KEYS = set(DEFAULT_SETTINGS.keys())
+_PERMITTED_API_KEYS = {"openai", "gemini", "groq", "anthropic"}
+_PERMITTED_MODEL_KEYS = {"vision", "logic", "analysis"}
+_PERMITTED_PREF_KEYS = {"theme", "auto_stitch", "language"}
+
+def _validate_settings(data: dict) -> dict:
+    """Returns a copy of data with only permitted keys — drops unknown fields."""
+    clean = {}
+    for key in _PERMITTED_TOP_KEYS:
+        if key not in data:
+            continue
+        if key == "api_keys":
+            clean[key] = {k: str(v) for k, v in data[key].items() if k in _PERMITTED_API_KEYS}
+        elif key == "preferred_models":
+            clean[key] = {k: str(v) for k, v in data[key].items() if k in _PERMITTED_MODEL_KEYS}
+        elif key == "preferences":
+            clean[key] = {k: data[key][k] for k in _PERMITTED_PREF_KEYS if k in data[key]}
+        else:
+            clean[key] = data[key]
+    return clean
+
 def load_settings():
     """[VAULT HYDRATION]: Recovers settings from disk or returns defaults if missing."""
     path = get_settings_path()
     if not os.path.exists(path):
         return DEFAULT_SETTINGS
-    
+
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            raw = json.load(f)
+        return _validate_settings(raw)
     except Exception as e:
         print(f"SETTINGS ERROR: Failed to hydrate vault: {e}")
         return DEFAULT_SETTINGS
@@ -49,23 +71,21 @@ def save_settings(new_settings):
     path = get_settings_path()
     with SETTINGS_LOCK:
         try:
-            # Atomic update: load current and merge to prevent data loss
             current = load_settings()
-            # Deep merge logic simplified for now
-            for key in new_settings:
-                if isinstance(new_settings[key], dict) and key in current:
-                    current[key].update(new_settings[key])
+            validated = _validate_settings(new_settings)
+            for key in validated:
+                if isinstance(validated[key], dict) and key in current:
+                    current[key].update(validated[key])
                 else:
-                    current[key] = new_settings[key]
-            
+                    current[key] = validated[key]
+
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(current, f, indent=4)
-            
-            # [SHADOW-SAVE]: Redundant backup to prevent workspace amnesia
+
             backup_path = path + ".bak"
             with open(backup_path, "w", encoding="utf-8") as f:
                 json.dump(current, f, indent=4)
-                
+
             return True
         except Exception as e:
             print(f"SETTINGS ERROR: Failed to seal vault: {e}")

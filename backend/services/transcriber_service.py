@@ -21,14 +21,12 @@ import datetime
 from .ai_service import _log_api_usage
 
 def natural_sort_key(s):
-    """[NATURAL SORT]: Standard sequence logic for manuscript numbering (1, 2, 10...)."""
+    """[NATURAL SORT]: Sequence logic for manuscript numbering (1, 2, 10...)."""
     return [int(text) if text.isdigit() else text.lower()
-            for text in re.split('([0-9]+)', os.path.basename(s))]
+            for text in re.split(r'(\d+)', os.path.basename(s))]
 
-def industrial_sort_key(path):
-    """[NATURAL SORT]: High-fidelity sequence logic for 1000+ file batches."""
-    filename = os.path.basename(path).lower()
-    return [int(text) if text.isdigit() else text for text in re.split(r'(\d+)', filename)]
+# Alias kept for call-site compatibility
+industrial_sort_key = natural_sort_key
 
 # [LEDGER]: Standard filename for project state and history tracking
 TRANSCRIPTION_STATE_FILE = "project_ledger.json"
@@ -60,6 +58,11 @@ TRANSCRIPTION_STATE = {
 }
 
 TRANSCRIPTION_ARTIFACTS_DIR = "Archive"
+
+# Tracks whether a stitching thread is actually running in THIS process.
+# Unlike the ledger status (which persists across restarts), this is always
+# False at boot — prevents stale "stitching" ledger entries from blocking re-runs.
+_stitching_active = threading.Event()
 
 def log_to_diary(message: str):
     """[DIARY]: Records a milestone to the project ledger for contextual guidance."""
@@ -525,10 +528,10 @@ def run_transcription_job(api_key: str, folder_path: str, provider: str = "opena
             client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
         else:
             # OpenAI Path (Default)
-            if "sk-" not in str(api_key):
+            if not api_key or not str(api_key).strip():
                 api_key = os.environ.get("OPENAI_API_KEY", "")
 
-            if not api_key or "sk-" not in str(api_key):
+            if not api_key or not str(api_key).strip():
                 TRANSCRIPTION_STATE["status"] = "error"
                 TRANSCRIPTION_STATE["error_message"] = "Invalid or missing OpenAI API Key."
                 return
@@ -568,24 +571,14 @@ def run_transcription_job(api_key: str, folder_path: str, provider: str = "opena
             #         traceback.print_exc()
             #         print(f"MIGRATION ERROR: Failed to anchor {f}: {e}")
 
-        # 2. Search for files in BOTH root (fallback) and artifacts directory
-        search_paths = [folder_path]
-        if os.path.exists(artifacts_path) and artifacts_path != folder_path:
-            search_paths.insert(0, artifacts_path)
-            
-        seen_filenames = set()
+        # 2. Collect images from root ONLY. Archive is strictly off-limits —
+        # images there have already been transcribed and must never be re-queued.
         all_files = []
-        
-        # Priority scan: artifacts folder first, then root fallback
-        for sp in search_paths:
-            found = []
-            # [CASE-AGNOSTIC SCAN]: Hunt for both uppercase and lowercase extensions
-            for ext in ["jpg", "jpeg", "png", "pdf", "webp", "JPG", "JPEG", "PNG", "PDF", "WEBP"]:
-                found += glob.glob(os.path.join(sp, f"*.{ext}"))
-            
-            for f_path in found:
+        seen_filenames = set()
+        for ext in ["jpg", "jpeg", "png", "pdf", "webp", "JPG", "JPEG", "PNG", "PDF", "WEBP"]:
+            for f_path in glob.glob(os.path.join(folder_path, f"*.{ext}")):
                 fname = os.path.basename(f_path)
-                if fname not in seen_filenames:
+                if fname.lower() != "cover.jpg" and fname not in seen_filenames:
                     all_files.append(f_path)
                     seen_filenames.add(fname)
 
@@ -714,6 +707,7 @@ def run_transcription_job(api_key: str, folder_path: str, provider: str = "opena
                     with TRANSCRIPTION_LOCK:
                         TRANSCRIPTION_STATE["processed_images"] = i + 1
                         TRANSCRIPTION_STATE["current_batch"] = i + 1
+                        TRANSCRIPTION_STATE["error_message"] = f"Verified {i + 1} of {total_files} — {os.path.basename(f_path)} already sealed."
                 continue
 
             # 2. Cache Skip (Only if physical check didn't already skip)
@@ -789,15 +783,9 @@ def run_transcription_job(api_key: str, folder_path: str, provider: str = "opena
                     try:
                         # [SOVEREIGN BRIDGE]: Safer async execution in background thread
                         import asyncio
-                        try:
-                            loop = asyncio.get_event_loop()
-                        except RuntimeError:
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                        
-                        raw_text, used_prov, used_mod = loop.run_until_complete(_call_ai_with_failover(
-                            img, provider, model_override, api_key, 
-                            fallback_provider=fallback_provider, 
+                        raw_text, used_prov, used_mod = asyncio.run(_call_ai_with_failover(
+                            img, provider, model_override, api_key,
+                            fallback_provider=fallback_provider,
                             fallback_model=fallback_model
                         ))
                         
@@ -847,6 +835,11 @@ def run_transcription_job(api_key: str, folder_path: str, provider: str = "opena
 
                 with TRANSCRIPTION_LOCK:
                     TRANSCRIPTION_STATE["processed_images"] += len(batch)
+                    TRANSCRIPTION_STATE["last_processed_file"] = os.path.basename(label)
+                    TRANSCRIPTION_STATE["error_message"] = (
+                        f"Page {TRANSCRIPTION_STATE['processed_images']} of {total_files} digitized — "
+                        f"{os.path.basename(label)}"
+                    )
                     TRANSCRIPTION_STATE["pages"] = list(master_pages)
                     TRANSCRIPTION_STATE["page_audits"] = [
                         {
@@ -998,14 +991,22 @@ def ingest_project_baseline(folder_path: str):
         # 4. Hydrate State via Sovereign Scenarios
         with TRANSCRIPTION_LOCK:
             if len(root_rtf_names) > 0:
-                # [S2]: UNSEALED ARTIFACTS IN ROOT (Mandatory Stitch)
+                # [S2]: UNSEALED RTF ARTIFACTS IN ROOT — silent injection, no OCR required.
+                print(f"BOARDROOM: ingest found {len(root_rtf_names)} RTF(s) in root: {root_rtf_names[:10]}")
                 if lock_exists:
-                    status_msg = "Voice of TomeMaster: I have identified a disrupted assembly. Resuming the partial recovery of your manuscript now."
+                    status_msg = f"Voice of TomeMaster: Resuming partial assembly — {len(root_rtf_names)} artifact(s) found. Injecting silently."
                 else:
-                    status_msg = "Voice of TomeMaster: New prose artifacts detected in the root. Executing industrial assembly to unify your work."
-                
-                new_status = "sewing"
-                threading.Thread(target=resort_from_cache, args=(folder_path,)).start()
+                    status_msg = f"Voice of TomeMaster: {len(root_rtf_names)} recovered page(s) found in root. Injecting silently into the manuscript now."
+
+                new_status = "stitching"
+                if not _stitching_active.is_set():
+                    print(f"BOARDROOM: Starting resort_from_cache thread for '{folder_path}'")
+                    TRANSCRIPTION_STATE["status"] = "stitching"
+                    t = threading.Thread(target=resort_from_cache, args=(folder_path,))
+                    t.daemon = True
+                    t.start()
+                else:
+                    print("BOARDROOM: resort_from_cache already running — skipping duplicate thread.")
 
             elif len(all_images) > 0:
                 # [S1]: FRESH WORK IN ROOT
@@ -1063,9 +1064,15 @@ def ingest_project_baseline(folder_path: str):
 def resort_from_cache(folder_path: str):
     """Industrial Grade Hydrator: Assembles any number of pages (10-1000+) from physical RTF files."""
     if not folder_path: return False
+    if _stitching_active.is_set():
+        print("BOARDROOM: Stitching already active in this process. Skipping duplicate call.")
+        return False
+    _stitching_active.set()
     folder_path = folder_path.strip().replace('\\', '/')
+    output_path = os.path.join(folder_path, "Unified_Manuscript.md")
+    tmp_path = output_path + ".tmp"
     print(f"BOARDROOM: Executing Industrial Hydration for: {folder_path}")
-    
+
     try:
         # 1. Industrial Discovery: Root Scan ONLY (Archive scan strictly forbidden)
         all_rtfs = []
@@ -1073,11 +1080,11 @@ def resort_from_cache(folder_path: str):
             for f in os.listdir(folder_path):
                 if f.lower().endswith(".rtf"):
                     all_rtfs.append(os.path.join(folder_path, f).replace('\\', '/'))
-        
+
         all_rtfs.sort(key=industrial_sort_key)
-        
-        all_rtfs.sort(key=industrial_sort_key)
-        
+
+        print(f"BOARDROOM: resort_from_cache scanning '{folder_path}' — found {len(all_rtfs)} RTF files: {[os.path.basename(r) for r in all_rtfs[:10]]}")
+
         if not all_rtfs:
             print("BOARDROOM: Bucket is empty. Stitcher standing down.")
             with TRANSCRIPTION_LOCK:
@@ -1099,96 +1106,120 @@ def resort_from_cache(folder_path: str):
         numbered_rtfs.sort(key=industrial_sort_key)
         
         # [SEQUENCE RECOVERY]: Parse the existing manuscript to find which pages are already 'Sealed'
-        # This eliminates the need to scan Archive.
         manuscript_pages = {} # {page_num: content}
         if os.path.exists(output_path):
             try:
                 with open(output_path, "r", encoding="utf-8") as mr:
                     m_content = mr.read()
-                    # Parse markers like --- [PAGE START: page_1.rtf] ---
-                    # We look for content between one marker and the next (or end of doc)
                     pattern = r'--- \[PAGE START: page_(\d+)\.rtf\] ---\n(.*?)(?=\n--- \[PAGE START:|\n--- \[MISSING PAGE:|\n--- \[UNSORTED|$)'
                     matches = re.finditer(pattern, m_content, re.DOTALL)
                     for match in matches:
                         p_num = int(match.group(1))
                         p_text = match.group(2).strip()
-                        
-                        # [FORMAT REPAIR]: Strip out any nested DIRECTORIAL ALERTS that got stuck inside previous pages
+                        # Strip any nested DIRECTORIAL ALERTS that got stuck inside previous pages
                         p_text = re.sub(r'\[DIRECTORIAL ALERT: PAGE \d+ MISSING[^\]]*\]\n*', '', p_text).strip()
-                        
-                        # [FLOW RESTORATION]: Clean up historically fragmented pages
                         p_text = restore_text_flow_if_fragmented(p_text)
-                        
                         manuscript_pages[p_num] = p_text
             except Exception as e:
                 print(f"BOARDROOM WARNING: Failed to parse manuscript history: {e}")
+
+        # [ARCHIVE RECOVERY]: If no manuscript exists yet (first successful run, or recovery),
+        # read Archive RTFs to reconstruct sealed pages rather than counting them as missing.
+        if not manuscript_pages:
+            archive_dir = os.path.join(folder_path, "Archive")
+            if os.path.exists(archive_dir):
+                recovered = 0
+                for fname in os.listdir(archive_dir):
+                    if not fname.lower().endswith(".rtf"): continue
+                    m = re.search(r'page_(\d+)', fname.lower())
+                    if not m: continue
+                    p_num = int(m.group(1))
+                    try:
+                        with open(os.path.join(archive_dir, fname), "r", encoding="utf-8", errors="ignore") as r:
+                            content = r.read()
+                            clean = strip_rtf(content)
+                            clean = restore_text_flow_if_fragmented(clean)
+                            clean = re.sub(r'^(Page|PAGE)\s*\d+\s*$', '', clean, flags=re.MULTILINE).strip()
+                            manuscript_pages[p_num] = clean
+                            recovered += 1
+                    except Exception as e:
+                        print(f"BOARDROOM WARNING: Archive recovery failed for {fname}: {e}")
+                if recovered:
+                    print(f"BOARDROOM: Archive recovery complete — {recovered} sealed page(s) restored.")
 
         # [ACTIVE DISCOVERY]: Get the pages currently in the Root
         page_to_rtf = {int(re.search(r'page_(\d+)', os.path.basename(f)).group(1)): f for f in all_rtfs if re.search(r'page_(\d+)', os.path.basename(f))}
         root_nums = set(page_to_rtf.keys())
         
         # [GLOBAL SCOPE]: The range of the entire project
-        # We rely on the ledger's total_images as the absolute anchor
+        # Always expand to cover all known pages — root RTFs may exceed ledger's total_images
         total_goal = TRANSCRIPTION_STATE.get("total_images", 0)
-        if total_goal == 0 and (manuscript_pages or root_nums):
-            total_goal = max(max(manuscript_pages.keys(), default=-1), max(root_nums, default=-1)) + 1
+        if manuscript_pages or root_nums:
+            dynamic_max = max(max(manuscript_pages.keys(), default=-1), max(root_nums, default=-1))
+            if dynamic_max + 1 > total_goal:
+                total_goal = dynamic_max + 1
+                print(f"BOARDROOM: total_goal expanded to {total_goal} to cover all root artifacts.")
+
+        print(f"BOARDROOM: resort_from_cache — {len(root_nums)} root RTFs, {len(manuscript_pages)} existing pages, total_goal={total_goal}")
             
         expected_range = range(0, total_goal)
         
-        # [GAP ANALYSIS]: Only perform gap analysis if this is a newly loaded manuscript
-        gaps = []
-        if not manuscript_pages:
-            gaps = [i for i in expected_range if i not in manuscript_pages and i not in root_nums]
+        # Pages still missing after this injection: had no content AND are not being injected now.
+        still_missing = sorted([
+            i for i in expected_range
+            if i not in root_nums and (i not in manuscript_pages or not manuscript_pages[i].strip())
+        ])
 
         try:
             with open(tmp_path, "w", encoding="utf-8") as f:
                 # 1. Write Directorial Header
                 f.write(f"# TomeMaster Unified Manuscript\n")
                 f.write(f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                
-                if gaps:
-                    gap_str = ", ".join(map(str, gaps))
+
+                if still_missing:
+                    gap_str = ", ".join(map(str, still_missing))
                     f.write(f"\n> [DIRECTORIAL ALERT]: Sequence Disruption at pages: {gap_str}.\n")
                     f.write(f"> Action Required: Place missing page photos in the root for automated injection, or manually insert prose at the marked anchors.\n")
                 else:
                     f.write(f"\n> [SYSTEM STATUS]: Manuscript sequence is 100% verified. No gaps detected.\n")
-                
+
                 f.write(f"\n--- [START OF DOCUMENT] ---\n\n")
-                
+
                 # 2. Sequential Reconstruction (Surgical Injection)
                 final_text_list = []
                 processed_rtfs = []
+                injected_pages = []
                 for i in expected_range:
                     if i in root_nums:
-                        # [INJECTION]: New content from Root
+                        # [INJECTION]: New content from Root RTF
                         rtf_path = page_to_rtf[i]
                         try:
                             with open(rtf_path, "r", encoding="utf-8", errors="ignore") as r:
                                 content = r.read()
                                 clean_content = strip_rtf(content)
                                 clean_content = restore_text_flow_if_fragmented(clean_content)
-                                # Remove standalone page markers
                                 clean_content = re.sub(r'^(Page|PAGE)\s*\d+\s*$', '', clean_content, flags=re.MULTILINE).strip()
-                                
+
                                 f.write(f"--- [PAGE START: page_{i}.rtf] ---\n")
                                 f.write(clean_content + "\n\n")
                                 final_text_list.append(clean_content)
                                 processed_rtfs.append(rtf_path)
+                                injected_pages.append(i)
                         except Exception as e:
                             print(f"BOARDROOM ERROR: Failed to stitch page {i}: {e}")
-                    
-                    elif i in manuscript_pages:
-                        # [PRESERVATION]: Recovered from existing manuscript
+
+                    elif i in manuscript_pages and manuscript_pages[i].strip():
+                        # [PRESERVATION]: Existing page with real content
                         f.write(f"--- [PAGE START: page_{i}.rtf] ---\n")
                         f.write(manuscript_pages[i] + "\n\n")
                         final_text_list.append(manuscript_pages[i])
-                    
+
                     else:
-                        # [GAP]: Missing page marker. Only inject if manuscript is new.
-                        if not manuscript_pages:
-                            marker = f"--- [PAGE START: page_{i}.rtf] ---\n"
-                            placeholder = f"[DIRECTORIAL ALERT: PAGE {i} MISSING - Awaiting Transcription Injection or Author Insertion]\n\n"
-                            f.write(marker + placeholder)
+                        # [GAP]: Page still missing — write marker to file AND surface it in the editor
+                        gap_marker = f"[DIRECTORIAL ALERT: PAGE {i} MISSING - Awaiting Transcription Injection or Author Insertion]"
+                        f.write(f"--- [PAGE START: page_{i}.rtf] ---\n")
+                        f.write(gap_marker + "\n\n")
+                        final_text_list.append(gap_marker)
                 
                 # 3. Post-Process Unknowns (Epilogue)
                 if unknown_rtfs:
@@ -1210,8 +1241,6 @@ def resort_from_cache(folder_path: str):
 
             # [ATOMIC SEALING]: Finalize the unified manuscript
             if os.path.exists(tmp_path):
-                # We do this in a retry loop because Windows sometimes holds temporary locks
-                import time
                 max_retries = 3
                 sealed = False
                 for attempt in range(max_retries):
@@ -1242,13 +1271,24 @@ def resort_from_cache(folder_path: str):
                     print(f"BOARDROOM ERROR: CRITICAL LOCK FAILURE on {output_path}. Aborting.")
                 
                 # [STATE SYNC]: Update UI and persistent state
+                if injected_pages:
+                    inj_str = ", ".join(map(str, injected_pages))
+                    if still_missing:
+                        miss_str = ", ".join(map(str, still_missing))
+                        completion_msg = f"Voice of TomeMaster: {len(injected_pages)} page(s) injected (pages {inj_str}). {len(still_missing)} page(s) still missing: {miss_str}."
+                    else:
+                        completion_msg = f"Voice of TomeMaster: {len(injected_pages)} page(s) injected (pages {inj_str}). Manuscript sequence is now 100% complete."
+                else:
+                    completion_msg = "Voice of TomeMaster: Assembly complete. No new pages were injected."
+
                 with TRANSCRIPTION_LOCK:
                     TRANSCRIPTION_STATE.update({
-                        "status": "complete" if not gaps else "idle",
-                        "processed_images": total_goal - len(gaps),
+                        "status": "complete" if not still_missing else "complete",
+                        "processed_images": total_goal - len(still_missing),
                         "total_images": total_goal,
+                        "missing_pages_count": len(still_missing),
                         "text": "\n\n".join(final_text_list),
-                        "error_message": "Voice of TomeMaster: Industrial assembly complete. Manuscript foundations are sealed." if not gaps else f"Voice of TomeMaster: Assembly complete. Sequence disruptions identified at pages {', '.join(map(str, gaps))}."
+                        "error_message": completion_msg
                     })
                 save_persistent_state()
                 print(f"BOARDROOM: Manuscript Sealed at {output_path}")
@@ -1266,6 +1306,8 @@ def resort_from_cache(folder_path: str):
             TRANSCRIPTION_STATE["status"] = "error"
             TRANSCRIPTION_STATE["error_message"] = f"Global Assembly Failure: {str(e)}"
         return False
+    finally:
+        _stitching_active.clear()
 
 def _get_ai_client(provider: str, api_key: str):
     """Sovereign Handshake Factory: Generates the requested AI client with prioritized credential resolution."""
@@ -1359,19 +1401,12 @@ async def _call_ai_with_failover(img, primary_provider, primary_model, primary_k
 def start_transcription_background(api_key: str, provider: str, folder_path: str = None, reset_cache: bool = False, mode: str = "batch", model: str = None, fallback_provider: str = None, fallback_model: str = None):
     """Triggered by the API endpoint to spawn the folder picker and launch the background thread."""
     
-    # [SOVEREIGN GUARD]: Prevent overlapping threads from corrupting the state
     global TRANSCRIPTION_STATE
-    if TRANSCRIPTION_STATE.get("status") in ["running", "indexing"]:
-        print("[DIRECTORIAL BLOCK]: An active mission is already in progress.")
-        return False, None
-    # [EMERGENCY OVERRIDE]: If stuck at initializing, we forcibly reset
     with TRANSCRIPTION_LOCK:
         current_status = TRANSCRIPTION_STATE.get("status", "standby")
-        if current_status in ["indexing", "processing"] and not reset_cache:
+        if current_status in ["running", "indexing", "processing"] and not reset_cache:
             print(f"BOARDROOM: Re-entrancy blocked. Engine is already in {current_status} mode for {TRANSCRIPTION_STATE.get('folder')}")
             return True, TRANSCRIPTION_STATE.get('folder')
-        
-        # If we are here, we are either starting fresh or breaking a deadlock
         TRANSCRIPTION_STATE["status"] = "Initializing file system..."
 
     folder = folder_path if folder_path else pick_directory()

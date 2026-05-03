@@ -1,8 +1,10 @@
 import sys
 import os
 import subprocess
-
 import threading
+
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 # [SOVEREIGN ENGINE]: Standard initialization sequence
 from fastapi import FastAPI
@@ -17,11 +19,12 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Configure CORS: Hyper-Permissive Anchor for development stability
+# Configure CORS: Allow any localhost/127.0.0.1 port (desktop app — frontend port varies)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True, 
+    allow_origins=[],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -5,6 +5,7 @@ import Placeholder from '@tiptap/extension-placeholder';
 import { TextAlign } from '@tiptap/extension-text-align';
 import { Bold, Italic, Strikethrough as StrikeIcon, Heading1, Heading2, Pilcrow, List, ListOrdered, Undo, Redo, Quote, AlignLeft, AlignCenter, AlignRight, ReplaceAll, Wand2, Plus, FastForward, EyeOff, Check, BookCheck, Lock, Pen, Type, Globe, Pin, PinOff, Eraser, Search, ArrowUp, ArrowDown, X } from 'lucide-react';
 import React, { useEffect, useRef, forwardRef, useImperativeHandle, useState } from 'react';
+import DOMPurify from 'dompurify';
 import { createPortal } from 'react-dom';
 import { Spellcheck } from '../extensions/Spellcheck';
 import { GrammarCheck } from '../extensions/GrammarCheck';
@@ -252,17 +253,17 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
     },
     insertChunk: (html: string) => {
       if (editor) {
-        editor.commands.insertContentAt(editor.state.doc.content.size, html);
+        editor.commands.insertContentAt(editor.state.doc.content.size, DOMPurify.sanitize(html));
       }
     },
     setContent: (html: string) => {
       if (editor) {
-        editor.commands.setContent(html);
+        editor.commands.setContent(DOMPurify.sanitize(html));
       }
     },
     insertContent: (html: string) => {
       if (editor) {
-        editor.chain().focus().insertContent(html).run();
+        editor.chain().focus().insertContent(DOMPurify.sanitize(html)).run();
       }
     },
     replaceText: (search: string, replacement: string) => {

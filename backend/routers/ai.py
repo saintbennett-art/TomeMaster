@@ -28,11 +28,15 @@ async def get_ollama_status(api_key: Optional[str] = Query(None)):
     except Exception:
         return {"status": "not_found", "models": []}
 
-@router.get("/models")
-async def get_cloud_models(provider: str, api_key: str):
+class ModelsRequest(BaseModel):
+    provider: str
+    api_key: str
+
+@router.post("/models")
+async def get_cloud_models(req: ModelsRequest):
     """Discovery Pulse: Fetches the live list of commissioned models from a cloud provider."""
     try:
-        return await ai_service.list_models_async(provider, api_key)
+        return await ai_service.list_models_async(req.provider, req.api_key)
     except Exception as e:
         return {"success": False, "message": str(e), "models": []}
 
