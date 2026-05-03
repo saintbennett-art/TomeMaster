@@ -2,12 +2,27 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { get, set } from "idb-keyval";
-import { 
-    checkTranscriptionStatus, startTranscription, anchorFolder, 
+import {
+    checkTranscriptionStatus, startTranscription, anchorFolder,
     clearTranscription, checkLicenseStatus, API_BASE_HOLDER,
     resortTranscription
 } from "@/lib/apiClient";
 import { loadCompressed, saveCompressed } from "@/lib/storage_utils";
+
+// Converts plain OCR text to safe HTML by escaping all entities first,
+// then wrapping paragraphs. Input is plain text so escaping is correct here.
+function sanitizeTextToHtml(rawText: string): string {
+    const escape = (s: string) => s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    return rawText.split('\n\n')
+        .map(p => p.trim())
+        .filter(p => p.length > 0)
+        .map(p => `<p>${escape(p).replace(/\n/g, '<br/>')}</p>`)
+        .join('');
+}
 
 // --- Types ---
 interface WorkstationState {
@@ -90,6 +105,10 @@ interface WorkstationActions {
     setActiveFolderPath: (val: string | null) => void;
     setTranscriptionMode: (val: 'batch' | 'live') => void;
     setTranscriptionReset: (val: boolean) => void;
+    setProviderTranscribe: (val: string) => void;
+    setModelTranscribe: (val: string) => void;
+    setProviderBoardroom: (val: string) => void;
+    setModelBoardroom: (val: string) => void;
     setProviderFallback: (val: string) => void;
     setModelFallback: (val: string) => void;
     setIsOfflineMode: (val: boolean) => void;
@@ -130,6 +149,8 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     // Editor State
     const [content, setContent] = useState("");
+    const contentRef = React.useRef(content);
+    React.useEffect(() => { contentRef.current = content; }, [content]);
     const [htmlContent, setHtmlContent] = useState("");
     const [chapters, setChapters] = useState<any[]>([]);
     const [aiChapters, setAiChapters] = useState<any[]>([]);
@@ -252,17 +273,22 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
             const state = await checkTranscriptionStatus(false);
             setTranscriptionStatus({...state});
             
-            if (state.status === 'sewing') {
-                notify("Voice of TomeMaster: Assembly is in progress. Hydrating the editor shortly...");
+            if (state.status === 'sewing' || state.status === 'stitching') {
+                notify(state.error_message || "Voice of TomeMaster: Assembly is in progress. Hydrating the editor shortly...");
                 // Poll every 2 seconds until complete
                 const poll = setInterval(async () => {
                     const nextState = await checkTranscriptionStatus(false);
                     setTranscriptionStatus({...nextState});
-                    if (nextState.status === 'complete' && nextState.text) {
+                    if (nextState.status === 'complete' || nextState.status === 'idle') {
                         clearInterval(poll);
-                        setContent(nextState.text);
-                        setHtmlContent(nextState.text.split('\n\n').map(p => `<p>${p.replace(/\n/g, '<br/>')}</p>`).join(''));
+                        if (nextState.text) {
+                            setContent(nextState.text);
+                            setHtmlContent(sanitizeTextToHtml(nextState.text));
+                        }
                         notify(nextState.error_message || "Manuscript restored to editor.");
+                    } else if (nextState.status === 'error') {
+                        clearInterval(poll);
+                        notify(`Injection failed: ${nextState.error_message || "Unknown error."}`);
                     }
                 }, 2000);
                 return;
@@ -273,13 +299,7 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 localStorage.setItem('tome_master_shadow_path', folder);
                 
                 setContent(state.text);
-                const paragraphs = state.text.split('\n\n');
-                let html = "";
-                for (let i = 0; i < paragraphs.length; i++) {
-                    const p = paragraphs[i].trim();
-                    if (p) html += `<p>${p.replace(/\n/g, '<br/>')}</p>`;
-                }
-                setHtmlContent(html);
+                setHtmlContent(sanitizeTextToHtml(state.text));
                 notify(state.error_message || "Manuscript restored to editor.");
             } else {
                 notify("No unified manuscript found. Transcribe the project first.");
@@ -304,7 +324,7 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
             // [STEALTH STITCH]: If we are 100% digitized but need a manuscript re-assembly, skip the modal.
             const isFullyDigitized = (transcriptionStatus?.total_images || 0) > 0 && 
                                    (transcriptionStatus?.total_images === transcriptionStatus?.processed_images);
-            const hasRootWork = transcriptionStatus?.status === 'sewing'; // 'sewing' means ingest found RTFs in root
+            const hasRootWork = transcriptionStatus?.status === 'stitching'; // 'stitching' means ingest found RTFs in root
 
             if (isFullyDigitized || hasRootWork) {
                 const stitchMsg = hasRootWork 
@@ -372,10 +392,9 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 setIsTranscribing(false);
             }
         } catch (e: any) {
-            setIsTranscribing(true); // Keep UI in error state
-            setTranscriptionStatus({ 
-                status: 'error', 
-                error_message: e.message || "Engine Connection Interrupted" 
+            setTranscriptionStatus({
+                status: 'error',
+                error_message: e.message || "Engine Connection Interrupted"
             });
             notify(`CRITICAL ENGINE FAILURE: ${e.message || "Unknown error"}`);
             setIsTranscribing(false);
@@ -421,19 +440,29 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
                     // [HYDRATION SYNC]: Immediately pull the results of the scan into the UI
                     const state = await checkTranscriptionStatus(false); // [FULL]: We want the text if it exists
                     setTranscriptionStatus({...state});
-                    
-                    // [SOVEREIGN SYNC]: If the engine has a sealed manuscript, end the amnesia
-                    if (state.text && !content) {
-                        console.log("HYDRATION: Injecting sealed manuscript into editor.");
-                        setContent(state.text);
-                        setHtmlContent(state.text.split('\n\n').map(p => `<p>${p.replace(/\n/g, '<br/>')}</p>`).join(''));
-                    }
 
-                    // [STATE SYNC]: Ensure the 'Active' badge reflects the real backend mode
+                    // [STATE SYNC]: Show the Ingestion banner only for active OCR.
+                    // "stitching" = silent RTF injection (no banner); "sewing" = post-OCR assembly (banner ok).
                     if (state.status === 'running' || state.status === 'indexing' || state.status === 'sewing') {
                         setIsTranscribing(true);
                     } else {
                         setIsTranscribing(false);
+                        if (state.status === 'stitching') {
+                            // Injection is in-flight — STITCH WATCHER useEffect handles loading on completion.
+                            notify(state.error_message || "Recovered pages found — injecting silently into manuscript...");
+                        } else if (state.status === 'complete' && state.text && state.error_message?.includes('injected')) {
+                            // Race condition: stitching finished before our first poll.
+                            // The error_message from resort_from_cache always contains "injected" in this case.
+                            console.log("HYDRATION: Stitch completed before first poll — loading injected manuscript.");
+                            setContent(state.text);
+                            setHtmlContent(sanitizeTextToHtml(state.text));
+                            notify(state.error_message);
+                        } else if (state.text && !contentRef.current) {
+                            // Normal hydration: no existing editor content — load from sealed manuscript.
+                            console.log("HYDRATION: Injecting sealed manuscript into editor.");
+                            setContent(state.text);
+                            setHtmlContent(sanitizeTextToHtml(state.text));
+                        }
                     }
                 } catch (e) {
                     console.warn("HYDRATION: Auto-Pulse failed.");
@@ -530,29 +559,64 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
         if (arcData && arcData.length > 0) set('tome_master_draft_arc', arcData);
     }, [arcData]);
 
-    // [INDUSTRIAL SCOUT]: Background polling to detect new physical files in the root
+    // [SILENT STITCH WATCHER]: Polls every 4s while a silent RTF injection is running.
+    // When the backend transitions from "stitching" → "complete", pushes the updated
+    // manuscript into the editor and notifies the author of injected pages.
     useEffect(() => {
-        // [SOVEREIGN HOLIDAY]: The Scout only runs if there are identified gaps in the manuscript sequence.
+        if (transcriptionStatus?.status !== 'stitching' || !activeFolderPath) return;
+        const watcher = setInterval(async () => {
+            try {
+                const state = await checkTranscriptionStatus(false);
+                setTranscriptionStatus({...state});
+                if (state.status === 'complete' || state.status === 'idle') {
+                    clearInterval(watcher);
+                    if (state.text) {
+                        setContent(state.text);
+                        setHtmlContent(sanitizeTextToHtml(state.text));
+                    }
+                    notify(state.error_message || "Voice of TomeMaster: Silent injection complete. Manuscript updated.");
+                } else if (state.status === 'error') {
+                    clearInterval(watcher);
+                    notify(`Injection failed: ${state.error_message || "Unknown error. Check backend logs."}`);
+                }
+            } catch (e) {
+                console.warn("STITCH WATCHER: Poll interrupted.");
+            }
+        }, 4000);
+        return () => clearInterval(watcher);
+    }, [transcriptionStatus?.status, activeFolderPath]);
+
+    // [INDUSTRIAL SCOUT]: Watches for new RTF files dropped into the root while the app is running.
+    // Fires every 20s when the manuscript has known missing pages — no restart required.
+    useEffect(() => {
         const missingCount = transcriptionStatus?.missing_pages_count || 0;
         if (!activeFolderPath || isTranscribing || missingCount === 0) return;
-        
+
         const scout = setInterval(async () => {
             try {
-                // Perform a quick ingestion pulse
                 const res = await fetch(`${API_BASE_HOLDER.current}/transcribe/ingest?folder_path=${encodeURIComponent(activeFolderPath)}`);
-                if (res.ok) {
-                    const state = await checkTranscriptionStatus(true);
-                    if (state.status === 'sewing') {
-                        // Backend started a stitch! Update UI to reflect 'Ingestion Protocol Active'
-                        setIsTranscribing(true);
-                        setTranscriptionStatus(state);
-                        notify("Voice of TomeMaster: New manuscript assets identified in the root. I am assembling your foundations automatically.");
+                if (!res.ok) return;
+
+                // Use full mode so we have `text` available for the fast-complete case
+                const state = await checkTranscriptionStatus(false);
+
+                if (state.status === 'stitching') {
+                    // Injection in-flight — update status so STITCH WATCHER takes over
+                    setTranscriptionStatus({...state});
+                    notify(state.error_message || "New manuscript assets identified. Assembling automatically...");
+                } else if (state.status === 'complete' && state.error_message?.includes('injected')) {
+                    // Injection completed before our next poll — surface it directly
+                    setTranscriptionStatus({...state});
+                    if (state.text) {
+                        setContent(state.text);
+                        setHtmlContent(sanitizeTextToHtml(state.text));
                     }
+                    notify(state.error_message);
                 }
             } catch (e) {
                 console.warn("SCOUT ERROR: Ingestion pulse interrupted.");
             }
-        }, 60000); // Pulse every 60 seconds
+        }, 20000); // 20s — responsive without hammering the backend
 
         return () => clearInterval(scout);
     }, [activeFolderPath, isTranscribing, notify]);
@@ -580,7 +644,8 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setSelectedText, setCurrentChapterId, setCurrentParagraphText,
         setWordCount, setMisspelledCount,
         setIsTranscribing, setTranscriptionStatus, setProcessedPageCount,
-        setActiveFolderPath, setTranscriptionMode, setTranscriptionReset, 
+        setActiveFolderPath, setTranscriptionMode, setTranscriptionReset,
+        setProviderTranscribe, setModelTranscribe, setProviderBoardroom, setModelBoardroom,
         setProviderFallback, setModelFallback,
         setIsOfflineMode, setActiveProvider, setActiveModel,
         setIsFocusMode, setIsAuditOpen, setIsLedgerOpen, setIsReportOpen, setIsDemoMode,

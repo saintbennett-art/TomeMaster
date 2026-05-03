@@ -221,7 +221,12 @@ export const Spellcheck = Extension.create<SpellcheckOptions>({
         console.error('Spellcheck: Hydration failed', e);
       }
     }
-    loadSpellEngine((this.storage as any).language, this.storage, this.editor);
+    // Defer dictionary load so the editor renders and becomes interactive first.
+    // nspell(aff, dic) parses the full dictionary synchronously — running it immediately
+    // on mount blocks the main thread and triggers browser "wait or kill" dialogs.
+    setTimeout(() => {
+      loadSpellEngine((this.storage as any).language, this.storage, this.editor);
+    }, 4000);
   },
 
   addProseMirrorPlugins() {

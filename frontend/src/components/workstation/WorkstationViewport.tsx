@@ -9,12 +9,16 @@ interface WorkstationViewportProps {
     editorRef: React.RefObject<RichTextEditorRef | null>;
     onSelectionChange: (text: string) => void;
     onParagraphChange: (text: string) => void;
+    scrollToText?: string | null;
+    onScrollComplete?: () => void;
 }
 
 const WorkstationViewport: React.FC<WorkstationViewportProps> = ({
     editorRef,
     onSelectionChange,
-    onParagraphChange
+    onParagraphChange,
+    scrollToText,
+    onScrollComplete
 }) => {
     const { 
         htmlContent, isTranscribing, transcriptionStatus, isActivated, 
@@ -52,13 +56,11 @@ const WorkstationViewport: React.FC<WorkstationViewportProps> = ({
                                     style={{ width: `${(transcriptionStatus.processed_images / Math.max(1, transcriptionStatus.total_images)) * 100}%` }}
                                 />
                             </div>
-                        </div>
-                    )}
                 </div>
             )}
 
             <div className="flex-1 flex flex-col overflow-hidden relative bg-background min-h-0">
-                <RichTextEditor 
+                <RichTextEditor
                     ref={editorRef}
                     content={htmlContent}
                     isActivated={isActivated}
@@ -68,6 +70,8 @@ const WorkstationViewport: React.FC<WorkstationViewportProps> = ({
                     }}
                     onSelectionChange={onSelectionChange}
                     onParagraphChange={onParagraphChange}
+                    scrollToText={scrollToText}
+                    onScrollComplete={onScrollComplete}
                 />
             </div>
 

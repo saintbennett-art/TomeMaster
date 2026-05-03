@@ -157,8 +157,8 @@ def generate_docx(content: str, chapters: list = None, title: str = "Manuscript 
             img_stream = io.BytesIO(img_data)
             doc.add_picture(img_stream, width=Inches(6))
             doc.add_page_break()
-        except:
-            pass # Silently fail if image data is corrupted
+        except Exception:
+            pass
             
     for section in doc.sections:
         section.top_margin = section.bottom_margin = section.left_margin = section.right_margin = Inches(1)
@@ -323,7 +323,7 @@ def generate_pdf(content: str, chapters: list = None, title: str = "Manuscript T
             img = Image(img_stream, width=4*inch, height=6*inch)
             story.append(img)
             story.append(PageBreak())
-        except:
+        except Exception:
             pass
 
     soup = BeautifulSoup(content, 'html.parser')
@@ -387,7 +387,7 @@ def generate_epub(content: str, chapters: list = None, title: str = "Manuscript 
             header, encoded = cover_image.split(",", 1)
             img_data = base64.b64decode(encoded)
             book.set_cover("cover.jpg", img_data)
-        except:
+        except Exception:
             pass
 
     book.set_identifier(str(uuid.uuid4()))
@@ -457,15 +457,16 @@ def generate_epub(content: str, chapters: list = None, title: str = "Manuscript 
     
     with tempfile.NamedTemporaryFile(suffix='.epub', delete=False) as tmp:
         tmp_name = tmp.name
-        
-    epub.write_epub(tmp_name, book, {})
-        
-    out_stream = io.BytesIO()
-    with open(tmp_name, 'rb') as f:
-        out_stream.write(f.read())
-    out_stream.seek(0)
-    import os
-    os.remove(tmp_name)
-    
+
+    try:
+        epub.write_epub(tmp_name, book, {})
+        out_stream = io.BytesIO()
+        with open(tmp_name, 'rb') as f:
+            out_stream.write(f.read())
+        out_stream.seek(0)
+    finally:
+        if os.path.exists(tmp_name):
+            os.remove(tmp_name)
+
     return out_stream
 

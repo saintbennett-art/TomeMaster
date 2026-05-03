@@ -26,9 +26,15 @@ export function useShadowSave<T>(key: string, initialValue: T, debounceMs: numbe
         
         const timer = setTimeout(() => {
             if (value !== undefined && value !== null) {
-                const serialized = typeof value === "string" ? value : JSON.stringify(value);
-                localStorage.setItem(`shadow_${key}`, serialized);
-                localStorage.setItem(`shadow_${key}_ts`, Date.now().toString());
+                try {
+                    const serialized = typeof value === "string" ? value : JSON.stringify(value);
+                    localStorage.setItem(`shadow_${key}`, serialized);
+                    localStorage.setItem(`shadow_${key}_ts`, Date.now().toString());
+                } catch (err: any) {
+                    if (err?.name === 'QuotaExceededError') {
+                        console.warn(`[ShadowSave]: localStorage quota exceeded for key "${key}". Shadow save skipped.`);
+                    }
+                }
             }
         }, debounceMs);
 

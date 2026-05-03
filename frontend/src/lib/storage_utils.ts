@@ -1,38 +1,45 @@
 import LZString from 'lz-string';
 import { get, set, del, keys } from 'idb-keyval';
 
-/**
- * Saves a value to IndexedDB with LZString compression if it's a string.
- * This resolves QuotaExceededError by shrinking the storage footprint by ~80%.
- */
+const COMPRESSED_MARKER = '\x00lz\x00';
+const SUPPORTED_VERSIONS = new Set(['2.5.0']);
+const PERMITTED_BACKUP_KEYS = /^tome_master_(draft|pacing)_/;
+const SENSITIVE_KEY_PATTERNS = /key|vault|token|secret/i;
+
+// Strings larger than this are stored plain — LZString compression on large inputs
+// blocks the main thread for 10-30s and triggers browser "wait or kill" dialogs.
+const COMPRESS_SIZE_LIMIT = 100_000;
+
 export async function saveCompressed(key: string, value: any): Promise<void> {
     try {
         let finalValue = value;
-        if (typeof value === 'string') {
-            finalValue = LZString.compressToUTF16(value);
+        if (typeof value === 'string' && value.length > 0 && value.length <= COMPRESS_SIZE_LIMIT) {
+            finalValue = COMPRESSED_MARKER + LZString.compressToUTF16(value);
         }
         await set(key, finalValue);
     } catch (err: any) {
         if (err.name === 'QuotaExceededError') {
-            console.error('Critical: IndexedDB Quota Exceeded even with compression.');
-            // Fallback: Clear old non-essential data if needed, or re-throw
-            throw err;
+            console.error('Critical: IndexedDB Quota Exceeded.');
         }
         throw err;
     }
 }
 
-/**
- * Loads a value from IndexedDB and decompresses it if it's a compressed string.
- */
 export async function loadCompressed<T>(key: string): Promise<T | undefined> {
     try {
         const value = await get(key);
-        if (typeof value === 'string' && value.length > 0) {
-            // Check if it's compressed (compressedToUTF16 starts with specific patterns, but decompress is safe to call)
-            const decompressed = LZString.decompressFromUTF16(value);
-            if (decompressed !== null) {
-                return decompressed as unknown as T;
+        if (typeof value === 'string') {
+            if (value.startsWith(COMPRESSED_MARKER)) {
+                const decompressed = LZString.decompressFromUTF16(value.slice(COMPRESSED_MARKER.length));
+                if (decompressed !== null) return decompressed as unknown as T;
+                console.error(`STORAGE CORRUPTION: Key "${key}" has compression marker but decompression returned null. Discarding.`);
+                return undefined;
+            }
+            // Legacy format: only attempt decompression if first char is outside printable ASCII.
+            // LZString UTF-16 output starts with chars > U+00FF; plain HTML/text starts with '<' (60).
+            if (value.charCodeAt(0) > 255) {
+                const legacy = LZString.decompressFromUTF16(value);
+                if (legacy !== null && legacy.length > 0) return legacy as unknown as T;
             }
         }
         return value as T;
@@ -42,13 +49,12 @@ export async function loadCompressed<T>(key: string): Promise<T | undefined> {
     }
 }
 
-/**
- * Gathers all 'tome_master_draft_*' keys from IndexedDB into a single JSON object.
- */
 export async function exportFullProject(): Promise<string> {
     const allKeys = await keys();
-    const projectKeys = (allKeys as string[]).filter(k => k.startsWith('tome_master_draft_') || k.startsWith('tome_master_pacing_'));
-    
+    const projectKeys = (allKeys as string[]).filter(
+        k => typeof k === 'string' && PERMITTED_BACKUP_KEYS.test(k) && !SENSITIVE_KEY_PATTERNS.test(k)
+    );
+
     const backup: Record<string, any> = {
         version: '2.5.0',
         timestamp: Date.now(),
@@ -58,42 +64,30 @@ export async function exportFullProject(): Promise<string> {
     for (const key of projectKeys) {
         backup.data[key] = await get(key);
     }
-    
-    // Also include some critical settings
-    backup.settings = {
-        model: localStorage.getItem('tome_master_model'),
-        provider: localStorage.getItem('tome_master_provider')
-    };
 
     return JSON.stringify(backup);
 }
 
-/**
- * Validates and restores a project backup JSON into IndexedDB.
- */
 export async function importFullProject(jsonStr: string): Promise<boolean> {
     try {
         const backup = JSON.parse(jsonStr);
+
+        if (!backup.version || !SUPPORTED_VERSIONS.has(backup.version)) {
+            throw new Error(`Unsupported backup version: ${backup.version}`);
+        }
         if (!backup.data || typeof backup.data !== 'object') {
             throw new Error('Invalid backup format: Missing data payload.');
         }
 
-        // 1. Clear current project data to prevent merge conflicts
         const allKeys = await keys();
-        const projectKeys = (allKeys as string[]).filter(k => k.startsWith('tome_master_draft_') || k.startsWith('tome_master_pacing_'));
-        for (const key of projectKeys) {
-            await del(key);
-        }
+        const projectKeys = (allKeys as string[]).filter(
+            k => typeof k === 'string' && PERMITTED_BACKUP_KEYS.test(k)
+        );
+        for (const key of projectKeys) await del(key);
 
-        // 2. Restore from backup
         for (const [key, value] of Object.entries(backup.data)) {
+            if (!PERMITTED_BACKUP_KEYS.test(key) || SENSITIVE_KEY_PATTERNS.test(key)) continue;
             await set(key, value);
-        }
-
-        // 3. Restore settings
-        if (backup.settings) {
-            if (backup.settings.model) localStorage.setItem('tome_master_model', backup.settings.model);
-            if (backup.settings.provider) localStorage.setItem('tome_master_provider', backup.settings.provider);
         }
 
         return true;
@@ -102,4 +96,3 @@ export async function importFullProject(jsonStr: string): Promise<boolean> {
         return false;
     }
 }
-

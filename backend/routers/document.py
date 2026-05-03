@@ -1,8 +1,21 @@
+import os
+import logging
+import traceback
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 from services import document_parser, exporter, transcriber_service
+
+logger = logging.getLogger(__name__)
+
+def _safe_folder(folder_path: str) -> str:
+    """Validates that folder_path resolves inside the user's home directory."""
+    resolved = os.path.realpath(os.path.abspath(folder_path))
+    home = os.path.realpath(os.path.expanduser("~"))
+    if not resolved.startswith(home + os.sep) and resolved != home:
+        raise HTTPException(status_code=403, detail="Path outside permitted directory.")
+    return resolved
 
 router = APIRouter()
 
@@ -126,9 +139,6 @@ async def export_docx(req: ExportRequest):
         raise HTTPException(status_code=400, detail="Content is required")
         
     try:
-        with open("last_export_req.txt", "w", encoding="utf-8") as f:
-            f.write(req.content)
-            
         doc_stream = exporter.generate_docx(req.content, req.chapters, req.title, req.author, req.format, req.cover_image)
         safe_title = str(req.title).replace('"', '').replace('\n', '').replace('\r', '')
         
@@ -138,9 +148,7 @@ async def export_docx(req: ExportRequest):
             headers={"Content-Disposition": f'attachment; filename="{safe_title}.docx"'}
         )
     except Exception as e:
-        with open("last_export_error.txt", "a", encoding="utf-8") as f:
-            import traceback
-            f.write("DOCX ERR:\n" + traceback.format_exc() + "\n\n")
+        logger.error("DOCX export error:\n%s", traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/export/pdf")
@@ -148,23 +156,18 @@ async def export_pdf(req: ExportRequest):
     """Exports structured manuscript back to a Chicago Style PDF."""
     if not req.content:
         raise HTTPException(status_code=400, detail="Content is required")
-        
+
     try:
-        with open("last_export_req.txt", "w", encoding="utf-8") as f:
-            f.write(req.content)
-            
         pdf_stream = exporter.generate_pdf(req.content, req.chapters, req.title, req.author, req.format, req.cover_image)
         safe_title = str(req.title).replace('"', '').replace('\n', '').replace('\r', '')
-        
+
         return StreamingResponse(
-            pdf_stream, 
-            media_type="application/pdf", 
+            pdf_stream,
+            media_type="application/pdf",
             headers={"Content-Disposition": f'attachment; filename="{safe_title}.pdf"'}
         )
     except Exception as e:
-        with open("last_export_error.txt", "a", encoding="utf-8") as f:
-            import traceback
-            f.write("PDF ERR:\n" + traceback.format_exc() + "\n\n")
+        logger.error("PDF export error:\n%s", traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/export/epub")
@@ -172,23 +175,19 @@ async def export_epub(req: ExportRequest):
     """Exports structured manuscript back to a standard EPUB for Kindle."""
     if not req.content:
         raise HTTPException(status_code=400, detail="Content is required")
-        
+
     try:
         epub_stream = exporter.generate_epub(req.content, req.chapters, req.title, req.author, req.format, req.cover_image)
         safe_title = str(req.title).replace('"', '').replace('\n', '').replace('\r', '')
-        
+
         return StreamingResponse(
-            epub_stream, 
-            media_type="application/epub+zip", 
+            epub_stream,
+            media_type="application/epub+zip",
             headers={"Content-Disposition": f'attachment; filename="{safe_title}.epub"'}
         )
     except Exception as e:
-        with open("last_export_error.txt", "a", encoding="utf-8") as f:
-            import traceback
-            f.write("EPUB ERR:\n" + traceback.format_exc() + "\n\n")
+        logger.error("EPUB export error:\n%s", traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
-
-from services import transcriber_service
 
 class TranscriptionRequest(BaseModel):
     api_key: str = ""
@@ -261,9 +260,10 @@ async def get_transcription_status(summary: bool = False):
         return state
 
 @router.post("/transcribe/resort")
-async def resort_manuscript(req: TranscriptionRequest):
+async def resort_manuscript_post(req: TranscriptionRequest):
     """Triggers a physical re-sort of the manuscript from the cache."""
-    success = transcriber_service.resort_from_cache(req.folder_path)
+    safe_path = _safe_folder(req.folder_path) if req.folder_path else None
+    success = transcriber_service.resort_from_cache(safe_path)
     if success:
         return {"status": "success"}
     return {"status": "failed", "message": "Cache not found or corrupt."}
@@ -272,57 +272,59 @@ async def resort_manuscript(req: TranscriptionRequest):
 async def anchor_project_folder():
     """Directorial Anchor: Invokes the native folder picker and returns the selected path to the UI."""
     folder = transcriber_service.pick_directory()
-    if (not folder):
+    if not folder:
         return {"status": "cancelled", "folder_path": None}
-    
-    # [PROJECT PULSE]: Perform immediate baseline scan to hydrate UI and Editor
     transcriber_service.ingest_project_baseline(folder)
-    
     return {"status": "anchored", "folder_path": folder}
 
 @router.get("/transcribe/ingest")
 async def ingest_project_baseline(folder_path: str):
     """Ingests the project baseline."""
-    success = transcriber_service.ingest_project_baseline(folder_path)
+    safe_path = _safe_folder(folder_path)
+    success = transcriber_service.ingest_project_baseline(safe_path)
     return {"status": "success" if success else "failed"}
 
 @router.get("/transcribe/resort")
-async def resort_manuscript(folder_path: str):
-    """Triggers manuscript unification."""
+async def resort_manuscript_get(folder_path: str):
+    """Triggers manuscript unification via GET (background thread)."""
+    import glob
+    import threading
     from services.transcriber_service import TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK
-    
-    # [RE-COUNT]: Scan immediately to prevent flicker
-    import os, glob
-    rtfs = glob.glob(os.path.join(folder_path, "*.rtf"))
-    src_subdir = os.path.join(folder_path, "_manuscript_source")
+
+    safe_path = _safe_folder(folder_path)
+
+    rtfs = glob.glob(os.path.join(safe_path, "*.rtf"))
+    src_subdir = os.path.join(safe_path, "_manuscript_source")
     if os.path.exists(src_subdir):
         rtfs.extend(glob.glob(os.path.join(src_subdir, "*.rtf")))
     count = len(rtfs)
-    
-    # [STATUS LOCK]: Force the engine into 'sewing' mode BEFORE the thread starts
+
     with TRANSCRIPTION_LOCK:
-        TRANSCRIPTION_STATE["status"] = "sewing"
+        TRANSCRIPTION_STATE["status"] = "stitching"
         TRANSCRIPTION_STATE["processed_images"] = 0
         TRANSCRIPTION_STATE["total_images"] = count if count > 0 else TRANSCRIPTION_STATE.get("total_images", 0)
         TRANSCRIPTION_STATE["error_message"] = f"Assembling manuscript: {count} pages ready for unification..."
-    
-    # [THREADED SEWING]: Run in background to prevent timeout
-    import threading
-    thread = threading.Thread(target=transcriber_service.resort_from_cache, args=(folder_path,))
-    thread.daemon = True
-    thread.start()
-    return {"status": "sewing"}
+
+    if not transcriber_service._stitching_active.is_set():
+        thread = threading.Thread(target=transcriber_service.resort_from_cache, args=(safe_path,))
+        thread.daemon = True
+        thread.start()
+    return {"status": "stitching"}
 
 @router.get("/photo")
 async def get_project_photo(folder_path: str, filename: str):
     """Securely fetches a photo from the anchored project directory."""
-    import os
     from fastapi.responses import FileResponse
-    # Resolve and validate path
-    safe_folder = folder_path.strip().replace('\\', '/')
-    photo_path = os.path.join(safe_folder, filename)
-    
+
+    safe_base = _safe_folder(folder_path)
+    # Prevent filename from escaping the safe base via traversal components
+    safe_filename = os.path.basename(filename)
+    photo_path = os.path.realpath(os.path.join(safe_base, safe_filename))
+
+    if not photo_path.startswith(safe_base + os.sep):
+        raise HTTPException(status_code=403, detail="Access denied.")
+
     if not os.path.exists(photo_path):
-        raise HTTPException(status_code=404, detail="Photo not found")
-        
+        raise HTTPException(status_code=404, detail="Photo not found.")
+
     return FileResponse(photo_path)

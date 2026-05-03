@@ -72,7 +72,12 @@ def resolve_audit(req: AuditResolutionRequest):
 async def resort_manuscript_get(folder_path: str):
     """Triggers manuscript unification."""
     import threading
-    thread = threading.Thread(target=transcriber_service.resort_from_cache, args=(folder_path,))
-    thread.daemon = True
-    thread.start()
-    return {"status": "sewing"}
+    from services.transcriber_service import TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK
+    with TRANSCRIPTION_LOCK:
+        TRANSCRIPTION_STATE["status"] = "stitching"
+        TRANSCRIPTION_STATE["error_message"] = "Assembling manuscript from root artifacts..."
+    if not transcriber_service._stitching_active.is_set():
+        thread = threading.Thread(target=transcriber_service.resort_from_cache, args=(folder_path,))
+        thread.daemon = True
+        thread.start()
+    return {"status": "stitching"}

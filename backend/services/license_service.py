@@ -5,23 +5,20 @@ import json
 import platform
 
 LICENSE_FILE = "tome_master.lic"
-MASTER_PASSWORD = "APEX-DIRECTOR"
 
 def get_machine_fingerprint() -> str:
-    """Combines Stable Hostname, OS, and current directory to create a unique machine footprint."""
+    """Combines hostname and OS to create a stable machine footprint."""
     host = platform.node() or "SOVEREIGN_NODE"
     os_info = platform.system() + platform.release()
-    
-    # Anti-Move Security: Bind the license to the absolute path of the backend root
-    # script_root is in /services/, so we go up one level to the backend root
-    backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    
-    raw = f"{host}-{os_info}-{backend_root}"
+    raw = f"{host}-{os_info}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 def check_master_password(password: str) -> bool:
-    """Robust verification: Case-insensitive and whitespace-neutral."""
-    return password.strip().upper() == MASTER_PASSWORD.upper()
+    """Verifies against the TOME_MASTER_KEY environment variable. Never ships a hardcoded bypass."""
+    master = os.environ.get("TOME_MASTER_KEY", "").strip()
+    if not master:
+        return False
+    return password.strip() == master
 
 SECRET_SALT = "TomeMaster-2026-StandardConsulting-Salt"
 

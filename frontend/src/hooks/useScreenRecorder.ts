@@ -9,7 +9,6 @@ import { get } from 'idb-keyval';
  */
 export function useScreenRecorder(folderPath: string | null) {
     const [isRecording, setIsRecording] = useState(false);
-    console.log(`[RECORDER_PROBE]: Active Folder Path context is: ${folderPath}`);
     const [recordingTime, setRecordingTime] = useState(0);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const timerRef = useRef<NodeJS.Timeout | null>(null);

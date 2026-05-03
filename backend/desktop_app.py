@@ -11,21 +11,19 @@ def get_free_port():
         s.bind(('127.0.0.1', 0))
         return s.getsockname()[1]
 
-PORT = 8080 # Default Anchor
+PORT = 8080
+
+_server_ready = threading.Event()
 
 def start_server():
     global PORT
     import main
-    import uvicorn
-    # [APEX HANDSHAKE]: Attempt to bind to the preferred port, fallback if blocked
-    success = False
     for i in range(5):
         try:
             print(f"BOARDROOM: Attempting to anchor Engine on 127.0.0.1:{PORT} (Attempt {i+1})...")
-            # Log setup
             config = uvicorn.Config(main.app, host="127.0.0.1", port=PORT, log_level="info")
             server = uvicorn.Server(config)
-            success = True
+            _server_ready.set()
             server.run()
             break
         except Exception as e:
@@ -33,21 +31,31 @@ def start_server():
             PORT = get_free_port()
             print(f"BOARDROOM: Diverting Handshake to Port {PORT}...")
             time.sleep(0.5)
-    
-    if not success:
+    else:
         print("BOARDROOM FATAL: All handshake attempts failed. Engine remains offline.")
         os._exit(1)
 
+def _wait_for_server(timeout: int = 15) -> bool:
+    """Polls the health endpoint until the server responds or timeout is reached."""
+    import urllib.request
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{PORT}/api/v1/ai/status", timeout=1)
+            return True
+        except Exception:
+            time.sleep(0.25)
+    return False
+
 if __name__ == '__main__':
-    # Boot the FastAPI architecture silently in the background
-    # [SOVEREIGN PRIORITY]: Ensure the server thread is launched with high responsiveness
     t = threading.Thread(target=start_server, name="TomeMaster-Engine", daemon=True)
     t.start()
-    
-    # Wait for server to initialize
-    time.sleep(3)
-    
-    # Launch the Chromium-based Director's Viewport with the discovered API port
+
+    # Wait for the server to signal it is about to start, then health-check it
+    _server_ready.wait(timeout=10)
+    if not _wait_for_server(timeout=15):
+        print("BOARDROOM WARNING: Server did not respond within 15s. Launching viewport anyway.")
+
     target_url = f'http://127.0.0.1:3000?api_port={PORT}'
     window = webview.create_window('Tome-Master Boardroom', target_url, width=1400, height=900)
     

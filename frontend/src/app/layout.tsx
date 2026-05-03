@@ -28,9 +28,9 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <meta 
-          httpEquiv="Content-Security-Policy" 
-          content="default-src 'self' http://localhost:8080 http://127.0.0.1:8080; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src 'self' fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' http://localhost:8080 http://127.0.0.1:8080 http://localhost:11434 http://127.0.0.1:11434 ws://localhost:8080 ws://127.0.0.1:8080; frame-ancestors 'none'; object-src 'none';"
+        <meta
+          httpEquiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src 'self' fonts.gstatic.com; img-src 'self' data: blob: https://image.pollinations.ai; connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; frame-ancestors 'none'; object-src 'none';"
         />
         <script dangerouslySetInnerHTML={{ __html: `
           (function() {

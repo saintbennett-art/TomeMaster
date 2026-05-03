@@ -54,7 +54,7 @@ export default function MainEditor({
 
   const editorRef = useRef(null);
 
-  const { speak, stop } = useTextToSpeech();
+  const { speak, stop, isPlaying } = useTextToSpeech();
   const vault = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("tome_master_vault") || "{}") : {};
 
   const handleStartTranscribe = async () => {
@@ -66,8 +66,26 @@ export default function MainEditor({
   const { isListening, toggleListening, isRefining } = useDictation({
       onCommand: (cmd) => {
           const lowerCmd = cmd.toLowerCase();
-          if (lowerCmd.includes("run analysis")) setLocalAnalysisTrigger(prev => prev + 1);
-          else if (lowerCmd.includes("export word")) handleExportDocx();
+          if (lowerCmd.includes("run analysis")) {
+              setLocalAnalysisTrigger(prev => prev + 1);
+          } else if (lowerCmd.includes("export word")) {
+              handleExportDocx();
+          } else if (lowerCmd.includes("stop reading") || lowerCmd.includes("stop audio")) {
+              if (isPlaying) stop();
+          } else if (lowerCmd.includes("read manuscript") || lowerCmd.includes("read this")) {
+              if (isPlaying) { stop(); } else { const t = selectedText || content; if (t) speak(t); }
+          } else if (lowerCmd.includes("go to beginning") || lowerCmd.includes("scroll to top")) {
+              if (content && onPreviewChapter) onPreviewChapter(content.substring(0, 30));
+          } else if (lowerCmd.includes("go to chapter") || lowerCmd.includes("navigate to")) {
+              const searchTerm = lowerCmd.replace(/^.*(go to chapter|navigate to)\s+/i, '').trim();
+              if (searchTerm && chapters.length > 0) {
+                  const match = chapters.find(c =>
+                      c.title?.toLowerCase().includes(searchTerm) ||
+                      c.startingWords?.toLowerCase().includes(searchTerm)
+                  );
+                  if (match && onPreviewChapter) onPreviewChapter(match.startingWords || match.title);
+              }
+          }
       },
       onDictation: (text) => editorRef.current?.insertDictation(text),
       isSuperMuseMode,
@@ -177,18 +195,24 @@ export default function MainEditor({
             onRedo={handleRedo}
             isListening={isListening}
             toggleListening={toggleListening}
-            isSpeaking={false} // useTextToSpeech needs a reactive state for this if possible
+            isSpeaking={isPlaying}
             onReadManuscript={() => {
-                const text = selectedText || content;
-                if (text) speak(text);
+                if (isPlaying) {
+                    stop();
+                } else {
+                    const text = selectedText || content;
+                    if (text) speak(text);
+                }
             }}
           />
 
           <div className="flex-1 flex overflow-hidden min-w-0 relative">
-            <WorkstationViewport 
+            <WorkstationViewport
               editorRef={editorRef}
               onSelectionChange={setSelectedText}
               onParagraphChange={() => {}}
+              scrollToText={scrollToText}
+              onScrollComplete={onScrollComplete}
             />
 
             <TranscriptionSidebar 
@@ -223,14 +247,16 @@ export default function MainEditor({
       {isTranscribing && (
         <DraggableDialog headerId="nerve-center-handle" initialX={40} initialY={100}>
           <div id="nerve-center-handle" className="cursor-grab active:cursor-grabbing">
-            <TranscriptionDashboard 
+            <TranscriptionDashboard
               totalPageGoal={transcriptionStatus?.total_images || 0}
               processedPages={transcriptionStatus?.processed_images || 0}
               status={transcriptionStatus?.status || "idle"}
               errorMessage={transcriptionStatus?.error_message}
-              isTranscribing={isTranscribing} onStart={handleStartTranscribe}
+              isTranscribing={isTranscribing}
+              onStart={handleStartTranscribe}
               providerName={providerTranscribe}
               modelName={modelTranscribe}
+              currentImageB64={transcriptionStatus?.current_image_b64}
             />
           </div>
         </DraggableDialog>
