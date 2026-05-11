@@ -14,7 +14,7 @@ def _simulate_creative(feature: str) -> str:
                 {"name": "Seraphina", "role": "Support", "traits": "Agile, Sharp-tongued, Mysterious", "details": "Green eyes, quick with a blade."}
             ],
             "locations": [
-                {"name": "The Rusty Anchor", "type": "Tavern", "description": "Smells of salt and stale ale. Dim lanterns."},
+                {"name": "The Rooted Hull", "type": "Tavern", "description": "Smells of salt and stale ale. Dim lanterns."},
                 {"name": "Whispering Woods", "type": "Forest", "description": "Trees that seem to breathe. Permanent twilight."}
             ]
         })
@@ -33,7 +33,7 @@ def _build_prompt(text: str, persona: str, user_chapters: list[dict] = None) -> 
             """
         else:
             # Disruptive Pacing Intelligence: Force a re-audit of the existing structure.
-            chap_summary = "\n".join([f"- Chapter {c.get('chapter_number', i+1)}: '{c.get('suggested_title', 'Untitled')}' (~{c.get('reading_time_mins', '??')} mins) at anchor: '{c.get('starting_words', '')}'" for i, c in enumerate(user_chapters)])
+            chap_summary = "\n".join([f"- Chapter {c.get('chapter_number', i+1)}: '{c.get('suggested_title', 'Untitled')}' (~{c.get('reading_time_mins', '??')} mins) at segment: '{c.get('starting_words', '')}'" for i, c in enumerate(user_chapters)])
             branch_instruction = f"""
             [DISRUPTIVE NARRATIVE AUDIT - EXISTING STRUCTURE DETECTED] 
             Current Chapter Pacing:
@@ -59,10 +59,10 @@ def _build_prompt(text: str, persona: str, user_chapters: list[dict] = None) -> 
            EACH OBJECT MUST HAVE:
            - 'label': The text of the warning (e.g., "Graphic Violence"). Use "None" ONLY if the chapter is perfectly safe.
            - 'starting_words': EXACTLY 10 to 15 unique, consecutive words of the paragraph where this issue begins. 
-           CRITICAL: These anchors should be a unique narrative fingerprint. Do not use generic words.
+           CRITICAL: These segments should be a unique narrative fingerprint. Do not use generic words.
         3. 'starting_words': EXACTLY 10 to 15 unique, consecutive words of the paragraph where this chapter (or break) begins.
         
-        If you find a pacing violation in the middle of an existing chapter, find the nearest narrative pause and create a NEW chapter entry with its own unique 'starting_words' anchor (10-15 words).
+        If you find a pacing violation in the middle of an existing chapter, find the nearest narrative pause and create a NEW chapter entry with its own unique 'starting_words' segment (10-15 words).
         
         You MUST return a COMPLETE list of all chapters for the text provided. Do not return an empty list.
         

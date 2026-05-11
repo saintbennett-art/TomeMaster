@@ -8,46 +8,53 @@ export const STANDARD_AGENTS = [
         icon: LayoutList, 
         desc: "Structure & Pacing Specialist",
         guidance: "Ideal for deep-manuscript logic and character arcs. Requires massive context window.",
-        recommendedModels: ["gemini-1.5-pro", "gemini-1.5-flash"]
+        recommendedModels: ["gemini-1.5-pro", "gemini-1.5-flash", "slot_primary"]
     },
     { 
         id: "Copy Editor", 
         icon: Pen, 
         desc: "Grammar & Tone Specialist",
         guidance: "Specializes in prose fluidity and linguistic nuance. Prefers models with high literary fidelity.",
-        recommendedModels: ["claude-3-5-sonnet-20241022", "gpt-4o"]
+        recommendedModels: ["claude-3-5-sonnet-20241022", "gpt-4o", "slot_specialist"]
     },
     { 
         id: "Sensitivity Reader", 
         icon: Users, 
         desc: "Demographic Tropes & Representation",
         guidance: "Audit for cultural nuance and stereotypical pitfalls. Requires high reasoning stability.",
-        recommendedModels: ["claude-3-5-sonnet-20241022"]
+        recommendedModels: ["claude-3-5-sonnet-20241022", "slot_specialist"]
     },
     { 
         id: "Marketing Executive", 
         icon: Megaphone, 
         desc: "Pitch & High-Concept Expert",
         guidance: "Focused on hooks, taglines, and marketability. Requires models with punchy, creative output.",
-        recommendedModels: ["gpt-4o", "gemini-1.5-pro"]
+        recommendedModels: ["gpt-4o", "gemini-1.5-pro", "slot_primary"]
     },
     { 
         id: "Cinematic Screenplay Specialist", 
         icon: Film, 
         desc: "Cinematic & TV Adaptation",
         guidance: "Transforms prose into visual beats and scene headings. Requires high-fidelity structural logic.",
-        recommendedModels: ["gpt-4o", "gemini-1.5-pro"]
+        recommendedModels: ["gpt-4o", "gemini-1.5-pro", "slot_primary"]
     },
     { 
         id: "Directorial Bridge", 
         icon: ShieldCheck, 
         desc: "System Workflow Coordinator",
         guidance: "Coordinates multi-agent workflows and enforces project consistency.",
-        recommendedModels: ["gemini-1.5-flash"]
+        recommendedModels: ["gemini-1.5-flash", "slot_primary"]
     }
 ];
 
-export const SpecialistRegistry = ({ selectedAgents, setSelectedAgents, customAgents, setCustomAgents }) => {
+interface SpecialistRegistryProps {
+    selectedAgents: string[];
+    setSelectedAgents: (agents: string[]) => void;
+    customAgents: string[];
+    setCustomAgents: (agents: string[]) => void;
+}
+
+export const SpecialistRegistry: React.FC<SpecialistRegistryProps> = ({ selectedAgents, setSelectedAgents, customAgents, setCustomAgents }) => {
     const [newAgent, setNewAgent] = React.useState("");
     const toggleAgent = (id) => {
         if (selectedAgents.includes(id)) setSelectedAgents(selectedAgents.filter(a => a !== id));

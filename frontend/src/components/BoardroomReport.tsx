@@ -1,38 +1,18 @@
 "use client";
 import React, { useState } from 'react';
-import { X, CheckCircle, RefreshCcw, Save, Maximize2, Minimize2, LayoutList, Pen, Users, Megaphone, Film, Sparkles, AlertTriangle, ArrowRight, Volume2, VolumeX, BookOpen } from 'lucide-react';
+import { LucideIcon, X, CheckCircle, RefreshCcw, Save, Maximize2, Minimize2, LayoutList, Pen, Users, Megaphone, Film, Sparkles, AlertTriangle, ArrowRight, Volume2, VolumeX, BookOpen } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import ReactMarkdown from 'react-markdown';
 import { useTextToSpeech } from '@/hooks/useTextToSpeech';
 import { exportDocx } from '@/lib/apiClient';
 
-interface Suggestion {
-    id: string;
-    type: 'replace' | 'insert' | 'metadata';
-    label?: string;
-    original?: string;
-    suggestion?: string;
-    content?: string;
-    reason: string;
-}
-
-interface AgentReport {
-    feedback: string;
-    suggestions: Suggestion[];
-    raw_edits?: any[];
-    _accounting?: {
-        model_audit: string;
-        credits_consumed: number;
-        unit: string;
-        succeeded: boolean;
-    };
-}
+import { Chapter, AgentReport, Suggestion } from "@/types/industrial";
 
 interface BoardroomReportProps {
     isOpen: boolean;
     onClose: () => void;
-    arcData: any[];
-    chapters: any[];
+    arcData: unknown[]; 
+    chapters: Chapter[];
     agentReports: Record<string, AgentReport>;
     onApplySuggestion: (suggestion: Suggestion) => void;
     onRegenerate?: () => void;
@@ -40,7 +20,7 @@ interface BoardroomReportProps {
     selectedAgents?: string[];
 }
 
-const AGENT_META: Record<string, any> = {
+const AGENT_META: Record<string, { icon: LucideIcon, color: string, bg: string, border: string }> = {
     'Developmental Editor': { icon: LayoutList, color: 'text-indigo-400', bg: 'bg-indigo-500/10', border: 'border-indigo-500/30' },
     'Copy Editor': { icon: Pen, color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/30' },
     'Sensitivity Reader': { icon: Users, color: 'text-amber-400', bg: 'bg-amber-500/10', border: 'border-amber-500/30' },
@@ -96,7 +76,7 @@ export default function BoardroomReport({ isOpen, onClose, arcData, chapters, ag
             md += "| Chapter Heading | Reading Time | Status |\n";
             md += "| :--- | :--- | :--- |\n";
             chapters.forEach((c, i) => {
-                const title = (c.suggested_title || c.cleaned_anchor || `Break ${i+1}`).substring(0, 60);
+                const title = (c.suggested_title || c.cleaned_segment || `Break ${i+1}`).substring(0, 60);
                 const isFrontMatter = /Prelude|Forward|Title Page|Dedication|Table of Contents|Front Matter/i.test(title);
                 if ((c.chapter_word_count || 0) < 250 || isFrontMatter) return;
                 
@@ -106,18 +86,18 @@ export default function BoardroomReport({ isOpen, onClose, arcData, chapters, ag
             });
             md += "\n\n";
 
-            md += "## Chapter Breakdown & Narrative Anchors\n";
-            md += "| Chapter Heading | Duration | Narrative Anchor (First 15 Words of Prose) |\n";
+            md += "## Chapter Breakdown & Narrative Segments\n";
+            md += "| Chapter Heading | Duration | Narrative Segment (First 15 Words of Prose) |\n";
             md += "| :--- | :--- | :--- |\n";
             chapters.forEach((c, i) => {
                 const title = c.suggested_title || "Untitled Break";
                 const isFrontMatter = /Prelude|Forward|Title Page|Dedication|Table of Contents|Front Matter/i.test(title);
                 if ((c.chapter_word_count || 0) < 250 || isFrontMatter) return;
                 
-                // The anchor is now decoupled from the title and contains actual narrative text
-                const anchor = c.cleaned_anchor || c.starting_words || "No narrative detected";
+                // The segment is now decoupled from the title and contains actual narrative text
+                const segment = c.cleaned_segment || c.starting_words || "No narrative detected";
                 const mins = c.reading_time_mins || 1;
-                md += `| ${title} | ${mins}m | "${anchor}..." |\n`;
+                md += `| ${title} | ${mins}m | "${segment}..." |\n`;
             });
             md += "\n\n";
 
@@ -125,13 +105,13 @@ export default function BoardroomReport({ isOpen, onClose, arcData, chapters, ag
             md += "| Chapter Heading | Duration | Visual Tension | Score | Content Advisories |\n";
             md += "| :--- | :--- | :--- | :--- | :--- |\n";
             arcData.forEach((d, i) => {
-                const title = (d.name || d.cleaned_anchor || `Point ${i+1}`).substring(0, 60);
+                const title = (d.name || d.cleaned_segment || `Point ${i+1}`).substring(0, 60);
                 const isFrontMatter = /Prelude|Forward|Title Page|Dedication|Table of Contents|Front Matter/i.test(title);
                 if ((d.chapter_word_count || 0) < 250 || isFrontMatter) return;
                 
                 const score = d.score || 5;
                 const visual = "▓".repeat(Math.round(score)) + "░".repeat(10 - Math.round(score));
-                const warnings = (d.warnings || []).map((w:any) => typeof w === 'string' ? w : w.label).join(", ") || "None";
+                const warnings = (d.warnings || []).map((w: string | {label: string}) => typeof w === 'string' ? w : w.label).join(", ") || "None";
                 const duration = d.reading_time || 1;
                 md += `| ${title} | ${duration}m | ${visual} | ${score}/10 | ${warnings} |\n`;
             });
@@ -146,7 +126,7 @@ export default function BoardroomReport({ isOpen, onClose, arcData, chapters, ag
             // Use the centralized, hardened export bridge (now with native OS Picker support)
             await exportDocx(md, [], `Tome-Master_Audit_Report_${new Date().toISOString().split('T')[0]}`, "Tome-Master AI");
         } catch (err) {
-            console.error(err);
+            // Silent Navigation Bypass
             alert("Failed to connect to the Sovereign Engine for export. Is the backend running?");
         } finally {
             setIsExporting(false);
@@ -401,7 +381,7 @@ export default function BoardroomReport({ isOpen, onClose, arcData, chapters, ag
                                                 <tr className="bg-background border-b border-border">
                                                     <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest">Chapter Heading</th>
                                                     <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest">Reader Pacing</th>
-                                                    <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest">Narrative Anchor (Live Story Prose)</th>
+                                                    <th className="px-8 py-5 text-[10px] font-black text-muted uppercase tracking-widest">Narrative Segment (Live Story Prose)</th>
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-border/50">
@@ -411,8 +391,8 @@ export default function BoardroomReport({ isOpen, onClose, arcData, chapters, ag
                                                     if ((c.chapter_word_count || 0) < 250 || isFrontMatter) return null;
 
                                                     const mins = c.reading_time_mins || 1;
-                                                    // Strictly pull from the prose-purified anchor
-                                                    const anchor = c.cleaned_anchor || "Searching for story beats...";
+                                                    // Strictly pull from the prose-purified segment
+                                                    const segment = c.cleaned_segment || "Searching for story beats...";
 
                                                     return (
                                                         <tr key={c.id || `chapter-${i}`} className="group hover:bg-accent/[0.02] transition-colors">
@@ -428,7 +408,7 @@ export default function BoardroomReport({ isOpen, onClose, arcData, chapters, ag
                                                             </td>
                                                             <td className="px-8 py-8 max-w-sm">
                                                                 <p className="text-[11px] text-muted font-medium italic leading-relaxed group-hover:text-foreground transition-colors">
-                                                                    "{anchor.length > 120 ? anchor.substring(0, 120) + '...' : anchor}..."
+                                                                    "{segment.length > 120 ? segment.substring(0, 120) + '...' : segment}..."
                                                                 </p>
                                                             </td>
                                                         </tr>
@@ -446,7 +426,7 @@ export default function BoardroomReport({ isOpen, onClose, arcData, chapters, ag
                                         <div className="group p-8 bg-accent/10 border border-accent/20 rounded-[32px] hover:border-accent/40 transition-all">
                                             <h4 className="text-[10px] font-black text-accent uppercase tracking-widest mb-6">Synthesis Forecast</h4>
                                             <p className="text-5xl font-black text-foreground tabular-nums tracking-tighter">
-                                                {(currentReport?._accounting as any)?.processing_time || `${Math.max(15, Math.round(chapters.reduce((acc, c) => acc + (c.chapter_word_count || 0), 0) / 2000) + 10)}s`}
+                                                {currentReport?._accounting?.processing_time || `${Math.max(15, Math.round(chapters.reduce((acc, c) => acc + (c.chapter_word_count || 0), 0) / 2000) + 10)}s`}
                                             </p>
                                         </div>
                                         <div className="group p-8 bg-emerald-500/10 border border-emerald-500/20 rounded-[32px] hover:border-emerald-500/40 transition-all">

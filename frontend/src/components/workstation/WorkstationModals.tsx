@@ -2,6 +2,7 @@
 
 import React from "react";
 import { useWorkstationState, useWorkstationActions } from "@/context/WorkstationContext";
+import { useEditorState } from "@/context/EditorContext";
 import BoardroomReport from "@/components/BoardroomReport";
 import ProjectLedger from "@/components/ProjectLedger";
 import { Mic, Sparkles, XCircle, ListOrdered, ShieldCheck, RefreshCw } from "lucide-react";
@@ -30,9 +31,10 @@ const WorkstationModals: React.FC<WorkstationModalsProps> = ({
     toggleListening
 }) => {
     const { 
-        isReportOpen, arcData, chapters, agentReports,
-        isLedgerOpen, activeFolderPath, isAuditOpen
+        isReportOpen, isLedgerOpen, activeFolderPath, isAuditOpen
     } = useWorkstationState();
+
+    const { arcData, chapters, agentReports } = useEditorState();
 
     // [FIX #4]: Audit-specific local state (not needed globally)
     const [auditPageInput, setAuditPageInput] = React.useState("");

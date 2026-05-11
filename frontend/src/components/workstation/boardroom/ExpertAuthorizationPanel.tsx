@@ -1,3 +1,6 @@
+import React from 'react';
+import { ShieldCheck, Sparkles } from 'lucide-react';
+import { useShadowSave } from '@/hooks/useShadowSave';
 import { STANDARD_AGENTS } from "./SpecialistRegistry";
 
 export const ExpertAuthorizationPanel = ({ authModal, dynamicModels, getFidelityPortfolioForExpert }) => {
@@ -11,18 +14,13 @@ export const ExpertAuthorizationPanel = ({ authModal, dynamicModels, getFidelity
     const verifyHandshake = async () => {
         setHandshakeStatus("checking");
         try {
-            const provider = selectedModel?.includes("gemini") ? "gemini" : 
-                           selectedModel?.includes("gpt") ? "openai" : 
-                           selectedModel?.includes("claude") ? "anthropic" : 
-                           selectedModel?.includes("llama") ? "groq" : "unknown";
-            
-            const apiKey = localStorage.getItem(`tome_master_key_${provider}`) || "";
             const baseUrl = typeof window !== 'undefined' ? (window.location.origin.includes('localhost') ? 'http://127.0.0.1:8080/api/v1' : '/api/v1') : '/api/v1';
             
-            const res = await fetch(`${baseUrl}/ai/models?provider=${provider}&api_key=${encodeURIComponent(apiKey)}`);
+            // Industrial Handshake: Verify the general gateway health
+            const res = await fetch(`${baseUrl}/ai/status`);
             const data = await res.json();
             
-            if (data.models && data.models.length > 0) {
+            if (data.status === "online") {
                 setHandshakeStatus("success");
             } else {
                 setHandshakeStatus("fail");
@@ -88,11 +86,11 @@ export const ExpertAuthorizationPanel = ({ authModal, dynamicModels, getFidelity
                     </div>
 
                     <div>
-                        <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest block mb-3">Intelligence Tier Selection</label>
+                        <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest block mb-3">Industrial Gateway Selection</label>
                         <div className="grid grid-cols-1 gap-2 max-h-[150px] overflow-y-auto pr-2">
                             {portfolio.map(m => (
                                 <button key={m} onClick={() => { setSelectedModel(m); setHandshakeStatus("idle"); }} className={`px-4 py-3 rounded-xl border text-[10px] font-black uppercase text-left transition-all ${selectedModel === m ? "bg-indigo-500 border-indigo-400 text-white shadow-lg" : "bg-black/40 border-white/5 text-zinc-500 hover:border-white/10"}`}>
-                                    {m.split("/").pop()}
+                                    {m.includes("/") ? m.split("/").pop() : m}
                                 </button>
                             ))}
                         </div>

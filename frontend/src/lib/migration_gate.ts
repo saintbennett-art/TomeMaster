@@ -4,17 +4,17 @@
  */
 export function performMasterMigration() {
     if (typeof window === 'undefined') return;
+    const { secureVault } = require('./vault');
 
     const VAULT_KEY = 'tome_master_vault';
     const LEGACY_KEYS = ['tome_master_keys', 'tome_master_key_gemini', 'tome_master_key_openai', 'tome_master_key_anthropic'];
 
     try {
-        const existingVault = localStorage.getItem(VAULT_KEY);
+        const existingVault = secureVault.load();
         
-        // If the vault is already anchored, we bypass to preserve current state purity
-        if (existingVault) return;
+        // If the vault is already targeted, we bypass to preserve current state purity
+        if (Object.keys(existingVault).length > 0) return;
 
-        console.log("BOARDROOM: Initiating structural migration to Sovereign Vault bedrock...");
         
         const newVault: Record<string, string> = {};
         
@@ -25,11 +25,10 @@ export function performMasterMigration() {
                 const parsed = JSON.parse(objKeys);
                 Object.assign(newVault, parsed);
             } catch (e) {
-                console.warn("BOARDROOM: Legacy key object corrupted. Bypassing.");
             }
         }
 
-        // [AUDIT 2]: Individual Anchor Migration
+        // [AUDIT 2]: Individual Folder Migration
         LEGACY_KEYS.forEach(k => {
             const val = localStorage.getItem(k);
             if (val && !val.startsWith('{')) {
@@ -40,12 +39,15 @@ export function performMasterMigration() {
             }
         });
 
-        // [RESOLUTION]: Absolute Bedrock Anchoring
+        // [RESOLUTION]: Absolute Bedrock Rooting & Upgrading
         if (Object.keys(newVault).length > 0) {
-            localStorage.setItem(VAULT_KEY, JSON.stringify(newVault));
-            console.log("BOARDROOM: Structural migration successful. Vault bedrock poured.");
+            // [UPGRADE]: Map legacy brands to their respective slots if they don't exist yet
+            if (newVault.gemini && !newVault.slot_primary) newVault.slot_primary = newVault.gemini;
+            if (newVault.openai && !newVault.slot_specialist) newVault.slot_specialist = newVault.openai;
+            if (newVault.groq && !newVault.slot_velocity) newVault.slot_velocity = newVault.groq;
+            
+            secureVault.save(newVault);
         }
     } catch (err) {
-        console.error("BOARDROOM: Migration Handshake Failure.", err);
     }
 }

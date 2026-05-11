@@ -268,14 +268,56 @@ async def resort_manuscript_post(req: TranscriptionRequest):
         return {"status": "success"}
     return {"status": "failed", "message": "Cache not found or corrupt."}
 
-@router.get("/anchor")
-async def anchor_project_folder():
-    """Directorial Anchor: Invokes the native folder picker and returns the selected path to the UI."""
+@router.get("/target")
+async def target_project_folder():
+    """Directorial Target: Invokes the native folder picker and returns the selected path to the UI."""
     folder = transcriber_service.pick_directory()
     if not folder:
         return {"status": "cancelled", "folder_path": None}
     transcriber_service.ingest_project_baseline(folder)
-    return {"status": "anchored", "folder_path": folder}
+    return {"status": "targeted", "folder_path": folder}
+
+@router.get("/load")
+async def load_manuscript_picker():
+    """Manuscript Load: Invokes native file picker and targets project to its directory."""
+    file_path = transcriber_service.pick_file()
+    if not file_path:
+        return {"status": "cancelled", "file_path": None}
+    
+    # Target to the directory containing the file
+    folder = os.path.dirname(file_path).replace('\\', '/')
+    transcriber_service.ingest_project_baseline(folder)
+    
+    # Return both so the UI can update
+    return {
+        "status": "loaded", 
+        "file_path": file_path, 
+        "folder_path": folder,
+        "filename": os.path.basename(file_path)
+    }
+
+@router.get("/read")
+async def read_local_file(path: str):
+    """Reads a local file and returns its content (text or html)."""
+    safe_path = _safe_folder(os.path.dirname(path))
+    full_path = os.path.join(safe_path, os.path.basename(path))
+    
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=404, detail="File not found")
+        
+    try:
+        with open(full_path, "r", encoding="utf-8") as f:
+            content = f.read()
+            
+        # Basic heuristic: if it's .md or .txt, return as raw text and simple html
+        if path.lower().endswith(".md") or path.lower().endswith(".txt"):
+            return {
+                "content": content,
+                "html": f"<p>{content.replace(chr(10), '<br>')}</p>"
+            }
+        return {"content": content}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/transcribe/ingest")
 async def ingest_project_baseline(folder_path: str):
@@ -311,7 +353,7 @@ async def resort_manuscript_get(folder_path: str):
 
 @router.get("/photo")
 async def get_project_photo(folder_path: str, filename: str):
-    """Securely fetches a photo from the anchored project directory."""
+    """Securely fetches a photo from the targeted project directory."""
     from fastapi.responses import FileResponse
 
     safe_base = _safe_folder(folder_path)

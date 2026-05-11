@@ -3,7 +3,7 @@
 ## RULE 1: ABSOLUTE PATH VERIFICATION
 - Prior to EVERY `run_command` or `write_to_file`, systemically verify the Current Working Directory (Cwd).
 - Never utilize cached or hallucinated paths (e.g., `stay/Downloads`).
-- Workspace Anchor: `c:/Users/saint/.gemini/antigravity/playground/dark-schrodinger`
+- Workspace Root: `c:/Users/saint/.gemini/antigravity/playground/dark-schrodinger`
 
 ## RULE 2: END-TO-END HANDSHAKE DUTY
 - Any intelligence model update REQUIRES:
@@ -23,7 +23,7 @@
 ## RULE 5: PAYLOAD PURITY
 - Front-matter filters (Title Page, Prelude, TOC) must use fuzzy-match signatures by default.
 ## RULE 6: SDK SOVEREIGNTY
-- The project is PERMANENTLY ANCHORED to the `google-genai` (v2) Production Bedrock.
+- The project is PERMANENTLY ESTABLISHED on the `google-genai` (v2) Production Bedrock.
 - NEVER REVERT TO the legacy `google-generativeai` (v1) library.
 - All future Gemini integrations must utilize the `genai.Client` and `client.aio` (Asynchronous) patterns.
 ## RULE 7: THE ANTI-GENERIC MANDATE
@@ -34,6 +34,12 @@
 ## RULE 8: THE MASK DESTRUCTION PROTOCOL
 - **No Path Optimism**: Never assume a directory or file exists; use explicit verification before execution.
 - **No Performative Speed**: Prioritize full lifecycle tracing (Creation -> Storage -> Hydration) over "high-velocity" symptomatic patches.
-- **No Yes-Man Logic**: If a directorial path is technically suboptimal or violates a previous anchor, the Disciple MUST provide a high-fidelity audit and an alternative path.
+- **No Yes-Man Logic**: If a directorial path is technically suboptimal or violates a previous bedrock protocol, the Disciple MUST provide a high-fidelity audit and an alternative path.
 - **No Opaque Automation**: All background activity must be documented and auditable; never hide engineering behind "magic."
 - **Acid Test**: Any regression into these masks must be flagged as a **TALLY EVENT** in the accountability ledger.
+
+## RULE 9: ABSOLUTE REPORTING FIDELITY
+- **Strictly No False Reporting**: Only what has been explicitly verified through execution and log evidence may be reported as accomplished.
+- **Explicit Omission Disclosure**: Every progress report MUST include a dedicated section for "Unfinished/Verification Pending" or "Known Gaps" detailing what was NOT done or could not be verified.
+- **Overconfidence Penalty**: Claiming "Production Stability" or "System Integrity" while undocumented regressions exist triggers an immediate mandatory Full System Audit.
+- **Verification Chain**: Every claimed fix must be traceable back to a specific tool output in the current conversation turn.

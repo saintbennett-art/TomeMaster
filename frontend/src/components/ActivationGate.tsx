@@ -45,7 +45,7 @@ export default function ActivationGate({ children }: { children: React.ReactNode
       setBackendError(false);
     } catch (err) {
       clearTimeout(timer);
-      console.error("Failed to check license status", err);
+      // Silent Check Failure
       setIsActivated(false);
     } finally {
       setIsLoading(false);
@@ -63,8 +63,9 @@ export default function ActivationGate({ children }: { children: React.ReactNode
       const data = await activateLicense(keyInput);
       setIsActivated(true);
       setContextActivated(true);
-    } catch (err: any) {
-      setError(err.message || "Server connection failed. Is the backend running?");
+    } catch (err) {
+      const e = err as Error;
+      setError(e.message || "Server connection failed. Is the backend running?");
     } finally {
       setIsLoading(false);
     }

@@ -50,19 +50,20 @@
     "python.analysis.indexing": false,
     "typescript.implementationsCodeLens.enabled": false,
     "typescript.referencesCodeLens.enabled": false,
-    "typescript.tsserver.maxTsServerMemory": 512,
+    "typescript.tsserver.maxTsServerMemory": 4096,
     "editor.codeLens": false,
-    "editor.suggest.snippetsPreventQuickSuggestions": true,
+    "editor.suggest.snippetsPreventQuickSuggestions": false,
     "editor.quickSuggestions": {
-        "other": "off",
-        "comments": "off",
-        "strings": "off"
+        "other": "on",
+        "comments": "on",
+        "strings": "on"
     },
     "antigravity.searchMaxWorkspaceFileCount": 1000,
-    "antigravity.persistentLanguageServer": false,
+    "antigravity.persistentLanguageServer": true,
     "window.reopenFolders": "one",
     "extensions.disabled": [
         "ms-edgedevtools.vscode-edge-devtools",
         "meta.pyrefly"
-    ]
+    ],
+    "python.languageServer": "Jedi"
 }

@@ -2,14 +2,17 @@
 import { useState, useRef, useEffect } from 'react';
 import { Sparkles, Image as ImageIcon, BookOpen, Volume2, ChevronDown, X, User, MapPin, Loader2, Play, Pause, Pen, Palette, Scroll, Feather } from 'lucide-react';
 import { fetchMoodboard, checkWorldBible } from '@/lib/apiClient';
+import { MoodboardData, ContinuityBibleData, AgentReport, Character, Location } from '@/types/industrial';
+
+type VisualStyle = 'cinematic' | 'lineart' | 'historical' | 'masterpiece';
 
 interface CreativeMuseProps {
     content: string;
     selectedText?: string;
     currentChapterId?: string | null;
     currentParagraphText?: string;
-    agentReports?: Record<string, any>;
-    onAmbientNotify?: (text: string) => void;
+    agentReports?: Record<string, AgentReport>;
+    onAmbientNotify?: (message: string) => void;
 }
 
 export default function CreativeMuse({ content, selectedText, currentChapterId, currentParagraphText, agentReports, onAmbientNotify }: CreativeMuseProps) {
@@ -46,11 +49,11 @@ export default function CreativeMuse({ content, selectedText, currentChapterId, 
     }, [isLoading]);
     
     // Feature States
-    const [moodboardData, setMoodboardData] = useState<any>(null);
-    const [bibleData, setBibleData] = useState<any>(null);
+    const [moodboardData, setMoodboardData] = useState<MoodboardData | null>(null);
+    const [bibleData, setBibleData] = useState<ContinuityBibleData | null>(null);
     const [isPlayingAudio, setIsPlayingAudio] = useState(false);
     const [hoverDesc, setHoverDesc] = useState<string | null>(null);
-    const [visualStyle, setVisualStyle] = useState<'cinematic' | 'lineart' | 'historical' | 'masterpiece'>('cinematic');
+    const [visualStyle, setVisualStyle] = useState<VisualStyle>('cinematic');
     
     const VISUAL_STYLES = [
         { id: 'cinematic', label: 'Cinematic', icon: Sparkles, directive: "cinematic film still, high fidelity, atmospheric lighting, moody, volumetric rays", loading: "Drafting Cinematic Vision..." },
@@ -103,7 +106,8 @@ export default function CreativeMuse({ content, selectedText, currentChapterId, 
             const data = await fetchMoodboard(styledText);
             setMoodboardData(data);
         } catch (e) {
-            console.error(e);
+            const error = e as Error;
+            onAmbientNotify?.(`Moodboard Generation Failed: ${error.message}`);
         } finally {
             setIsLoading(false);
         }
@@ -116,7 +120,8 @@ export default function CreativeMuse({ content, selectedText, currentChapterId, 
             const data = await checkWorldBible(getTargetText());
             setBibleData(data);
         } catch (e) {
-            console.error(e);
+            const error = e as Error;
+            onAmbientNotify?.(`Continuity Bible Extraction Failed: ${error.message}`);
         } finally {
             setIsLoading(false);
         }
@@ -176,7 +181,7 @@ export default function CreativeMuse({ content, selectedText, currentChapterId, 
                                 {VISUAL_STYLES.map(style => (
                                     <button
                                         key={style.id}
-                                        onClick={() => setVisualStyle(style.id as any)}
+                                        onClick={() => setVisualStyle(style.id as VisualStyle)}
                                         title={style.label}
                                         className={`flex flex-col items-center gap-1.5 p-2 rounded-xl transition-all border ${visualStyle === style.id ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-400' : 'bg-white/5 border-transparent text-zinc-500 hover:bg-white/10'}`}
                                     >
@@ -352,7 +357,7 @@ export default function CreativeMuse({ content, selectedText, currentChapterId, 
                                             <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Dramatis Personae</h3>
                                         </div>
                                         <div className="space-y-4">
-                                            {bibleData?.characters?.map((c: any) => (
+                                            {bibleData?.characters?.map((c: Character) => (
                                                 <div key={c.name} className="group bg-[#111] border border-[#222] p-4 rounded-2xl hover:border-blue-500/40 transition-all hover:shadow-lg hover:shadow-blue-500/5 cursor-default">
                                                     <div className="flex justify-between items-start mb-2 text-justify">
                                                         <span className="text-sm font-bold text-white pr-2">{c.name}</span>
@@ -372,7 +377,7 @@ export default function CreativeMuse({ content, selectedText, currentChapterId, 
                                             <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Geographical Atlas</h3>
                                         </div>
                                         <div className="space-y-4">
-                                            {bibleData?.locations?.map((l: any) => (
+                                            {bibleData?.locations?.map((l: Location) => (
                                                 <div key={l.name} className="group bg-[#111] border border-[#222] p-4 rounded-2xl hover:border-emerald-500/40 transition-all hover:shadow-lg hover:shadow-emerald-500/5 cursor-default">
                                                     <div className="flex justify-between items-start mb-2">
                                                         <span className="text-sm font-bold text-white">{l.name}</span>

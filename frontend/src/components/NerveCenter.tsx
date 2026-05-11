@@ -75,10 +75,12 @@ export default function NerveCenter({ isLeftSidebarOpen = true }: { isLeftSideba
     const [actionEventName, setActionEventName] = useState<string | null>(null);
 
     useEffect(() => {
-        const handleSpeak = (e: any) => {
-            if (e.detail?.text) {
-                setMessage(e.detail.text);
-                setActionEventName(e.detail.actionEventName || null);
+        const handleSpeak = (e: Event) => {
+            const customEvent = e as CustomEvent<{ text: string, actionEventName?: string }>;
+            const detail = customEvent.detail;
+            if (detail?.text) {
+                setMessage(detail.text);
+                setActionEventName(detail.actionEventName || null);
             }
         };
         window.addEventListener('tome-master-guide-speak', handleSpeak);

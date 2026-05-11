@@ -12,21 +12,22 @@ import StructuralAnalysisModal from "@/components/workstation/StructuralAnalysis
 import AiEnhancementHub from "@/components/workstation/AiEnhancementHub";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { performMasterMigration } from "@/lib/migration_gate";
+import { secureVault } from "@/lib/vault";
 import { useWorkstationState, useWorkstationActions } from "@/context/WorkstationContext";
+import { useEditorState } from "@/context/EditorContext";
 
 export default function Home() {
   const { 
-    isFocusMode, chapters, arcData, bookTitle, authorName, coverImage,
-    activeProvider, activeModel, isOfflineMode, isActivated, activeFolderPath
+    isFocusMode, bookTitle, authorName, coverImage, activeFolderPath
   } = useWorkstationState();
 
+  const { chapters, arcData } = useEditorState();
+
   const { 
-    setIsFocusMode, setChapters, setArcData, setBookTitle, setAuthorName, 
-    setCoverImage, setIsOfflineMode, setActiveProvider, notify, syncTableOfContents,
-    anchorProject
+    setIsFocusMode, setBookTitle, setAuthorName, 
+    setCoverImage, notify, establishProject
   } = useWorkstationActions();
 
-  // Local UI-only states for the Shell
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(true);
   const [scrollToText, setScrollToText] = useState<string | null>(null);
   const [analysisTrigger, setAnalysisTrigger] = useState(0);
@@ -39,6 +40,7 @@ export default function Home() {
   const [keys, setKeysState] = useState<Record<string, string>>({});
   const [forcePrimary, setForcePrimary] = useState(false);
   const [localMode, setLocalMode] = useState(false);
+  const [activeProvider, setActiveProvider] = useState('slot_primary');
 
   // [FIX #8]: Cloud gate state
   const [cloudGate, setCloudGate] = useState<{isOpen: boolean, feature: string, onConfirm?: () => void}>({
@@ -58,24 +60,21 @@ export default function Home() {
     }
   }, []);
 
-  // Load vault keys on mount
+  // Load vault presence on mount — keys live in backend .env, not in browser
   useEffect(() => {
     if (typeof window !== 'undefined') {
-        const savedKeys = localStorage.getItem('tome_master_vault');
-        if (savedKeys) {
-            setKeysState(JSON.parse(savedKeys));
-        } else {
-            import('@/lib/apiClient').then(async (api) => {
-                const recovered = await api.fetchVaultSync();
-                if (Object.keys(recovered).length > 0) {
-                    setKeysState(prev => {
-                        const updated = { ...recovered, ...prev };
-                        localStorage.setItem('tome_master_vault', JSON.stringify(updated));
-                        return updated;
-                    });
-                }
-            });
-        }
+        import('@/lib/apiClient').then(async (api) => {
+            const presence = await api.fetchVaultSync();
+            // presence = { gemini: true/false, openai: true/false, ... }
+            // We mark slots as '***SEALED***' so the UI shows the key is present
+            const masked: Record<string, string> = {};
+            for (const [provider, isPresent] of Object.entries(presence)) {
+                if (isPresent) masked[provider] = '***SEALED***';
+            }
+            if (Object.keys(masked).length > 0) {
+                setKeysState(masked);
+            }
+        });
         setForcePrimary(localStorage.getItem('tome_master_force_primary') === 'true');
         setLocalMode(localStorage.getItem('tome_master_local_mode') === 'true');
     }
@@ -90,14 +89,14 @@ export default function Home() {
     }
   }, []);
 
-  // Listen for anchor requests
+  // Listen for target requests
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const handleAnchor = () => anchorProject();
-      window.addEventListener('tome-master-anchor-request', handleAnchor);
-      return () => window.removeEventListener('tome-master-anchor-request', handleAnchor);
+      const handleTarget = () => establishProject();
+      window.addEventListener('tome-master-target-request', handleTarget);
+      return () => window.removeEventListener('tome-master-target-request', handleTarget);
     }
-  }, [anchorProject]);
+  }, [establishProject]);
 
   // Listen for Nerve Center analysis invocation
   useEffect(() => {
@@ -110,23 +109,15 @@ export default function Home() {
 
   const handleSetKeys = (newKeys: Record<string, string>) => {
     setKeysState(newKeys);
-    localStorage.setItem('tome_master_vault', JSON.stringify(newKeys));
     window.dispatchEvent(new CustomEvent('tome-master-settings-changed'));
   };
 
-  // [FIX #9]: Full onboarding completion logic
-  const handleOnboardingComplete = (provider: string) => {
+  // [SOVEREIGN]: Onboarding completion logic
+  const handleOnboardingComplete = () => {
     localStorage.setItem('tome_master_onboarded', 'true');
-    localStorage.setItem('tome_master_provider', provider);
-    setActiveProvider(provider);
     setIsOnboardingOpen(false);
-    
-    if (provider === 'ollama') {
-        localStorage.setItem('tome_master_model', 'gemma4:e2b');
-    } else if (provider === 'gemini') {
-        localStorage.setItem('tome_master_model', 'models/gemini-1.5-flash');
-    }
     window.dispatchEvent(new CustomEvent('tome-master-settings-changed'));
+    notify("Industrial Architecture Established.");
   };
 
   const triggerCloudGate = (feature: string, onConfirm: () => void) => {
@@ -136,7 +127,6 @@ export default function Home() {
   const handleCloudConfirm = () => {
       const { onConfirm } = cloudGate;
       setCloudGate({ isOpen: false, feature: '' });
-      setIsOfflineMode(false);
       if (onConfirm) onConfirm();
   };
 
@@ -164,8 +154,7 @@ export default function Home() {
           onChapterClick={handleChapterClick}
           onAnalysisClick={() => setAnalysisTrigger(prev => prev + 1)}
           onSyncClick={() => setSyncTrigger(prev => prev + 1)}
-          isOfflineMode={isOfflineMode}
-          activeProvider={activeProvider}
+          isOfflineMode={localMode}
           coverImage={coverImage}
           onCoverUpload={handleCoverUpload}
           bookTitle={bookTitle}
@@ -216,22 +205,10 @@ export default function Home() {
         isOpen={isSettingsOpen} 
         onClose={() => setIsSettingsOpen(false)}
         activeProvider={activeProvider}
-        setActiveProvider={(p) => {
-            setActiveProvider(p);
-        }}
+        setActiveProvider={setActiveProvider}
         activeFolderPath={activeFolderPath}
         keys={keys}
         setKeys={handleSetKeys}
-        forcePrimary={forcePrimary}
-        setForcePrimary={(v) => {
-            setForcePrimary(v);
-            localStorage.setItem('tome_master_force_primary', String(v));
-        }}
-        localMode={localMode}
-        setLocalMode={(v) => {
-            setLocalMode(v);
-            localStorage.setItem('tome_master_local_mode', String(v));
-        }}
       />
       
       <NerveCenter isLeftSidebarOpen={isLeftSidebarOpen} />

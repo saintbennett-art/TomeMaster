@@ -6,10 +6,10 @@ This manual documents the high-fidelity resilience systems and accounting protoc
 To maintain continuous operation without user-facing errors, the system utilizes a **Silent Generational Cascade**. If an apex intelligence tier fails (due to Quota, Authorization, or API Outage), the **Sovereign Orchestrator** automatically re-routes the request.
 
 ### The Hierarchy
-1.  **GEMINI 3.1 PRO (Apex)**: The high-fidelity anchor for narrative and structural audits.
+1.  **GEMINI 3.1 PRO (Apex)**: The high-fidelity foundation for narrative and structural audits.
 2.  **GEMINI 3 FLASH (Stability)**: The secondary 3.x tier. Ultra-fast, zero-latency, and high rate limits.
 3.  **GEMINI 2.1 PRO (Legacy)**: High-fidelity alternative if the 3.x generation is entirely saturated.
-4.  **GEMINI 1.5 PRO (Bedrock)**: The absolute emergency anchor to prevent system blackout.
+4.  **GEMINI 1.5 PRO (Bedrock)**: The absolute emergency bedrock to prevent system blackout.
 
 ### Resilience Features
 *   **Silent Rerouting**: All 404, 429, and 500 errors are caught and swallowed. The user only sees "Synthesizing...".
@@ -43,10 +43,10 @@ To prevent `400 Bad Request` crashes during transcription, the system enforces a
 *   **Groq Pathway**: Exclusively locked to `llama-3.2-90b-vision-preview`. Never utilize text-only models (e.g., Llama 3.3) for image-based workflows.
 *   **Gemini Pathway**: Locked to the `google-genai` (v2) SDK to ensure high-fidelity image handoffs without deprecation artifacts.
 
-## 6. DIRECTORIAL ANCHORING & ANTI-NESTING
+## 6. DIRECTORIAL ESTABLISHMENT & ANTI-NESTING
 The manuscript work area must be protected from recursive directory growth during session stops/resumes.
-*   **The Artifacts Anchor**: `_manuscript_source` is the Sovereign Ground Truth for raw assets.
-*   **Ingestion Guard**: If a user anchors the project directly to an existing `_manuscript_source` folder, the engine must skip the "Migration" step to prevent recursive "Russian Doll" nesting.
+*   **The Artifacts Root**: `_manuscript_source` is the Sovereign Ground Truth for raw assets.
+*   **Ingestion Guard**: If a user roots the project directly to an existing `_manuscript_source` folder, the engine must skip the "Migration" step to prevent recursive "Russian Doll" nesting.
 *   **Ghost Error Transparency**: All background thread exceptions must be bubbled to the UI `status: "error"` state. The HUD is forbidden from spinning indefinitely on a crashed backend thread.
 
 ---

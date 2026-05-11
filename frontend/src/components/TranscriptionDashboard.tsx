@@ -13,6 +13,7 @@ interface TranscriptionDashboardProps {
     providerName?: string;
     modelName?: string;
     currentImageB64?: string | null;
+    missingPagesCount?: number;
 }
 
 const STATUS_CONFIG: Record<TranscriptionStatus, { label: string; color: string; icon: React.ReactNode; pulse: boolean }> = {
@@ -47,6 +48,7 @@ export function TranscriptionDashboard({
     providerName,
     modelName,
     currentImageB64,
+    missingPagesCount = 0,
 }: TranscriptionDashboardProps) {
     const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.idle;
     const colors = COLOR_MAP[cfg.color];
@@ -114,10 +116,23 @@ export function TranscriptionDashboard({
                     <span className="text-[7px] text-zinc-600 font-black uppercase tracking-wide mt-0.5">Done</span>
                 </div>
                 <div className="p-2 bg-white/[0.02] border border-white/5 rounded-xl flex flex-col items-center">
-                    <span className={`text-[10px] font-mono font-bold ${remaining > 0 ? colors.text : 'text-zinc-300'}`}>{remaining}</span>
-                    <span className="text-[7px] text-zinc-600 font-black uppercase tracking-wide mt-0.5">Left</span>
+                    <span className={`text-[10px] font-mono font-bold ${missingPagesCount > 0 ? 'text-orange-400' : 'text-zinc-300'}`}>{missingPagesCount}</span>
+                    <span className="text-[7px] text-zinc-600 font-black uppercase tracking-wide mt-0.5">Missing</span>
                 </div>
             </div>
+
+            {/* [FIDELITY]: Sequence Disruption Alert */}
+            {missingPagesCount > 0 && (
+                <div className="bg-orange-500/10 border border-orange-500/20 rounded-2xl px-4 py-3 flex items-center gap-3">
+                    <AlertCircle className="w-4 h-4 text-orange-400 shrink-0" />
+                    <div className="min-w-0">
+                        <p className="text-[9px] text-orange-300 font-black uppercase tracking-widest leading-none">Sequence Disrupted</p>
+                        <p className="text-[8px] text-orange-400/60 font-bold mt-1 uppercase tracking-tighter">
+                            {missingPagesCount} disruption(s) detected in the manuscript.
+                        </p>
+                    </div>
+                </div>
+            )}
 
             {/* Live page thumbnail — shows the actual manuscript page being digitized */}
             {currentImageB64 && status === 'running' && (

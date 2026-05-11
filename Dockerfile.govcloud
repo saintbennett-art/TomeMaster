@@ -1,0 +1,56 @@
+# --- STAGE 1: GovCloud Frontend Build (FIPS Compliant Base) ---
+FROM node:20-alpine AS frontend-builder
+WORKDIR /app/frontend
+
+# Copy frontend source
+COPY frontend/package*.json ./
+RUN npm ci
+
+COPY frontend/ ./
+# Build the production Next.js application
+RUN npm run build
+
+# --- STAGE 2: GovCloud Backend & Execution Environment ---
+FROM python:3.11-slim-bookworm
+
+# Enforce security updates and OS-level hardening
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
+    curl \
+    supervisor \
+    nodejs \
+    npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user for GovCloud compliance (NIST 800-53 AC-6)
+RUN useradd -m -s /bin/bash govuser
+
+WORKDIR /app
+
+# Copy backend requirements and install
+COPY backend/requirements.txt ./backend/
+RUN pip install --no-cache-dir -r backend/requirements.txt
+
+# [GOVCLOUD FERPA COMPLIANCE]: Install presidio for PII redaction
+RUN pip install --no-cache-dir presidio-analyzer presidio-anonymizer spacy
+RUN python -m spacy download en_core_web_lg
+
+# Copy backend source
+COPY backend/ ./backend/
+
+# Copy built frontend from Stage 1
+COPY --from=frontend-builder /app/frontend /app/frontend
+
+# Setup Supervisor to manage both Next.js and FastAPI
+COPY supervisord.govcloud.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Set permissions for the non-root user
+RUN chown -R govuser:govuser /app /var/log/supervisor /var/run
+
+USER govuser
+
+# Expose ports for Next.js (3000) and FastAPI (8080)
+EXPOSE 3000 8080
+
+# Entrypoint via supervisor
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

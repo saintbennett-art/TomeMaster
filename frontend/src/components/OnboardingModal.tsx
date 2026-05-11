@@ -4,7 +4,7 @@ import { ShieldCheck, Cpu, Globe, Rocket, Check, ArrowRight, Download, Info } fr
 
 interface OnboardingModalProps {
     isOpen: boolean;
-    onClose: (provider: string) => void;
+    onClose: () => void;
 }
 
 export default function OnboardingModal({ isOpen, onClose }: OnboardingModalProps) {
@@ -19,7 +19,7 @@ export default function OnboardingModal({ isOpen, onClose }: OnboardingModalProp
     };
 
     const finalize = () => {
-        onClose(selectedPath === 'sovereign' ? 'ollama' : 'gemini');
+        onClose();
     };
 
     return (
@@ -44,7 +44,7 @@ export default function OnboardingModal({ isOpen, onClose }: OnboardingModalProp
                             </p>
 
                             <div className="grid md:grid-cols-2 gap-6 w-full">
-                                {/* Option A: Cloud */}
+                                {/* Option A: Industrial Gateway */}
                                 <button 
                                     onClick={() => handleSelectPath('cloud')}
                                     className="group relative flex flex-col items-start p-6 rounded-2xl border border-[#222] bg-[#111] hover:border-sky-500/40 hover:bg-sky-500/5 transition-all text-left"
@@ -52,16 +52,16 @@ export default function OnboardingModal({ isOpen, onClose }: OnboardingModalProp
                                     <div className="w-12 h-12 rounded-xl bg-sky-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
                                         <Globe className="w-6 h-6 text-sky-400" />
                                     </div>
-                                    <h3 className="text-xl font-bold text-white mb-2">Cloud Path</h3>
+                                    <h3 className="text-xl font-bold text-white mb-2">Industrial Path</h3>
                                     <p className="text-zinc-500 text-sm leading-relaxed mb-4">
-                                        Easy setup. Fast performance. Uses Google Gemini or Claude. Recommended for most authors.
+                                        High-velocity deployment. Uses industrial-grade Sovereign Gateways for massive context analysis.
                                     </p>
                                     <div className="mt-auto flex items-center gap-2 text-sky-400 font-bold text-xs uppercase tracking-widest">
-                                        Select Fast Track <ArrowRight className="w-4 h-4" />
+                                        Select Industrial Track <ArrowRight className="w-4 h-4" />
                                     </div>
                                 </button>
 
-                                {/* Option B: Sovereign */}
+                                {/* Option B: Local Sovereign */}
                                 <button 
                                     onClick={() => handleSelectPath('sovereign')}
                                     className="group relative flex flex-col items-start p-6 rounded-2xl border border-[#222] bg-[#111] hover:border-emerald-500/40 hover:bg-emerald-500/5 transition-all text-left"
@@ -71,7 +71,7 @@ export default function OnboardingModal({ isOpen, onClose }: OnboardingModalProp
                                     </div>
                                     <h3 className="text-xl font-bold text-white mb-2">Sovereign Path</h3>
                                     <p className="text-zinc-500 text-sm leading-relaxed mb-4">
-                                        100% Private. 100% Offline. Uses local AI (Ollama). Your manuscript never leaves this machine.
+                                        100% Private. 100% Offline. Uses local industrial engines. Your manuscript never leaves this machine.
                                     </p>
                                     <div className="mt-auto flex items-center gap-2 text-emerald-400 font-bold text-xs uppercase tracking-widest">
                                         Select Privacy Path <ArrowRight className="w-4 h-4" />
@@ -83,23 +83,23 @@ export default function OnboardingModal({ isOpen, onClose }: OnboardingModalProp
                         <div className="flex flex-col items-start">
                             {selectedPath === 'cloud' ? (
                                 <>
-                                    <h2 className="text-2xl font-bold text-white mb-2">Cloud Path Selected</h2>
+                                    <h2 className="text-2xl font-bold text-white mb-2">Industrial Path Selected</h2>
                                     <p className="text-zinc-400 mb-8 leading-relaxed">
-                                        You'll need a free API key from Google or Anthropic to enable the Boardroom features. You can set this up later in the Engine Settings.
+                                        Establish your links via the Sovereign Gateway Registry to enable Boardroom specialist features.
                                     </p>
                                     <div className="bg-[#111] border border-[#222] rounded-xl p-5 mb-8 w-full">
                                         <ul className="space-y-3">
                                             <li className="flex items-start gap-3 text-sm text-zinc-300">
                                                 <Check className="w-5 h-5 text-emerald-500 shrink-0" />
-                                                <span>Access to the world's most powerful models</span>
+                                                <span>Access to high-fidelity Apex Gateways</span>
                                             </li>
                                             <li className="flex items-start gap-3 text-sm text-zinc-300">
                                                 <Check className="w-5 h-5 text-emerald-500 shrink-0" />
-                                                <span>Analyze 1,000,000+ words at once</span>
+                                                <span>Industrial-grade multi-agent orchestration</span>
                                             </li>
                                             <li className="flex items-start gap-3 text-sm text-zinc-300">
                                                 <Check className="w-5 h-5 text-emerald-500 shrink-0" />
-                                                <span>No high-end hardware required</span>
+                                                <span>Secure credential-based handshakes</span>
                                             </li>
                                         </ul>
                                     </div>
@@ -111,26 +111,26 @@ export default function OnboardingModal({ isOpen, onClose }: OnboardingModalProp
                                         Sovereign Mode Setup
                                     </h2>
                                     <p className="text-zinc-400 mb-6 leading-relaxed">
-                                        To run AI locally, you need to install the <span className="text-white font-bold">Ollama</span> engine on your machine.
+                                        To run industrial AI locally, establish a connection to your local Sovereign Gateway.
                                     </p>
                                     
                                     <div className="space-y-4 w-full mb-8">
                                         <div className="bg-[#111] border border-[#222] rounded-xl p-4 flex gap-4 items-center">
                                             <div className="w-8 h-8 rounded-full bg-[#222] text-zinc-300 flex items-center justify-center font-bold text-sm">1</div>
                                             <div className="flex-1">
-                                                <p className="text-sm font-bold text-white">Download & Install Ollama</p>
-                                                <p className="text-xs text-zinc-500">Go to ollama.com to get the installer for Windows.</p>
+                                                <p className="text-sm font-bold text-white">Initialize Sovereign Engine</p>
+                                                <p className="text-xs text-zinc-500">Ensure your local gateway is active and listening for handshakes.</p>
                                             </div>
-                                            <a href="https://ollama.com" target="_blank" rel="noreferrer" className="p-2 bg-zinc-800 hover:bg-emerald-500/20 text-zinc-400 hover:text-emerald-400 rounded-lg transition-all">
+                                            <div className="p-2 bg-zinc-800 text-zinc-400 rounded-lg">
                                                 <Download className="w-4 h-4" />
-                                            </a>
+                                            </div>
                                         </div>
                                         
                                         <div className="bg-[#111] border border-[#222] rounded-xl p-4 flex gap-4 items-center">
                                             <div className="w-8 h-8 rounded-full bg-[#222] text-zinc-300 flex items-center justify-center font-bold text-sm">2</div>
                                             <div className="flex-1">
-                                                <p className="text-sm font-bold text-white">Run your first model</p>
-                                                <p className="text-xs text-zinc-500">Open your terminal and type: <code className="bg-black/50 px-1 py-0.5 rounded text-indigo-400">ollama run gemma4:e2b</code> or <code className="bg-black/50 px-1 py-0.5 rounded text-indigo-400">ollama run phi3:mini</code></p>
+                                                <p className="text-sm font-bold text-white">Establish Gateway Link</p>
+                                                <p className="text-xs text-zinc-500">Enter your local gateway URL in the Discovery Pulse.</p>
                                             </div>
                                             <div className="p-2 text-zinc-600">
                                                 <Cpu className="w-4 h-4" />

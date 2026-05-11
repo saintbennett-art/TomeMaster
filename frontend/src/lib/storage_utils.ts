@@ -10,17 +10,14 @@ const SENSITIVE_KEY_PATTERNS = /key|vault|token|secret/i;
 // blocks the main thread for 10-30s and triggers browser "wait or kill" dialogs.
 const COMPRESS_SIZE_LIMIT = 100_000;
 
-export async function saveCompressed(key: string, value: any): Promise<void> {
+export async function saveCompressed(key: string, value: unknown): Promise<void> {
     try {
         let finalValue = value;
         if (typeof value === 'string' && value.length > 0 && value.length <= COMPRESS_SIZE_LIMIT) {
             finalValue = COMPRESSED_MARKER + LZString.compressToUTF16(value);
         }
         await set(key, finalValue);
-    } catch (err: any) {
-        if (err.name === 'QuotaExceededError') {
-            console.error('Critical: IndexedDB Quota Exceeded.');
-        }
+    } catch (err) {
         throw err;
     }
 }
@@ -32,7 +29,6 @@ export async function loadCompressed<T>(key: string): Promise<T | undefined> {
             if (value.startsWith(COMPRESSED_MARKER)) {
                 const decompressed = LZString.decompressFromUTF16(value.slice(COMPRESSED_MARKER.length));
                 if (decompressed !== null) return decompressed as unknown as T;
-                console.error(`STORAGE CORRUPTION: Key "${key}" has compression marker but decompression returned null. Discarding.`);
                 return undefined;
             }
             // Legacy format: only attempt decompression if first char is outside printable ASCII.
@@ -44,7 +40,6 @@ export async function loadCompressed<T>(key: string): Promise<T | undefined> {
         }
         return value as T;
     } catch (err) {
-        console.error('Failed to load/decompress from IndexedDB:', err);
         return undefined;
     }
 }
@@ -55,7 +50,7 @@ export async function exportFullProject(): Promise<string> {
         k => typeof k === 'string' && PERMITTED_BACKUP_KEYS.test(k) && !SENSITIVE_KEY_PATTERNS.test(k)
     );
 
-    const backup: Record<string, any> = {
+    const backup: { version: string, timestamp: number, data: Record<string, unknown> } = {
         version: '2.5.0',
         timestamp: Date.now(),
         data: {}
@@ -92,7 +87,6 @@ export async function importFullProject(jsonStr: string): Promise<boolean> {
 
         return true;
     } catch (err) {
-        console.error('Migration failed during import:', err);
         return false;
     }
 }

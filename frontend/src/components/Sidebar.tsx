@@ -3,9 +3,10 @@ import React, { useState, useEffect } from 'react';
 import { FileText, Settings, BarChart2, Scroll, RefreshCw, HelpCircle, Activity } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 import { checkSystemHealth } from '@/lib/apiClient';
+import { Chapter, ArcPoint } from '@/types/industrial';
 
 interface SidebarProps {
-  chapters: any[];
+  chapters: Chapter[];
   onChapterClick?: (startingWords: string) => void;
   onAnalysisClick?: () => void;
   onSyncClick?: () => void;
@@ -18,8 +19,8 @@ interface SidebarProps {
   authorName?: string;
   onAuthorChange?: (val: string) => void;
   onOpenHelp?: () => void;
-  onAmbientNotify?: (text: string) => void;
-  arcData?: any[];
+  onAmbientNotify?: (message: string) => void;
+  arcData?: ArcPoint[];
 }
 
 function Sidebar({ 
@@ -72,7 +73,7 @@ function Sidebar({
           <div className="flex gap-2 mb-6">
             <button 
                 onClick={() => setActiveTab('manuscript')}
-                onMouseEnter={() => ambientNotify("Manuscript Chamber: Here you audit your story's high-level architecture, navigation anchors, and live structural pacing.")}
+                onMouseEnter={() => ambientNotify("Manuscript Chamber: Here you audit your story's high-level architecture, navigation points, and live structural pacing.")}
                 className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg border text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'manuscript' ? 'bg-accent/20 border-accent/40 text-accent shadow-lg shadow-accent/5' : 'bg-surface border-border text-muted hover:text-foreground'}`}
             >
                 <FileText className="w-3.5 h-3.5" />
@@ -80,7 +81,7 @@ function Sidebar({
             </button>
             <button 
                 onClick={() => setActiveTab('project')}
-                onMouseEnter={() => ambientNotify("Project Branding: Define your narrative's visual identity, cover aesthetics, and metadata anchoring for professional distribution.")}
+                onMouseEnter={() => ambientNotify("Project Branding: Define your narrative's visual identity, cover aesthetics, and metadata binding for professional distribution.")}
                 className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg border text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'project' ? 'bg-accent/20 border-accent/40 text-accent shadow-lg shadow-accent/5' : 'bg-surface border-border text-muted hover:text-foreground'}`}
             >
                 <BarChart2 className="w-3.5 h-3.5" />
@@ -113,7 +114,7 @@ function Sidebar({
                     <div className="mt-2 mb-4 px-2 flex flex-col gap-3">
                         <span className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.2em]">Visual Branding</span>
                         <div 
-                            onMouseEnter={() => ambientNotify("Cover Archive: Anchors your project's visual identity.")}
+                            onMouseEnter={() => ambientNotify("Cover Archive: Establishes your project's visual identity.")}
                             className="relative group aspect-[2/3] w-full bg-[#151515] rounded-xl border border-[#2a2a2a] overflow-hidden hover:border-indigo-500/50 transition-all flex flex-col items-center justify-center cursor-pointer shadow-xl"
                         >
                             {coverImage ? (
@@ -141,7 +142,7 @@ function Sidebar({
                         </div>
 
                         <div className="flex flex-col gap-4 mt-4">
-                            <div className="flex flex-col gap-1.5" onMouseEnter={() => ambientNotify("Author Identity: Define your pen name and manuscript title for metadata anchoring.")}>
+                            <div className="flex flex-col gap-1.5" onMouseEnter={() => ambientNotify("Author Identity: Define your pen name and manuscript title for metadata binding.")}>
                                 <label htmlFor="book-title" className="text-[9px] text-muted font-black uppercase tracking-widest pl-1">Manuscript Title</label>
                                 <input 
                                     id="book-title"
@@ -171,19 +172,19 @@ function Sidebar({
                     <div className="flex-1 overflow-y-auto overflow-x-hidden pr-2 pb-4 bright-scrollbar min-h-0">
                         {chapters.length > 0 ? (
                         chapters
-                            .filter((chap: any, i: number) => {
+                            .filter((chap: Chapter, i: number) => {
                                 const title = (chap.original_heading || chap.suggested_title || "").toLowerCase();
                                 if (title.includes('epilogue') || title.includes('prologue') || title.includes('prelude')) return true;
                                 if ((chap.chapter_word_count || 0) < 30) return false;
                                 if (i < 2 && (chap.chapter_word_count || 0) < 250) return false;
                                 return true;
                             })
-                            .map((chap: any, i: number) => (
+                            .map((chap: Chapter, i: number) => (
                             <div 
                                 key={i} 
                                 onMouseEnter={() => ambientNotify(`Scrolling to ${chap.suggested_title || 'Chapter'}. Duration: ${chap.reading_time_mins || 1} minutes.`)}
                                 onClick={(e) => {
-                                    onChapterClick?.(chap.starting_words);
+                                    onChapterClick?.(chap.startingWords || "");
                                     e.currentTarget.scrollIntoView({ behavior: 'smooth', block: 'start' });
                                 }}
                                 className="text-xs py-2.5 pl-3 border-l-2 border-[#1a1a1a] hover:border-indigo-500/50 text-zinc-400 hover:text-zinc-100 cursor-pointer ml-2 transition-all mt-1 flex justify-between items-start pr-3 group hover:bg-white/5 rounded-r-md"
@@ -223,7 +224,7 @@ function Sidebar({
                             </div>
                             <div className="h-28 w-full bg-surface-hover/30 rounded-xl border border-border p-2 hover:border-accent/30 transition-colors cursor-crosshair">
                                 <ResponsiveContainer width="100%" height="100%">
-                                    <LineChart data={arcData.filter((d, i) => (d.chapter_word_count || 0) > 30)}>
+                                    <LineChart data={arcData.filter((d: ArcPoint, i: number) => (d.chapter_word_count || 0) > 30)}>
                                         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                                         <XAxis dataKey="segment" hide />
                                         <YAxis domain={[0, 10]} hide />

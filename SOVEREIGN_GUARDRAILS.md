@@ -1,11 +1,11 @@
 # 🛡️ SOVEREIGN GUARDRAIL PROTOCOL v5.0
 ## PROJECT-LEVEL ARCHITECTURAL MANDATES
 
-This document serves as the **Supreme Intellectual Anchor** for all development, maintenance, and AI-orchestration within this project. Any agent or developer interacting with this codebase MUST strictly adhere to these protocols.
+This document serves as the **Supreme Intellectual Bedrock** for all development, maintenance, and AI-orchestration within this project. Any agent or developer interacting with this codebase MUST strictly adhere to these protocols.
 
 ### 1. INTELLIGENCE TIER MANDATE (THE "CURRENT ERA" RULE)
-*   **PRIMARY ANCHOR**: `Gemini 3.1 Pro` is the absolute production standard.
-*   **FORBIDDEN ARCHITECTURES**: No `Gemini 1.5`, `Gemini 2.0`, or `GPT-4` (legacy) may be used as default anchors. They are considered "ancient debris" and represent a regression in narrative intelligence.
+*   **PRIMARY BEDROCK**: `Gemini 3.1 Pro` is the absolute production standard.
+*   **FORBIDDEN ARCHITECTURES**: No `Gemini 1.5`, `Gemini 2.0`, or `GPT-4` (legacy) may be used as default foundations. They are considered "ancient debris" and represent a regression in narrative intelligence.
 *   **NOMENCLATURE ALIGNMENT**: The internal technical IDs (e.g., `gemini-3.1-pro-preview`) MUST be mapped to the public-facing branding (`GEMINI 3.1 PRO`) to ensure directorial clarity and eliminate "nomenclature fraud."
 
 ### 2. SPECIALIST FIDELITY MAPPING

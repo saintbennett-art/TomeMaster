@@ -9,32 +9,32 @@ SETTINGS_LOCK = threading.Lock()
 # Default empty schema for the TomeMaster Vault
 DEFAULT_SETTINGS = {
     "api_keys": {
-        "openai": "",
-        "gemini": "",
-        "groq": "",
-        "anthropic": ""
+        "openai": "", "gemini": "", "groq": "", "anthropic": "",
+        "slot_primary": "", "slot_specialist": "", "slot_velocity": ""
     },
     "preferred_models": {
-        "vision": "gpt-4o",
+        "vision": "gemini-3-flash-preview",
         "logic": "gemini-3-flash-preview",
-        "analysis": "claude-3-5-sonnet-20241022"
+        "analysis": "gemini-3.1-pro-preview",
+        "NARRATIVE_ARCHITECT": "gemini-3.1-pro-preview",
+        "COPY_EDITOR": "claude-3-5-sonnet-20241022",
+        "TRANSCRIBER_LEAD": "gemini-3-flash-preview",
     },
-    "preferences": {
-        "theme": "dark",
-        "auto_stitch": True,
-        "language": "en"
-    }
+    "preferences": {"theme": "dark", "auto_stitch": True, "language": "en"},
 }
+
 
 def get_settings_path():
     """Returns the absolute path to the settings vault in the backend root."""
     backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(backend_root, SETTINGS_FILE)
 
+
 _PERMITTED_TOP_KEYS = set(DEFAULT_SETTINGS.keys())
-_PERMITTED_API_KEYS = {"openai", "gemini", "groq", "anthropic"}
-_PERMITTED_MODEL_KEYS = {"vision", "logic", "analysis"}
+_PERMITTED_API_KEYS = {"openai", "gemini", "groq", "anthropic", "slot_primary", "slot_specialist", "slot_velocity"}
+_PERMITTED_MODEL_KEYS = {"vision", "logic", "analysis", "NARRATIVE_ARCHITECT", "COPY_EDITOR", "TRANSCRIBER_LEAD"}
 _PERMITTED_PREF_KEYS = {"theme", "auto_stitch", "language"}
+
 
 def _validate_settings(data: dict) -> dict:
     """Returns a copy of data with only permitted keys — drops unknown fields."""
@@ -43,14 +43,21 @@ def _validate_settings(data: dict) -> dict:
         if key not in data:
             continue
         if key == "api_keys":
-            clean[key] = {k: str(v) for k, v in data[key].items() if k in _PERMITTED_API_KEYS}
+            clean[key] = {
+                k: str(v) for k, v in data[key].items() if k in _PERMITTED_API_KEYS
+            }
         elif key == "preferred_models":
-            clean[key] = {k: str(v) for k, v in data[key].items() if k in _PERMITTED_MODEL_KEYS}
+            clean[key] = {
+                k: str(v) for k, v in data[key].items() if k in _PERMITTED_MODEL_KEYS
+            }
         elif key == "preferences":
-            clean[key] = {k: data[key][k] for k in _PERMITTED_PREF_KEYS if k in data[key]}
+            clean[key] = {
+                k: data[key][k] for k in _PERMITTED_PREF_KEYS if k in data[key]
+            }
         else:
             clean[key] = data[key]
     return clean
+
 
 def load_settings():
     """[VAULT HYDRATION]: Recovers settings from disk or returns defaults if missing."""
@@ -65,6 +72,7 @@ def load_settings():
     except Exception as e:
         print(f"SETTINGS ERROR: Failed to hydrate vault: {e}")
         return DEFAULT_SETTINGS
+
 
 def save_settings(new_settings):
     """[VAULT SEALING]: Commits new settings to the persistent backend storage."""
@@ -91,19 +99,95 @@ def save_settings(new_settings):
             print(f"SETTINGS ERROR: Failed to seal vault: {e}")
             return False
 
+
 def get_api_key(provider):
     """Retrieves a specific API key from the vault or environment fallback."""
     settings = load_settings()
     key = settings.get("api_keys", {}).get(provider.lower())
-    
-    # Fallback to .env if the vault is empty for this provider
+
+    # [UPGRADE]: Map slots to branded fallbacks if slot-specific key is missing
+    if not key:
+        slot_map = {
+            "slot_primary": "gemini",
+            "slot_specialist": "openai",
+            "slot_velocity": "groq"
+        }
+        fallback_provider = slot_map.get(provider.lower())
+        if fallback_provider:
+            key = settings.get("api_keys", {}).get(fallback_provider)
+
+    # Fallback to .env
     if not key:
         env_map = {
             "openai": "OPENAI_API_KEY",
             "gemini": "GEMINI_API_KEY",
             "groq": "GROQ_API_KEY",
-            "anthropic": "ANTHROPIC_API_KEY"
+            "anthropic": "ANTHROPIC_API_KEY",
+            "slot_primary": "GEMINI_API_KEY",
+            "slot_specialist": "OPENAI_API_KEY",
+            "slot_velocity": "GROQ_API_KEY"
         }
         key = os.getenv(env_map.get(provider.lower(), ""))
-        
+
     return key or ""
+
+
+def get_preferred_model(category: str, provider: str = None):
+    """[SOVEREIGN DISCOVERY]: Returns the user's preferred model for a given category (vision, logic, analysis)."""
+    settings = load_settings()
+    models = settings.get("preferred_models", {})
+
+    # If a specific provider is requested, we try to find a match, otherwise return the category default
+    model = models.get(category.lower())
+
+    # Fallback logic if the vault is corrupted or missing specific keys
+    if not model:
+        fallbacks = {
+            "vision": "gemini-3-flash-preview",
+            "logic": "gemini-3-flash-preview",
+            "analysis": "gemini-3.1-pro-preview",
+        }
+        model = fallbacks.get(category.lower(), "gemini-3-flash-preview")
+
+    return model
+
+
+def get_model_for_role(role: str) -> dict:
+    """[SOVEREIGN MAPPING]: Maps an industrial role to its commissioned model and gateway key."""
+    settings = load_settings()
+    
+    # 1. Map role to category
+    category_map = {
+        "NARRATIVE_ARCHITECT": "vision",
+        "COPY_EDITOR": "analysis",
+        "TRANSCRIBER_LEAD": "vision",   # Vision required for manuscript OCR
+        "Editor-in-Chief": "analysis",
+        "Sovereign Liaison": "logic"
+    }
+    
+    category = category_map.get(role, "logic")
+    model = get_preferred_model(category)
+    
+    # 2. Determine provider based on model prefix or slot
+    # (Simple logic: if gemini is in name, use gemini provider)
+    provider = "gemini"
+    if "gpt" in model.lower() or "claude" in model.lower():
+        provider = "openai" if "gpt" in model.lower() else "anthropic"
+        
+    key = get_api_key(provider)
+    
+    # 3. Construct gateway config
+    # [CERTIFICATION]: The URL is derived from the provider, keeping the service brand-agnostic.
+    urls = {
+        "gemini": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "openai": "https://api.openai.com/v1/",
+        "anthropic": "https://api.anthropic.com/v1/", # Placeholder for gateway bridge
+        "groq": "https://api.groq.com/openai/v1/"
+    }
+    
+    return {
+        "url": urls.get(provider, urls["gemini"]),
+        "key": key,
+        "model": model,
+        "provider": provider
+    }

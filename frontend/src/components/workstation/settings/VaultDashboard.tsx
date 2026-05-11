@@ -12,13 +12,14 @@ import {
     Check,
     AlertCircle
 } from 'lucide-react';
+import { LedgerEntry, SystemAudit } from '@/types/industrial';
 
 interface VaultDashboardProps {
-    ledgerEntries: any[];
+    ledgerEntries: LedgerEntry[];
     totalTokens: number;
     expenditure: Record<string, number>;
     startingBalances: Record<string, number>;
-    systemAudit: any;
+    systemAudit: SystemAudit | null;
     isAuditLoading: boolean;
     triggerKillSwitch: () => void;
     isKilling: boolean;

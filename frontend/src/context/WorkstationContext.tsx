@@ -1,663 +1,294 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { get, set } from "idb-keyval";
 import {
-    checkTranscriptionStatus, startTranscription, anchorFolder,
-    clearTranscription, checkLicenseStatus, API_BASE_HOLDER,
-    resortTranscription
+    checkTranscriptionStatus, targetFolder, pickManuscript, readLocalFile,
+    API_BASE_HOLDER, startTranscription
 } from "@/lib/apiClient";
-import { loadCompressed, saveCompressed } from "@/lib/storage_utils";
+import { TranscriptionStatus } from "@/types/industrial";
 
-// Converts plain OCR text to safe HTML by escaping all entities first,
-// then wrapping paragraphs. Input is plain text so escaping is correct here.
-function sanitizeTextToHtml(rawText: string): string {
-    const escape = (s: string) => s
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-    return rawText.split('\n\n')
-        .map(p => p.trim())
-        .filter(p => p.length > 0)
-        .map(p => `<p>${escape(p).replace(/\n/g, '<br/>')}</p>`)
-        .join('');
-}
-
-// --- Types ---
-interface WorkstationState {
-    // Project Metadata
+// --- [STRICT WORKSTATION INTERFACES] ---
+export interface WorkstationState {
     bookTitle: string;
     authorName: string;
     coverImage: string | null;
-    
-    // Editor State
-    content: string;
-    htmlContent: string;
-    chapters: any[];
-    aiChapters: any[];
-    agentReports: Record<string, any>;
-    arcData: any[];
-    wordCount: number;
-    misspelledCount: number;
-    activePage: number;
-    selectedText: string;
-    currentChapterId: string | null;
-    currentParagraphText: string;
-    
-    // Engine State
     activeFolderPath: string | null;
     isTranscribing: boolean;
-    transcriptionStatus: any;
+    transcriptionStatus: TranscriptionStatus | null;
     processedPageCount: number;
     transcriptionMode: 'batch' | 'live';
-    transcriptionReset: boolean;
-    
-    // [SOVEREIGN TASK ANCHORS]
-    providerTranscribe: string;
-    modelTranscribe: string;
-    providerBoardroom: string;
-    modelBoardroom: string;
-    providerFallback: string;
-    modelFallback: string;
-
-    // System State
-    isOfflineMode: boolean;
-    activeProvider: string;
-    activeModel: string;
     isActivated: boolean;
     language: 'en-US' | 'en-GB' | 'en-CA';
-    isFocusMode: boolean;
-    
-    // UI Visibility
     isSettingsOpen: boolean;
     isHelpOpen: boolean;
     isEnhancementHubOpen: boolean;
-    activeEnhancements: string[];
-    analysisTrigger: number;
     isAuditOpen: boolean;
     isLedgerOpen: boolean;
     isReportOpen: boolean;
-    isDemoMode: boolean;
-    isInvokeLoading: boolean;
     isStructuralModalOpen: boolean;
+    isFocusMode: boolean;
+    activeEnhancements: string[];
 }
 
-interface WorkstationActions {
+export interface WorkstationActions {
     setBookTitle: (val: string) => void;
     setAuthorName: (val: string) => void;
     setCoverImage: (val: string | null) => void;
-    setContent: React.Dispatch<React.SetStateAction<string>>;
-    setHtmlContent: React.Dispatch<React.SetStateAction<string>>;
-    setChapters: (val: any[]) => void;
-    setAiChapters: (val: any[]) => void;
-    setAgentReports: (val: Record<string, any>) => void;
-    setArcData: (val: any[]) => void;
-    setActivePage: (val: number) => void;
-    setSelectedText: (val: string) => void;
-    setCurrentChapterId: (val: string | null) => void;
-    setCurrentParagraphText: (val: string) => void;
-    setWordCount: (val: number) => void;
-    setMisspelledCount: (val: number) => void;
-    setIsTranscribing: (val: boolean) => void;
-    setTranscriptionStatus: (val: any) => void;
-    setProcessedPageCount: React.Dispatch<React.SetStateAction<number>>;
     setActiveFolderPath: (val: string | null) => void;
+    setIsTranscribing: (val: boolean) => void;
+    setTranscriptionStatus: React.Dispatch<React.SetStateAction<TranscriptionStatus | null>>;
+    setProcessedPageCount: React.Dispatch<React.SetStateAction<number>>;
     setTranscriptionMode: (val: 'batch' | 'live') => void;
-    setTranscriptionReset: (val: boolean) => void;
-    setProviderTranscribe: (val: string) => void;
-    setModelTranscribe: (val: string) => void;
-    setProviderBoardroom: (val: string) => void;
-    setModelBoardroom: (val: string) => void;
-    setProviderFallback: (val: string) => void;
-    setModelFallback: (val: string) => void;
-    setIsOfflineMode: (val: boolean) => void;
-    setActiveProvider: (val: string) => void;
-    setActiveModel: (val: string) => void;
-    setIsFocusMode: (val: boolean) => void;
+    setIsActivated: (val: boolean) => void;
+    setLanguage: (lang: 'en-US' | 'en-GB' | 'en-CA') => void;
     setIsSettingsOpen: (open: boolean) => void;
     setIsHelpOpen: (open: boolean) => void;
     setIsEnhancementHubOpen: (open: boolean) => void;
-    toggleEnhancement: (id: string) => void;
-    setAnalysisTrigger: (fn: (prev: number) => number) => void;
     setIsAuditOpen: (val: boolean) => void;
     setIsLedgerOpen: (val: boolean) => void;
     setIsReportOpen: (val: boolean) => void;
-    setIsDemoMode: (val: boolean) => void;
     setIsStructuralModalOpen: (val: boolean) => void;
-    
-    // Operational Handshaking
-    anchorProject: () => Promise<void>;
-    invokeTranscription: () => Promise<void>;
-    syncTableOfContents: (editorRef: any) => void;
-    hydrate: () => Promise<void>;
+    setIsFocusMode: (val: boolean) => void;
     loadManuscript: () => Promise<void>;
-    notify: (text: string) => void;
-    setIsActivated: (val: boolean) => void;
-    setLanguage: (lang: 'en-US' | 'en-GB' | 'en-CA') => void;
+    loadSealedManuscript: () => Promise<void>;
+    establishProject: () => Promise<void>;
+    invokeTranscription: () => Promise<void>;
+    confirmInjection: () => Promise<void>;
+    cancelInjection: () => Promise<void>;
+    abortTranscription: (mode: 'current' | 'all') => Promise<void>;
+    resolveAuditInput: (val: string) => Promise<void>;
+    resolveInjection: (decision: 'accept' | 'reject' | 'quit') => Promise<void>;
+    notify: (message: string) => void;
+    hydrate: () => Promise<void>;
+    toggleEnhancement: (id: string) => void;
 }
 
 const StateContext = createContext<WorkstationState | undefined>(undefined);
 const ActionsContext = createContext<WorkstationActions | undefined>(undefined);
 
-// --- Provider ---
 export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    // Project Metadata
-    const [bookTitle, setBookTitleState] = useState("Manuscript");
-    const [authorName, setAuthorNameState] = useState("Author");
-    const [coverImage, setCoverImageState] = useState<string | null>(null);
-
-    // Editor State
-    const [content, setContent] = useState("");
-    const contentRef = React.useRef(content);
-    React.useEffect(() => { contentRef.current = content; }, [content]);
-    const [htmlContent, setHtmlContent] = useState("");
-    const [chapters, setChapters] = useState<any[]>([]);
-    const [aiChapters, setAiChapters] = useState<any[]>([]);
-    const [agentReports, setAgentReports] = useState<Record<string, any>>({});
-    const [arcData, setArcData] = useState<any[]>([]);
-    const [wordCount, setWordCount] = useState(0);
-    const [misspelledCount, setMisspelledCount] = useState(0);
-    const [activePage, setActivePage] = useState(1);
-    const [selectedText, setSelectedText] = useState("");
-    const [currentChapterId, setCurrentChapterId] = useState<string | null>(null);
-    const [currentParagraphText, setCurrentParagraphText] = useState("");
-
-    // Engine State
+    const [bookTitle, setBookTitle] = useState("Manuscript");
+    const [authorName, setAuthorName] = useState("Author");
+    const [coverImage, setCoverImage] = useState<string | null>(null);
     const [activeFolderPath, setActiveFolderPath] = useState<string | null>(null);
     const [isTranscribing, setIsTranscribing] = useState(false);
-    const [transcriptionStatus, setTranscriptionStatus] = useState<any>(null);
+    const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus | null>(null);
     const [processedPageCount, setProcessedPageCount] = useState(0);
-    const [transcriptionMode, setTranscriptionMode] = useState<'batch' | 'live'>('batch');
-    const [transcriptionReset, setTranscriptionReset] = useState(false);
-    
-    // [SOVEREIGN TASK ANCHORS]
-    const [providerTranscribe, setProviderTranscribe] = useState('gemini');
-    const [modelTranscribe, setModelTranscribe] = useState('auto');
-    const [providerBoardroom, setProviderBoardroom] = useState('gemini');
-    const [modelBoardroom, setModelBoardroom] = useState('auto');
-    const [providerFallback, setProviderFallback] = useState('openai');
-    const [modelFallback, setModelFallback] = useState('gpt-4o-mini');
-
-    // System State
-    // [FIX #1]: Renamed internal setter to avoid infinite recursion
-    const [isOfflineMode, setIsOfflineModeState] = useState(false);
-    const [activeProvider, setActiveProviderState] = useState('gemini');
-    const [activeModel, setActiveModelState] = useState('auto');
+    const [transcriptionMode, setTranscriptionMode] = useState<'batch' | 'live'>('live');
     const [isActivated, setIsActivated] = useState(false);
     const [language, setLanguage] = useState<'en-US' | 'en-GB' | 'en-CA'>('en-US');
-    const [isFocusMode, setIsFocusMode] = useState(false);
-
-    // UI Visibility
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [isHelpOpen, setIsHelpOpen] = useState(false);
     const [isEnhancementHubOpen, setIsEnhancementHubOpen] = useState(false);
-    const [activeEnhancements, setActiveEnhancements] = useState<string[]>([]);
-    const [analysisTrigger, setAnalysisTrigger] = useState(0);
     const [isAuditOpen, setIsAuditOpen] = useState(false);
     const [isLedgerOpen, setIsLedgerOpen] = useState(false);
     const [isReportOpen, setIsReportOpen] = useState(false);
-    const [isDemoMode, setIsDemoMode] = useState(false);
-    const [isInvokeLoading, setIsInvokeLoading] = useState(false);
     const [isStructuralModalOpen, setIsStructuralModalOpen] = useState(false);
+    const [isFocusMode, setIsFocusMode] = useState(false);
+    const [activeEnhancements, setActiveEnhancements] = useState<string[]>([]);
 
-    const toggleEnhancement = (id: string) => {
-        setActiveEnhancements(prev => 
-            prev.includes(id) ? prev.filter(e => e !== id) : [...prev, id]
-        );
-    };
-
-    const notify = useCallback((text: string) => {
-        window.dispatchEvent(new CustomEvent('tome-master-guide-speak', { detail: { text } }));
+    const notify = useCallback((message: string) => {
+        window.dispatchEvent(new CustomEvent('tome-master-guide-speak', { detail: { text: message } }));
     }, []);
 
-    // --- Persisted Metadata Setters ---
-    const setBookTitle = (val: string) => {
-        setBookTitleState(val);
-        set('tome_master_draft_title', val);
-    };
-    const setAuthorName = (val: string) => {
-        setAuthorNameState(val);
-        set('tome_master_draft_author', val);
-    };
-    const setCoverImage = (val: string | null) => {
-        setCoverImageState(val);
-        set('tome_master_draft_cover', val);
-    };
-
-    // [FIX #1]: Wrapper calls the RENAMED state setter, not itself
-    const setIsOfflineMode = (val: boolean) => {
-        setIsOfflineModeState(val);
-        localStorage.setItem('tome_master_offline_mode', String(val));
-    };
-    const setActiveProvider = (val: string) => {
-        setActiveProviderState(val);
-        localStorage.setItem('tome_master_provider', val);
-        window.dispatchEvent(new CustomEvent('tome-master-settings-changed'));
-    };
-    const setActiveModel = (val: string) => {
-        setActiveModelState(val);
-        localStorage.setItem('tome_master_model', val);
-    };
-
-    // --- Operations ---
-    const anchorProject = async () => {
+    const establishProject = async () => {
         try {
-            const result = await anchorFolder();
-            if ((result.status === 'success' || result.status === 'anchored') && result.folder_path) {
+            const result = await targetFolder();
+            if ((result.status === 'success' || result.status === 'established' || result.status === 'targeted') && result.folder_path) {
                 setActiveFolderPath(result.folder_path);
-                if (typeof window !== 'undefined') (window as any)._tome_active_path = result.folder_path;
                 await set('tome_master_active_folder', result.folder_path);
-                notify(`Project Anchored: ${result.folder_path}`);
-                
-                // [AUTO-LOAD]: After anchoring, immediately attempt to load the manuscript
-                await loadManuscript();
+                    notify(`Project Established: ${result.folder_path}`);
             }
         } catch (err) {
-            console.error("Anchoring Failure:", err);
             notify("Handshake Failed: Engine is unreachable.");
         }
     };
 
     const loadManuscript = async () => {
-        const folder = activeFolderPath || await get<string>('tome_master_active_folder');
-        if (!folder) {
-            notify("No project anchored. Please anchor a project first.");
-            return;
-        }
         try {
-            notify("Resurrecting manuscript from vault...");
-            // [INDUSTRIAL PULSE]: Force an ingestion check to ensure the backend is in sync
-            await fetch(`${API_BASE_HOLDER.current}/transcribe/ingest?folder_path=${encodeURIComponent(folder)}`);
-            
-            const state = await checkTranscriptionStatus(false);
-            setTranscriptionStatus({...state});
-            
-            if (state.status === 'sewing' || state.status === 'stitching') {
-                notify(state.error_message || "Voice of TomeMaster: Assembly is in progress. Hydrating the editor shortly...");
-                // Poll every 2 seconds until complete
-                const poll = setInterval(async () => {
-                    const nextState = await checkTranscriptionStatus(false);
-                    setTranscriptionStatus({...nextState});
-                    if (nextState.status === 'complete' || nextState.status === 'idle') {
-                        clearInterval(poll);
-                        if (nextState.text) {
-                            setContent(nextState.text);
-                            setHtmlContent(sanitizeTextToHtml(nextState.text));
-                        }
-                        notify(nextState.error_message || "Manuscript restored to editor.");
-                    } else if (nextState.status === 'error') {
-                        clearInterval(poll);
-                        notify(`Injection failed: ${nextState.error_message || "Unknown error."}`);
-                    }
-                }, 2000);
-                return;
-            }
-
-            if (state.text) {
-                // [SHADOW-SAVE]: Redundant storage of the active path for session recovery
-                localStorage.setItem('tome_master_shadow_path', folder);
+            const result = await pickManuscript();
+            if (result.status === 'loaded' && result.file_path) {
+                setActiveFolderPath(result.folder_path);
+                await set('tome_master_active_folder', result.folder_path);
+                await set('tome_master_active_file', result.file_path);
                 
-                setContent(state.text);
-                setHtmlContent(sanitizeTextToHtml(state.text));
-                notify(state.error_message || "Manuscript restored to editor.");
-            } else {
-                notify("No unified manuscript found. Transcribe the project first.");
+                // [AUTO-HYDRATION]: If it's a markdown or text file, load it immediately
+                const ext = result.file_path.split('.').pop()?.toLowerCase();
+                if (['md', 'markdown', 'txt'].includes(ext || '')) {
+                    notify(`Recovering prose from: ${result.filename}...`);
+                    const data = await readLocalFile(result.file_path);
+                    if (data.content) {
+                        window.dispatchEvent(new CustomEvent('tome-master-editor-hydrate', { 
+                            detail: { 
+                                content: data.content,
+                                html: data.html || `<p>${data.content.replace(/\n/g, '<br>')}</p>`
+                            } 
+                        }));
+                        notify(`Manuscript Ingested & Hydrated: ${result.filename}`);
+                    }
+                } else {
+                    notify(`Manuscript Ingested: ${result.filename}`);
+                    notify(`Command set to: ${result.folder_path}`);
+                    if (['pdf', 'docx'].includes(ext || '')) {
+                        notify("ACTION REQUIRED: This is a complex file. Click 'Transcribe' to extract the manuscript prose.");
+                    } else {
+                        notify("Ready for Structural Audit.");
+                    }
+                }
             }
-        } catch (e) {
-            console.error("Load Failure:", e);
-            notify("Handshake Failed: Engine could not load manuscript.");
+        } catch (err) {
+            notify("Sovereign Ingestion Failed: Engine is unreachable.");
+        }
+    };
+
+    const loadSealedManuscript = async () => {
+        try {
+            notify("Invoking native picker for Sealed Manuscript...");
+            const result = await pickManuscript();
+            
+            if (result.status === 'loaded' && result.file_path) {
+                notify(`Accessing: ${result.filename}...`);
+                setActiveFolderPath(result.folder_path);
+                await set('tome_master_active_folder', result.folder_path);
+                
+                // Read the content
+                const data = await readLocalFile(result.file_path);
+                if (data.content) {
+                    // [HYDRATION]: Force the editor to update with the recovered prose
+                    window.dispatchEvent(new CustomEvent('tome-master-editor-hydrate', { 
+                        detail: { 
+                            content: data.content,
+                            html: data.html || `<p>${data.content.replace(/\n/g, '<br>')}</p>`
+                        } 
+                    }));
+                    notify(`Sovereign Restoration Complete: ${result.filename}`);
+                } else {
+                    notify("Restore Failed: File appears empty or corrupted.");
+                }
+            } else if (result.status === 'cancelled') {
+                notify("Restoration Aborted.");
+            }
+        } catch (err) {
+            console.error("Restoration Error:", err);
+            notify("Sovereign Restoration Failed: Handshake error.");
         }
     };
 
     const invokeTranscription = async () => {
-        if (isInvokeLoading) return;
-        setIsInvokeLoading(true);
+        if (!activeFolderPath) { notify("Select a project folder first."); return; }
+        setIsTranscribing(true);
         try {
-            notify("Ingesting manuscript assets...");
-            // [RESET]: If we are stuck in an error or already transcribing, 
-            // Clearing deck...
-            if (transcriptionStatus?.status === 'error') {
-                await clearTranscription();
-            }
-
-            // [STEALTH STITCH]: If we are 100% digitized but need a manuscript re-assembly, skip the modal.
-            const isFullyDigitized = (transcriptionStatus?.total_images || 0) > 0 && 
-                                   (transcriptionStatus?.total_images === transcriptionStatus?.processed_images);
-            const hasRootWork = transcriptionStatus?.status === 'stitching'; // 'stitching' means ingest found RTFs in root
-
-            if (isFullyDigitized || hasRootWork) {
-                const stitchMsg = hasRootWork 
-                    ? "Voice of TomeMaster: New prose artifacts detected in the root. Executing industrial assembly to unify your work."
-                    : "Voice of TomeMaster: I have identified existing artifacts. Assembling your manuscript foundations now. Please stand by for hydration.";
-                
-                notify(stitchMsg);
-                
-                // We DON'T set setIsTranscribing(true) here to keep the modal hidden
-                const success = await resortTranscription(activeFolderPath || '');
-                setIsInvokeLoading(false);
-                
-                if (success) {
-                    // Force a quick manual load since we aren't polling
-                    setTimeout(() => loadManuscript(), 1000);
-                } else {
-                    notify("Stitching Failure. Verify the project folder is still anchored.");
-                }
-                return;
-            }
-
-            notify(`Invoking Engine (${transcriptionMode.toUpperCase()} MODE)...`);
-            
-            // [NEURAL PULSE]: Refresh vault data immediately to ensure we aren't using stale state
-            const freshVaultStr = localStorage.getItem('tome_master_vault') || '{}';
-            const vault = JSON.parse(freshVaultStr);
-            
-            const provider = vault.provider_transcribe || localStorage.getItem('tome_master_provider') || 'gemini';
-            const apiKey = vault[provider] || '';
-            const selectedModel = vault.model_transcribe || vault[`model_${provider}`] || null;
-            
-            const fallbackProvider = vault.provider_fallback || null;
-            const fallbackModel = vault.model_fallback || null;
-            
-            console.log(`[INGESTION INITIATED]: Provider: ${provider}, Model: ${selectedModel}`);
-
-            const started = await startTranscription(
-                apiKey, provider, isDemoMode, activeFolderPath || '', transcriptionReset, transcriptionMode, selectedModel,
-                fallbackProvider, fallbackModel
-            );
-            
-            if (started && started.status === 'started') {
-                const path = started.folder_path;
-                setActiveFolderPath(path || null);
-                if (path) set('tome_master_active_folder', path);
-                
-                setContent("");
-                setHtmlContent("");
-                setChapters([]);
-                setAiChapters([]);
-                setAgentReports({});
-                setProcessedPageCount(0);
-                setIsTranscribing(true);
-                setTranscriptionStatus(prev => ({
-                    ...prev,
-                    status: 'indexing',
-                    processed_images: prev?.processed_images || 0,
-                    total_images: prev?.total_images || 0,
-                    current_batch: 0
-                }));
-                
-                notify(transcriptionReset ? "Progress wiped. Starting fresh from Page 1." : "Scanning for new pages.");
-            } else {
-                notify("Ingestion Cancelled. Standby for new operational directive.");
-                setIsTranscribing(false);
-            }
-        } catch (e: any) {
-            setTranscriptionStatus({
-                status: 'error',
-                error_message: e.message || "Engine Connection Interrupted"
-            });
-            notify(`CRITICAL ENGINE FAILURE: ${e.message || "Unknown error"}`);
+            // [SOVEREIGN DISCOVERY]: Backend resolves provider/model/key from Settings vault.
+            // The API key configured in Settings determines the engine — nothing hardcoded here.
+            await startTranscription(activeFolderPath, transcriptionMode);
+            notify("Ingestion Pulse Detected. Monitoring engine...");
+        } catch (err) {
             setIsTranscribing(false);
-        } finally {
-            setIsInvokeLoading(false);
+            notify("Engine Ignition Failed.");
         }
     };
 
-    const syncTableOfContents = (editorRef: any) => {
-        if (!editorRef?.current) return;
-        editorRef.current.purgePdfMarkers();
-        const freshTOC = editorRef.current.generateTOC();
-        if (freshTOC && Array.isArray(freshTOC)) {
-            setChapters(freshTOC);
-            set('tome_master_draft_toc', freshTOC);
-        }
+    const confirmInjection = async () => {
+        try { await fetch(`${API_BASE_HOLDER.current}/transcribe/confirm`, { method: 'POST' }); notify("Injected."); } catch (err) {}
+    };
+
+    const cancelInjection = async () => {
+        try { await fetch(`${API_BASE_HOLDER.current}/transcribe/cancel`, { method: 'POST' }); notify("Aborted."); } catch (err) {}
+    };
+
+    const abortTranscription = async (mode: 'current' | 'all') => {
+        try {
+            await fetch(`${API_BASE_HOLDER.current}/transcribe/abort?mode=${mode}`, { method: 'POST' });
+            setIsTranscribing(false);
+            notify(`Abort Sequence Initiated: ${mode}`);
+        } catch (err) {}
+    };
+
+    const resolveAuditInput = async (val: string) => {
+        try { await fetch(`${API_BASE_HOLDER.current}/transcribe/resolve_audit?value=${encodeURIComponent(val)}`, { method: 'POST' }); } catch (err) {}
+    };
+
+    const resolveInjection = async (decision: 'accept' | 'reject' | 'quit') => {
+        try { await fetch(`${API_BASE_HOLDER.current}/transcribe/resolve_injection?decision=${decision}`, { method: 'POST' }); } catch (err) {}
+    };
+
+    const toggleEnhancement = (id: string) => {
+        setActiveEnhancements(prev => {
+            const next = prev.includes(id) ? prev.filter(e => e !== id) : [...prev, id];
+            set('tome_master_active_enhancements', next);
+            return next;
+        });
     };
 
     const hydrate = useCallback(async () => {
-        try {
-            const savedHtml = await loadCompressed<string>('tome_master_draft_html');
-            const savedText = await loadCompressed<string>('tome_master_draft_text');
-            if (savedHtml) {
-                setHtmlContent(savedHtml);
-                setContent(savedText || "");
-            }
-            const savedTOC = await get<any[]>('tome_master_draft_toc');
-            if (savedTOC && Array.isArray(savedTOC)) setChapters(savedTOC);
-            const savedAI = await get<any[]>('tome_master_draft_ai');
-            if (savedAI && Array.isArray(savedAI)) setAiChapters(savedAI);
-            const savedReports = await get<Record<string, any>>('tome_master_draft_reports');
-            if (savedReports) setAgentReports(savedReports);
-            const savedArc = await get<any[]>('tome_master_draft_arc');
-            if (savedArc && Array.isArray(savedArc)) setArcData(savedArc);
-            const savedApplied = await get<string[]>('tome_master_draft_applied_warnings');
-            const savedFolder = await get<string>('tome_master_active_folder') || localStorage.getItem('tome_master_shadow_path');
-            if (savedFolder) {
-                setActiveFolderPath(savedFolder);
-                console.log(`HYDRATION: Project Anchor restored from Vault: ${savedFolder}`);
-                // [AUTO-PULSE]: Re-ingest the project baseline to update counters without user intervention
+        const folder = await get<string>('tome_master_active_folder');
+        if (folder) setActiveFolderPath(folder);
+
+        const filePath = await get<string>('tome_master_active_file');
+        if (filePath) {
+            const ext = filePath.split('.').pop()?.toLowerCase();
+            if (['md', 'markdown', 'txt'].includes(ext || '')) {
                 try {
-                    await fetch(`${API_BASE_HOLDER.current}/transcribe/ingest?folder_path=${encodeURIComponent(savedFolder)}`);
-                    // [HYDRATION SYNC]: Immediately pull the results of the scan into the UI
-                    const state = await checkTranscriptionStatus(false); // [FULL]: We want the text if it exists
-                    setTranscriptionStatus({...state});
-
-                    // [STATE SYNC]: Show the Ingestion banner only for active OCR.
-                    // "stitching" = silent RTF injection (no banner); "sewing" = post-OCR assembly (banner ok).
-                    if (state.status === 'running' || state.status === 'indexing' || state.status === 'sewing') {
-                        setIsTranscribing(true);
-                    } else {
-                        setIsTranscribing(false);
-                        if (state.status === 'stitching') {
-                            // Injection is in-flight — STITCH WATCHER useEffect handles loading on completion.
-                            notify(state.error_message || "Recovered pages found — injecting silently into manuscript...");
-                        } else if (state.status === 'complete' && state.text && state.error_message?.includes('injected')) {
-                            // Race condition: stitching finished before our first poll.
-                            // The error_message from resort_from_cache always contains "injected" in this case.
-                            console.log("HYDRATION: Stitch completed before first poll — loading injected manuscript.");
-                            setContent(state.text);
-                            setHtmlContent(sanitizeTextToHtml(state.text));
-                            notify(state.error_message);
-                        } else if (state.text && !contentRef.current) {
-                            // Normal hydration: no existing editor content — load from sealed manuscript.
-                            console.log("HYDRATION: Injecting sealed manuscript into editor.");
-                            setContent(state.text);
-                            setHtmlContent(sanitizeTextToHtml(state.text));
-                        }
+                    const data = await readLocalFile(filePath);
+                    if (data.content) {
+                        window.dispatchEvent(new CustomEvent('tome-master-editor-hydrate', { 
+                            detail: { 
+                                content: data.content,
+                                html: data.html || `<p>${data.content.replace(/\n/g, '<br>')}</p>`
+                            } 
+                        }));
                     }
-                } catch (e) {
-                    console.warn("HYDRATION: Auto-Pulse failed.");
-                }
+                } catch (e) {}
             }
-            
-            const savedTitle = await get<string>('tome_master_draft_title');
-            if (savedTitle) setBookTitleState(savedTitle);
-            const savedAuthor = await get<string>('tome_master_draft_author');
-            if (savedAuthor) setAuthorNameState(savedAuthor);
-            const savedCover = await get<string>('tome_master_draft_cover');
-            if (savedCover) setCoverImageState(savedCover);
-
-            // [FIX #2]: Use the renamed state setters, not the wrapper functions
-            try {
-                const status = await checkLicenseStatus();
-                setIsActivated(status.is_activated);
-            } catch (e) {
-                console.error("License check failed:", e);
-            }
-            
-            const vaultStr = localStorage.getItem('tome_master_vault') || '{}';
-            const vault = JSON.parse(vaultStr);
-            setProviderTranscribe(vault.provider_transcribe || 'gemini');
-            setModelTranscribe(vault.model_transcribe || 'auto');
-            setProviderBoardroom(vault.provider_boardroom || 'gemini');
-            setModelBoardroom(vault.model_boardroom || 'auto');
-            setProviderFallback(vault.provider_fallback || 'openai');
-            setModelFallback(vault.model_fallback || 'gpt-4o-mini');
-
-            setIsOfflineModeState(localStorage.getItem('tome_master_offline_mode') === 'true');
-            setActiveProviderState(localStorage.getItem('tome_master_provider') || 'gemini');
-            setActiveModelState(localStorage.getItem('tome_master_model') || 'auto');
-        } catch (err) {
-            console.error("Hydration Failure:", err);
         }
+
+        const enhancements = await get<string[]>('tome_master_active_enhancements');
+        if (enhancements) setActiveEnhancements(enhancements);
+
+        try {
+            const res = await fetch(`${API_BASE_HOLDER.current}/license/status`);
+            const data = await res.json();
+            if (data.is_activated) setIsActivated(true);
+        } catch (e) {}
     }, []);
 
-    useEffect(() => {
-        hydrate();
-    }, [hydrate]);
+    useEffect(() => { hydrate(); }, [hydrate]);
 
-    // Listen for settings changes from other windows/components
     useEffect(() => {
-        if (typeof window === 'undefined') return;
-        const handleSettingsChange = () => {
-            const vaultStr = localStorage.getItem('tome_master_vault') || '{}';
-            const vault = JSON.parse(vaultStr);
-            setProviderTranscribe(vault.provider_transcribe || 'gemini');
-            setModelTranscribe(vault.model_transcribe || 'auto');
-            setProviderBoardroom(vault.provider_boardroom || 'gemini');
-            setModelBoardroom(vault.model_boardroom || 'auto');
-            
-            setActiveProviderState(localStorage.getItem('tome_master_provider') || 'gemini');
-            setActiveModelState(localStorage.getItem('tome_master_model') || 'auto');
-        };
-        window.addEventListener('storage', handleSettingsChange);
-        window.addEventListener('tome-master-settings-changed', handleSettingsChange);
-        return () => {
-            window.removeEventListener('storage', handleSettingsChange);
-            window.removeEventListener('tome-master-settings-changed', handleSettingsChange);
-        };
+        const pulse = setInterval(async () => {
+            try {
+                // Heartbeat to keep backend alive and sync activation
+                await fetch(`${API_BASE_HOLDER.current}/ai/status`);
+                const res = await fetch(`${API_BASE_HOLDER.current}/license/status`);
+                const data = await res.json();
+                setIsActivated(data.is_activated);
+            } catch (e) {}
+        }, 15000);
+        return () => clearInterval(pulse);
     }, []);
 
-    // Auto-save logic
-    useEffect(() => {
-        if (!htmlContent) return;
-        const timeout = setTimeout(async () => {
-            try {
-                await saveCompressed('tome_master_draft_html', htmlContent);
-                await saveCompressed('tome_master_draft_text', content);
-                const wc = content.trim().split(/\s+/).filter(w => w.length > 0).length;
-                setWordCount(wc);
-                const mc = document.querySelectorAll('.misspelled-word').length;
-                setMisspelledCount(mc);
-            } catch (err: any) {
-                console.warn("Storage pressure detected. Auto-save failed.");
-            }
-        }, 2500);
-        return () => clearTimeout(timeout);
-    }, [htmlContent, content]);
-
-    // Persist chapters, reports, arc data
-    useEffect(() => {
-        if (chapters && chapters.length > 0) set('tome_master_draft_toc', chapters);
-    }, [chapters]);
-    useEffect(() => {
-        if (aiChapters && aiChapters.length > 0) set('tome_master_draft_ai', aiChapters);
-    }, [aiChapters]);
-    useEffect(() => {
-        if (agentReports && Object.keys(agentReports).length > 0) set('tome_master_draft_reports', agentReports);
-    }, [agentReports]);
-    useEffect(() => {
-        if (arcData && arcData.length > 0) set('tome_master_draft_arc', arcData);
-    }, [arcData]);
-
-    // [SILENT STITCH WATCHER]: Polls every 4s while a silent RTF injection is running.
-    // When the backend transitions from "stitching" → "complete", pushes the updated
-    // manuscript into the editor and notifies the author of injected pages.
-    useEffect(() => {
-        if (transcriptionStatus?.status !== 'stitching' || !activeFolderPath) return;
-        const watcher = setInterval(async () => {
-            try {
-                const state = await checkTranscriptionStatus(false);
-                setTranscriptionStatus({...state});
-                if (state.status === 'complete' || state.status === 'idle') {
-                    clearInterval(watcher);
-                    if (state.text) {
-                        setContent(state.text);
-                        setHtmlContent(sanitizeTextToHtml(state.text));
-                    }
-                    notify(state.error_message || "Voice of TomeMaster: Silent injection complete. Manuscript updated.");
-                } else if (state.status === 'error') {
-                    clearInterval(watcher);
-                    notify(`Injection failed: ${state.error_message || "Unknown error. Check backend logs."}`);
-                }
-            } catch (e) {
-                console.warn("STITCH WATCHER: Poll interrupted.");
-            }
-        }, 4000);
-        return () => clearInterval(watcher);
-    }, [transcriptionStatus?.status, activeFolderPath]);
-
-    // [INDUSTRIAL SCOUT]: Watches for new RTF files dropped into the root while the app is running.
-    // Fires every 20s when the manuscript has known missing pages — no restart required.
-    useEffect(() => {
-        const missingCount = transcriptionStatus?.missing_pages_count || 0;
-        if (!activeFolderPath || isTranscribing || missingCount === 0) return;
-
-        const scout = setInterval(async () => {
-            try {
-                const res = await fetch(`${API_BASE_HOLDER.current}/transcribe/ingest?folder_path=${encodeURIComponent(activeFolderPath)}`);
-                if (!res.ok) return;
-
-                // Use full mode so we have `text` available for the fast-complete case
-                const state = await checkTranscriptionStatus(false);
-
-                if (state.status === 'stitching') {
-                    // Injection in-flight — update status so STITCH WATCHER takes over
-                    setTranscriptionStatus({...state});
-                    notify(state.error_message || "New manuscript assets identified. Assembling automatically...");
-                } else if (state.status === 'complete' && state.error_message?.includes('injected')) {
-                    // Injection completed before our next poll — surface it directly
-                    setTranscriptionStatus({...state});
-                    if (state.text) {
-                        setContent(state.text);
-                        setHtmlContent(sanitizeTextToHtml(state.text));
-                    }
-                    notify(state.error_message);
-                }
-            } catch (e) {
-                console.warn("SCOUT ERROR: Ingestion pulse interrupted.");
-            }
-        }, 20000); // 20s — responsive without hammering the backend
-
-        return () => clearInterval(scout);
-    }, [activeFolderPath, isTranscribing, notify]);
-
-    const state: WorkstationState = {
-        bookTitle, authorName, coverImage, content, htmlContent, chapters, aiChapters, 
-        agentReports, arcData, wordCount, misspelledCount, activePage, selectedText,
-        currentChapterId, currentParagraphText, activeFolderPath, isTranscribing, 
-        transcriptionStatus, processedPageCount, transcriptionMode, transcriptionReset,
-        providerTranscribe, modelTranscribe, providerBoardroom, modelBoardroom,
-        providerFallback, modelFallback,
-        isOfflineMode, activeProvider, activeModel, isActivated, language, isFocusMode,
-        isSettingsOpen, isHelpOpen, isEnhancementHubOpen, activeEnhancements, analysisTrigger,
-        isAuditOpen,
-        isLedgerOpen,
-        isReportOpen,
-        isDemoMode,
-        isInvokeLoading,
-        isStructuralModalOpen
+    const workstationState: WorkstationState = {
+        bookTitle, authorName, coverImage, activeFolderPath,
+        isTranscribing, transcriptionStatus, processedPageCount, transcriptionMode,
+        isActivated, language, isSettingsOpen, isHelpOpen, isEnhancementHubOpen,
+        isAuditOpen, isLedgerOpen, isReportOpen, isStructuralModalOpen, isFocusMode,
+        activeEnhancements
     };
 
-    const actions: WorkstationActions = {
-        setBookTitle, setAuthorName, setCoverImage, setContent, setHtmlContent,
-        setChapters, setAiChapters, setAgentReports, setArcData, setActivePage,
-        setSelectedText, setCurrentChapterId, setCurrentParagraphText,
-        setWordCount, setMisspelledCount,
-        setIsTranscribing, setTranscriptionStatus, setProcessedPageCount,
-        setActiveFolderPath, setTranscriptionMode, setTranscriptionReset,
-        setProviderTranscribe, setModelTranscribe, setProviderBoardroom, setModelBoardroom,
-        setProviderFallback, setModelFallback,
-        setIsOfflineMode, setActiveProvider, setActiveModel,
-        setIsFocusMode, setIsAuditOpen, setIsLedgerOpen, setIsReportOpen, setIsDemoMode,
-        setIsStructuralModalOpen, setIsHelpOpen, setIsEnhancementHubOpen, toggleEnhancement, setAnalysisTrigger,
-        setIsSettingsOpen,
-        anchorProject, loadManuscript, invokeTranscription, syncTableOfContents, hydrate, notify,
-        setIsActivated, setLanguage
+    const workstationActions: WorkstationActions = {
+        setBookTitle, setAuthorName, setCoverImage, setActiveFolderPath,
+        setIsTranscribing, setTranscriptionStatus, setProcessedPageCount, setTranscriptionMode,
+        setIsActivated, setLanguage, setIsSettingsOpen, setIsHelpOpen, setIsEnhancementHubOpen,
+        setIsAuditOpen, setIsLedgerOpen, setIsReportOpen, setIsStructuralModalOpen, setIsFocusMode,
+        loadManuscript, loadSealedManuscript, establishProject, invokeTranscription, confirmInjection, cancelInjection, abortTranscription,
+        resolveAuditInput, resolveInjection, notify, hydrate,
+        toggleEnhancement
     };
 
     return (
-        <StateContext.Provider value={state}>
-            <ActionsContext.Provider value={actions}>
+        <StateContext.Provider value={workstationState}>
+            <ActionsContext.Provider value={workstationActions}>
                 {children}
             </ActionsContext.Provider>
         </StateContext.Provider>

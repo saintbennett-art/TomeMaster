@@ -40,7 +40,7 @@ interface RichTextEditorProps {
   onScrollComplete?: () => void;
   acceptedChapter?: { title: string, startingWords: string, timestamp: number } | null;
   acceptedWarning?: { warning: string, startingWords: string, timestamp: number } | null;
-  chapters?: any[];
+  chapters?: Chapter[];
   onCursorPageChange?: (page: number) => void;
   onGrammarCheck?: () => void;
   onSelectionChange?: (text: string) => void;
@@ -110,7 +110,7 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
           const text = editor.getText({ blockSeparator: '\n\n' });
           const html = editor.getHTML();
           
-          // [PERFORMANCE CACHE]: Anchor the serialization result so the sync hook can bypass verification
+          // [PERFORMANCE CACHE]: Establish the serialization result so the sync hook can bypass verification
           lastSyncedContentRef.current = html;
           lastSyncedSizeRef.current = editor.state.doc.content.size;
           
@@ -133,13 +133,13 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
         // 2. Track Cursor Page & Chapter (Calibrated Discovery)
         const docSize = editor.state.doc.content.size;
         
-        // [PERFORMANCE ANCHOR]: Avoid massive string allocations on large manuscripts
+        // [PERFORMANCE ROOT]: Avoid massive string allocations on large manuscripts
         // We estimate page count based on character density (~6 chars per word, 250 words per page)
         // This is O(1) instead of O(N) serialization.
         const pageNum = Math.floor(from / (6 * 250)) + 1;
         if (onCursorPageChange) onCursorPageChange(pageNum);
 
-        // 3. Track Current Chapter (Scope Anchor)
+        // 3. Track Current Chapter (Scope Root)
         if (onCurrentChapterChange && chapters && chapters.length > 0) {
             let currentChapId = null;
             
@@ -231,7 +231,7 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
                     editor.chain().focus().setTextSelection(pos).run();
                 }
             } catch (err) {
-                console.warn("Navigation probe failed", err);
+                // Silent Navigation Probe Failure
             }
         }
     }, 40);
@@ -294,9 +294,9 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
       if (!editor) return [];
       const { state } = editor;
       const doc = state.doc;
-      const toc: any[] = [];
+      const toc: Chapter[] = [];
       
-      let currentChapter: any = null;
+      let currentChapter: Chapter | null = null;
       let chapterText: string[] = [];
 
       doc.descendants((node, pos) => {
@@ -394,7 +394,7 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
                }
            }
          } catch (e) {
-             console.warn("De-Pagination merge failed at pos", pos, e);
+             // Silent Merge Bypass
          }
       });
 
@@ -451,14 +451,14 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
   // [SOVEREIGN SENTINEL]: Synchronize local state with Tiptap storage
   useEffect(() => {
     if (editor && editor.storage.spellcheck) {
-        (editor.storage as any).spellcheck.language = language;
+        ((editor.storage as Record<string, unknown>).spellcheck as { language: string }).language = language;
     }
   }, [language, editor]);
 
   useEffect(() => {
     if (editor) {
         editor.view.dispatch(editor.state.tr.setMeta('spellcheck_refresh', true));
-        const currentLang = (editor.storage as any).spellcheck?.language;
+        const currentLang = ((editor.storage as Record<string, unknown>).spellcheck as { language?: string })?.language;
         if (currentLang) setLanguage(currentLang);
     }
   }, [editor]);
@@ -620,7 +620,7 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
         }
         
         if (!found) {
-          console.warn("Could not find the starting words in the editor content to inject the chapter.", acceptedChapter.startingWords);
+          // Silent Injection Bypass
           alert("Couldn't automatically place the chapter break because the text has been heavily edited or the AI truncated it. You can place it manually.");
         }
       }, 50);
@@ -931,8 +931,8 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
                 <button
                   key={lang.id}
                   onClick={() => {
-                    editor.commands.setLanguage(lang.id as any);
-                    setLanguage(lang.id as any);
+                    (editor.commands as Record<string, Function>).setLanguage(lang.id);
+                    setLanguage(lang.id);
                     setIsLangMenuOpen(false);
                   }}
                   className={`w-full flex items-center justify-between px-3 py-1.5 text-[10px] font-black uppercase tracking-widest hover:bg-surface-hover transition-colors ${language === lang.id ? 'text-accent' : 'text-muted'}`}
@@ -1100,7 +1100,7 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
         </button>
 
         <button
-          onClick={() => (editor.commands as any).sanitizeTypography()}
+          onClick={() => (editor.commands as Record<string, Function>).sanitizeTypography()}
           className="p-1.5 rounded-md transition-colors text-sky-400 hover:text-sky-300 hover:bg-[#222]"
           title="Sanitize Typography (Straight Quotes)"
         >
@@ -1138,7 +1138,7 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
         <div className="flex items-center bg-[#222] rounded-md px-1 ml-1 border border-[#333]">
           <button
             onClick={() => {
-              (editor.commands as any).setLanguage('en-US');
+              (editor.commands as Record<string, Function>).setLanguage('en-US');
               setLanguage('en-US');
             }}
             className={`px-2 py-1 text-[9px] font-bold rounded transition-all ${language === 'en-US' ? 'bg-indigo-600 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'}`}
@@ -1148,7 +1148,7 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
           </button>
           <button
             onClick={() => {
-              (editor.commands as any).setLanguage('en-GB');
+              (editor.commands as Record<string, Function>).setLanguage('en-GB');
               setLanguage('en-GB');
             }}
             className={`px-2 py-1 text-[9px] font-bold rounded transition-all ${language === 'en-GB' ? 'bg-indigo-600 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'}`}
@@ -1158,7 +1158,7 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
           </button>
           <button
             onClick={() => {
-              (editor.commands as any).setLanguage('en-CA');
+              (editor.commands as Record<string, Function>).setLanguage('en-CA');
               setLanguage('en-CA');
             }}
             className={`px-2 py-1 text-[9px] font-bold rounded transition-all ${language === 'en-CA' ? 'bg-indigo-600 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'}`}
@@ -1289,7 +1289,7 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
                 } catch (err) { return; }
 
                 if (!spellBubble || spellBubble.word !== word) {
-                  const storage = (editor.storage as any).spellcheck;
+                  const storage = (editor.storage as Record<string, unknown>).spellcheck as { customWords: Set<string>, ignoredWords: Set<string> };
                   const suggestions = storage?.getSuggestions ? storage.getSuggestions(word) : [];
                   
                   const rect = misspelledSpan.getBoundingClientRect();
@@ -1307,7 +1307,7 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
                     flip = true;
                   }
 
-                  setSpellBubble({ word, pos, suggestions, visible: true, x, y, flip, el: misspelledSpan } as any);
+                  setSpellBubble({ word, pos, suggestions, visible: true, x, y, flip, el: misspelledSpan } as unknown as typeof spellBubble);
                 }
             };
 
@@ -1394,7 +1394,7 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
             style={{ 
               left: `${spellBubble.x}px`, 
               top: `${spellBubble.y}px`,
-              transform: (spellBubble as any).flip ? 'translate(-50%, 0)' : 'translate(-50%, -100%)'
+              transform: (spellBubble as { flip?: boolean }).flip ? 'translate(-50%, 0)' : 'translate(-50%, -100%)'
             }}
             onMouseDown={(e) => {
               // Vital prevention: do not let the editor lose focus or it will fire a stale transaction

@@ -10,7 +10,7 @@ if exist "%WORKSPACE_CACHE%" (
     rmdir /S /Q "%WORKSPACE_CACHE%"
 )
 
-echo 3. Re-initializing Project Anchor...
+echo 3. Re-initializing Project Root...
 mkdir "%WORKSPACE_CACHE%"
 echo { "folder": "file:///c%%3A/Users/saint/.gemini/antigravity/playground/dark-schrodinger" } > "%WORKSPACE_CACHE%\workspace.json"
 
