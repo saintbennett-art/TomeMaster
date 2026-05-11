@@ -4,6 +4,7 @@ import "./globals.css";
 import ActivationGate from "@/components/ActivationGate";
 import TomeToast from "@/components/TomeToast";
 import { WorkstationProvider } from "@/context/WorkstationContext";
+import { EditorProvider } from "@/context/EditorContext";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -47,9 +48,11 @@ export default function RootLayout({
         suppressHydrationWarning
       >
         <WorkstationProvider>
-          <ActivationGate>
-            {children}
-          </ActivationGate>
+          <EditorProvider>
+            <ActivationGate>
+              {children}
+            </ActivationGate>
+          </EditorProvider>
         </WorkstationProvider>
         <TomeToast />
       </body>

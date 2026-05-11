@@ -10,7 +10,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from routers import analysis, document, license, ai, transcribe, settings
 
 app = FastAPI(
@@ -48,7 +48,10 @@ if os.path.isdir(static_dir):
 
     @app.exception_handler(404)
     async def custom_404_handler(request, exc):
-        return FileResponse(os.path.join(static_dir, "index.html"))
+        index_path = os.path.join(static_dir, "index.html")
+        if os.path.exists(index_path):
+            return FileResponse(index_path)
+        return JSONResponse(status_code=404, content={"detail": "Not Found", "message": "Static frontend not found at /static/index.html"})
 else:
     @app.get("/")
     def read_root():

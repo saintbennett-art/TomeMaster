@@ -1,11 +1,11 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { X, Sparkles, Activity, ShieldCheck, Cpu, Database, Zap, Lock, Settings, FileText, Key, Info, Check, Loader2 } from "lucide-react";
-import { MASTER_PROVIDER_LIBRARY } from "../lib/ai_config";
-import { validateAiKey, API_BASE_HOLDER } from "../lib/apiClient";
-import { ProviderSettingsCard } from "./workstation/settings/ProviderSettingsCard";
+import { X, Sparkles, Activity, ShieldCheck, Cpu, Database, Zap, Lock, Settings, FileText, Key, Info, Check, Loader2, ChevronDown } from "lucide-react";
+import { autoConfigureGateway, API_BASE_HOLDER, fetchAvailableModels, saveVaultToEnv, type DiscoveredModel } from "../lib/apiClient";
 import { VaultDashboard } from "./workstation/settings/VaultDashboard";
+import { secureVault } from "../lib/vault";
+import { MASTER_PROVIDER_LIBRARY } from "../lib/ai_config";
 
 import { useShadowSave } from "../hooks/useShadowSave";
 
@@ -22,40 +22,30 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
     // [SOVEREIGN RESILIENCE]: Shadow-Save for volatile Vault inputs
     const [localKeys, setLocalKeys, clearShadow] = useShadowSave("vault_entry", keys);
     
-    const [cloudModels, setCloudModels] = useState({});
-    const [cloudModelStatus, setCloudModelStatus] = useState({});
+    const [discoveryStatus, setDiscoveryStatus] = useState("idle");
+    const [discoveryMessage, setDiscoveryMessage] = useState("");
+    const [discoveredPortfolio, setDiscoveredPortfolio] = useState([]);
+    const [sovereignSettings, setSovereignSettings] = useState(null);
+    // [SOVEREIGN DISCOVERY]: Live models fetched from the provider using the saved key
+    const [discoveredModels, setDiscoveredModels] = useState<Record<string, DiscoveredModel[]>>({});
+    const [selectedModels, setSelectedModels] = useState<Record<string, string>>({});
+    const [modelFetchStatus, setModelFetchStatus] = useState<Record<string, 'idle' | 'loading' | 'done' | 'error'>>({});
+
+    const fetchSovereignSettingsLocal = async () => {
+        try {
+            const res = await fetch(`${API_BASE_HOLDER.current}/ai/status`);
+            const data = await res.json();
+            setSovereignSettings(data);
+        } catch (e) { /* Silent */ }
+    };
 
     useEffect(() => {
         if (isOpen) {
             setLocalKeys(keys);
-            
-            // [SOVEREIGN HYDRATION]: Restore discovered models from Vault
-            const savedModels = localStorage.getItem('tome_master_cloud_models');
-            if (savedModels) {
-                try {
-                    const parsed = JSON.parse(savedModels);
-                    setCloudModels(parsed);
-                    // Mark as success if we have models and a key
-                    Object.keys(parsed).forEach(provId => {
-                        if (keys[provId]) {
-                            setValStatus(prev => ({ ...prev, [provId]: "success" }));
-                            setValMessages(prev => ({ ...prev, [provId]: "Vault Restored" }));
-                            setCloudModelStatus(prev => ({ ...prev, [provId]: 'success' }));
-                        }
-                    });
-                } catch (e) { console.error("Vault Restoration Failed", e); }
-            }
-
-            // [AUTO HANDSHAKE]: Test all connections immediately upon opening
-            PROVIDERS.forEach(p => {
-                if (keys[p.id]) {
-                    testConnection(p.id, keys[p.id]);
-                }
-            });
-
+            fetchSovereignSettingsLocal();
             if (activeTab === "usage") fetchUsageLedger();
         }
-    }, [isOpen]); // Only trigger on open
+    }, [isOpen]);
 
     const fetchUsageLedger = async () => {
         try {
@@ -65,63 +55,127 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
                 setLedgerEntries(data.history);
                 setTotalTokens(data.history.reduce((acc, curr) => acc + (curr.metrics?.total_tokens || 0), 0));
             }
-        } catch (e) { console.error("Ledger fetch failed", e); }
+        } catch (e) { /* Silent */ }
     };
 
-    const handleKeyChange = (provider, value) => {
-        setLocalKeys(prev => ({ ...prev, [provider]: value }));
-        setSaved(false);
-    };
-
-    const testConnection = async (provider, keyOverride = null) => {
-        const apiKey = keyOverride || localKeys[provider];
-        if (!apiKey) return;
-
-        setValStatus(prev => ({ ...prev, [provider]: "checking" }));
-        try {
-            const result = await validateAiKey(provider, apiKey);
-            if (result.success) {
-                fetchCloudModels(provider, apiKey);
-                setValStatus(prev => ({ ...prev, [provider]: "success" }));
-                setValMessages(prev => ({ ...prev, [provider]: "Verified" }));
-            } else {
-                setValStatus(prev => ({ ...prev, [provider]: "error" }));
-                setValMessages(prev => ({ ...prev, [provider]: result.message }));
-            }
-        } catch (e) {
-            setValStatus(prev => ({ ...prev, [provider]: "error" }));
-            setValMessages(prev => ({ ...prev, [provider]: "Connection Failed" }));
-        }
-    };
-
-    const fetchCloudModels = async (provider, keyOverride = null) => {
-        const apiKey = keyOverride || localKeys[provider];
-        if (!apiKey) return;
+    const handleGatewayDiscovery = async (key) => {
+        if (!key || key.length < 10) return;
         
-        setCloudModelStatus(prev => ({ ...prev, [provider]: 'fetching' }));
+        setDiscoveryStatus("detecting");
+        setDiscoveryMessage("Analyzing Signature...");
+        
         try {
-            const res = await fetch(`${API_BASE_HOLDER.current}/ai/models?provider=${provider}&api_key=${apiKey}`);
+            const res = await fetch(`${API_BASE_HOLDER.current}/analysis/auto-configure`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ keys: { "discovery": key } })
+            });
             const data = await res.json();
+            
             if (data.success) {
-                const updatedModels = { ...cloudModels, [provider]: data.models };
-                setCloudModels(updatedModels);
-                localStorage.setItem('tome_master_cloud_models', JSON.stringify(updatedModels));
-                setCloudModelStatus(prev => ({ ...prev, [provider]: 'success' }));
+                setDiscoveryStatus("success");
+                const details = data.details[0]?.status;
+                if (details?.success) {
+                    setDiscoveryMessage(`Gateway Established: ${details.message}`);
+                    setDiscoveredPortfolio(details.portfolio || []);
+                    fetchSovereignSettingsLocal();
+                } else {
+                    setDiscoveryStatus("error");
+                    setDiscoveryMessage(details?.message || "Discovery Failed");
+                }
             } else {
-                setCloudModelStatus(prev => ({ ...prev, [provider]: 'error' }));
+                setDiscoveryStatus("error");
+                setDiscoveryMessage("Handshake Refused");
             }
         } catch (e) {
-            setCloudModelStatus(prev => ({ ...prev, [provider]: 'error' }));
+            setDiscoveryStatus("error");
+            setDiscoveryMessage("Connection Interrupted");
         }
     };
 
-    const saveAll = () => {
-        setKeys(localKeys);
-        localStorage.setItem("tome_master_vault", JSON.stringify(localKeys));
-        clearShadow(); // [SHADOW RELEASE]: State is now persistent
+    const saveAll = async () => {
+        // [MASK GUARD]: Strip display placeholders — never write '***SEALED***' to the vault
+        const realKeys = Object.fromEntries(
+            Object.entries(localKeys).filter(([, v]) => v && !v.includes('***') && v.trim().length > 5)
+        );
+
+        // [VAULT SEAL]: Persist real keys to backend .env first — must complete before discovery
+        if (Object.keys(realKeys).length > 0) {
+            await saveVaultToEnv(realKeys);
+        }
+
+        // Update React state and UI
+        setKeys({ ...localKeys, ...realKeys });
+        clearShadow();
         setSaved(true);
         setTimeout(() => setSaved(false), 2000);
+
+        // [SOVEREIGN DISCOVERY]: Now that the key is sealed, query each provider's live model list
+        // Only providers with a real key (not masked) trigger discovery
+        const providers = PROVIDERS.filter(p => realKeys[p.id]);
+        const allDiscovered: Record<string, DiscoveredModel[]> = {};
+
+        for (const p of providers) {
+            setModelFetchStatus(prev => ({ ...prev, [p.id]: 'loading' }));
+            try {
+                const models = await fetchAvailableModels(p.id);
+                allDiscovered[p.id] = models;
+                setDiscoveredModels(prev => ({ ...prev, [p.id]: models }));
+                setModelFetchStatus(prev => ({ ...prev, [p.id]: 'done' }));
+            } catch {
+                setModelFetchStatus(prev => ({ ...prev, [p.id]: 'error' }));
+            }
+        }
+
+        // [AUTO-ASSIGN]: Pick the best model per role — no user input required.
+        // Flash = fast/cheap (transcription, logic). Pro = deep reasoning (analysis, narrative).
+        const pickBest = (models: DiscoveredModel[], prefer: 'flash' | 'pro'): string => {
+            if (!models || models.length === 0) return '';
+            const ranked = [...models].sort((a, b) => {
+                const aId = a.id.toLowerCase();
+                const bId = b.id.toLowerCase();
+                if (prefer === 'flash') {
+                    if (aId.includes('flash') && !bId.includes('flash')) return -1;
+                    if (!aId.includes('flash') && bId.includes('flash')) return 1;
+                } else {
+                    if (aId.includes('pro') && !bId.includes('pro')) return -1;
+                    if (!aId.includes('pro') && bId.includes('pro')) return 1;
+                }
+                return 0;
+            });
+            return ranked[0].id;
+        };
+
+        const geminiModels = allDiscovered['gemini']    || [];
+        const groqModels   = allDiscovered['groq']      || [];
+        const openaiModels = allDiscovered['openai']    || [];
+        const claudeModels = allDiscovered['anthropic'] || [];
+
+        const autoSelected = {
+            TRANSCRIBER_LEAD:    pickBest(geminiModels, 'flash') || pickBest(groqModels, 'flash'),
+            NARRATIVE_ARCHITECT: pickBest(geminiModels, 'pro')   || pickBest(openaiModels, 'pro'),
+            COPY_EDITOR:         pickBest(claudeModels, 'pro')   || pickBest(openaiModels, 'pro'),
+            vision:              pickBest(geminiModels, 'flash') || pickBest(groqModels, 'flash'),
+            logic:               pickBest(geminiModels, 'flash') || pickBest(groqModels, 'flash'),
+            analysis:            pickBest(geminiModels, 'pro')   || pickBest(claudeModels, 'pro'),
+        };
+
+        const preferred_models = Object.fromEntries(
+            Object.entries(autoSelected).filter(([, v]) => v)
+        );
+
+        if (Object.keys(preferred_models).length > 0) {
+            setSelectedModels(autoSelected as Record<string, string>);
+            try {
+                await fetch(`${API_BASE_HOLDER.current}/analysis/settings`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ preferred_models })
+                });
+            } catch { /* Silent — defaults remain in place */ }
+        }
     };
+
 
     if (!isOpen) return null;
 
@@ -165,15 +219,143 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
 
                     <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
                         {activeTab === "keys" && (
-                            <div className="space-y-4">
-                                {PROVIDERS.map(p => (
-                                    <ProviderSettingsCard 
-                                        key={p.id} provider={p} localKeys={localKeys} handleKeyChange={handleKeyChange} 
-                                        testConnection={testConnection} valStatus={valStatus} valMessages={valMessages} 
-                                        activeProvider={activeProvider} setActiveProvider={setActiveProvider} 
-                                        cloudModels={cloudModels} cloudModelStatus={cloudModelStatus} fetchCloudModels={fetchCloudModels}
-                                    />
-                                ))}
+                            <div className="space-y-6">
+
+                                {/* Per-provider key inputs */}
+                                <div className="space-y-3">
+                                    <h3 className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.25em] flex items-center gap-2">
+                                        <Key size={10} className="text-indigo-400" />
+                                        Intelligence Gateway Keys
+                                    </h3>
+                                    {PROVIDERS.filter(p => p.id !== 'ollama').map(p => {
+                                        const currentVal = localKeys[p.id] || '';
+                                        const isSealed   = currentVal === '***SEALED***';
+                                        return (
+                                            <div key={p.id} className="p-4 bg-black/30 border border-white/5 rounded-2xl hover:border-white/10 transition-all">
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <span className={`text-[9px] font-black uppercase tracking-widest ${p.color}`}>{p.name}</span>
+                                                    {isSealed && (
+                                                        <span className="flex items-center gap-1 text-[7px] font-black text-emerald-500 uppercase tracking-widest">
+                                                            <ShieldCheck size={9} /> Sealed
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="relative">
+                                                    <input
+                                                        id={`key-input-${p.id}`}
+                                                        type="password"
+                                                        placeholder={isSealed ? '••••••••••••••••••••' : p.placeholder}
+                                                        value={isSealed ? '' : currentVal}
+                                                        onChange={e => setLocalKeys(prev => ({ ...prev, [p.id]: e.target.value }))}
+                                                        className="w-full bg-black/40 border border-white/5 rounded-xl px-4 py-3 text-[10px] text-white font-mono focus:outline-none focus:border-indigo-500/50 transition-all pr-10"
+                                                    />
+                                                    {isSealed && (
+                                                        <button
+                                                            onClick={() => setLocalKeys(prev => ({ ...prev, [p.id]: '' }))}
+                                                            title="Replace key"
+                                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-zinc-300 transition-colors text-[8px] font-black uppercase"
+                                                        >
+                                                            Replace
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                <p className="text-[7px] text-zinc-600 mt-1.5">
+                                                    <a href={p.link} target="_blank" rel="noopener noreferrer" className="hover:text-indigo-400 transition-colors">{p.linkLabel} ↗</a>
+                                                </p>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    {sovereignSettings?.gateways && Object.entries(sovereignSettings.gateways).map(([name, config]: [string, any]) => (
+                                        <div key={`gw-${name}`} className="p-4 bg-black/20 border border-white/5 rounded-2xl hover:border-indigo-500/20 transition-all group">
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                                    <span className="text-[10px] font-black text-white uppercase">{String(name).replace('_', ' ')}</span>
+                                                </div>
+                                                <span className="text-[8px] font-black text-zinc-600 uppercase tracking-widest">{String(config?.provider_type || 'unknown')}</span>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <p className="text-[8px] text-zinc-500 font-black uppercase tracking-widest">Gateway URL</p>
+                                                <p className="text-[10px] text-zinc-400 font-mono truncate">{String(config?.url || 'n/a')}</p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* [COMMISSIONED INTELLIGENCE]: Auto-assigned model status per provider */}
+                                {Object.keys(modelFetchStatus).length > 0 && (
+                                    <div className="p-5 bg-black/30 border border-white/5 rounded-2xl space-y-3 animate-in fade-in duration-500">
+                                        <h3 className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.25em] flex items-center gap-2">
+                                            <Cpu size={10} className="text-indigo-400" />
+                                            Commissioned Intelligence
+                                        </h3>
+                                        <div className="space-y-2">
+                                            {PROVIDERS.map(p => {
+                                                const status = modelFetchStatus[p.id];
+                                                if (!status) return null;
+                                                const roleModel = selectedModels[`TRANSCRIBER_LEAD`] && p.id === 'gemini'
+                                                    ? { transcriber: selectedModels['TRANSCRIBER_LEAD'], analysis: selectedModels['NARRATIVE_ARCHITECT'] }
+                                                    : null;
+                                                const models = discoveredModels[p.id] || [];
+                                                return (
+                                                    <div key={p.id} className="flex items-start gap-3 p-3 bg-white/[0.02] border border-white/5 rounded-xl">
+                                                        {/* Status dot */}
+                                                        <div className="mt-0.5 shrink-0">
+                                                            {status === 'loading' && <Loader2 size={10} className="text-indigo-400 animate-spin" />}
+                                                            {status === 'done'    && <Check size={10} className="text-emerald-500" />}
+                                                            {status === 'error'   && <span className="text-[8px] text-red-400">✕</span>}
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex items-center justify-between">
+                                                                <span className={`text-[9px] font-black uppercase tracking-wide ${p.color}`}>{p.name}</span>
+                                                                <span className="text-[7px] text-zinc-600 font-bold uppercase">
+                                                                    {status === 'loading' ? 'Querying...' : status === 'error' ? 'Failed' : `${models.length} models`}
+                                                                </span>
+                                                            </div>
+                                                            {status === 'done' && roleModel && (
+                                                                <div className="mt-1.5 space-y-1">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className="text-[7px] text-zinc-600 font-black uppercase w-16 shrink-0">Transcriber</span>
+                                                                        <span className="text-[8px] text-indigo-300 font-mono truncate">{roleModel.transcriber || '—'}</span>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className="text-[7px] text-zinc-600 font-black uppercase w-16 shrink-0">Architect</span>
+                                                                        <span className="text-[8px] text-indigo-300 font-mono truncate">{roleModel.analysis || '—'}</span>
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                            {status === 'done' && !roleModel && models.length > 0 && (
+                                                                <div className="mt-1.5 flex items-center gap-2">
+                                                                    <span className="text-[7px] text-zinc-600 font-black uppercase w-16 shrink-0">Assigned</span>
+                                                                    <span className="text-[8px] text-indigo-300 font-mono truncate">
+                                                                        {selectedModels[p.id] || models[0]?.id || '—'}
+                                                                    </span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="p-6 bg-black/20 border border-white/5 rounded-2xl">
+                                    <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em] mb-4">Industrial Role Mappings</h3>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {sovereignSettings?.role_mappings && Object.entries(sovereignSettings.role_mappings).map(([role, gateway]) => (
+                                            <div key={`role-${role}`} className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/5">
+                                                <div className="flex flex-col">
+                                                    <span className="text-[8px] font-black text-zinc-500 uppercase">{String(role)}</span>
+                                                    <span className="text-[10px] font-bold text-zinc-200">{String(gateway)}</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
                             </div>
                         )}
 
@@ -196,16 +378,16 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
                                     </h3>
                                     <div className="space-y-4 relative z-10">
                                         <div>
-                                            <p className="text-[8px] text-zinc-500 font-black uppercase tracking-widest mb-1">Active Project Anchor</p>
+                                            <p className="text-[8px] text-zinc-500 font-black uppercase tracking-widest mb-1">Active Project Root</p>
                                             <div className="flex items-center gap-3">
                                                 <div className="flex-1 bg-black/40 border border-white/5 rounded-xl px-4 py-3 text-[10px] text-zinc-300 font-mono truncate">
-                                                    {activeFolderPath || "No Project Anchored"}
+                                                    {activeFolderPath || "No Project Target Set"}
                                                 </div>
                                                 <button 
-                                                    onClick={() => window.dispatchEvent(new CustomEvent('tome-master-anchor-request'))}
+                                                    onClick={() => window.dispatchEvent(new CustomEvent('tome-master-target-request'))}
                                                     className="px-4 py-3 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl text-[8px] font-black uppercase tracking-widest text-zinc-400 hover:text-white transition-all"
                                                 >
-                                                    Re-Anchor
+                                                    Update Path
                                                 </button>
                                             </div>
                                         </div>
@@ -241,16 +423,16 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
                     </div>
                     <div className="flex gap-3">
                         <button onClick={onClose} className="px-6 py-2.5 text-[10px] font-black uppercase text-zinc-500">Cancel</button>
-                        {JSON.stringify(localKeys) === JSON.stringify(keys) ? (
-                            <button className="px-8 py-2.5 rounded-xl text-[10px] font-black uppercase bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 cursor-default flex items-center gap-2">
-                                <ShieldCheck size={14} />
-                                Vault Sealed
-                            </button>
-                        ) : (
-                            <button onClick={saveAll} className="px-8 py-2.5 rounded-xl text-[10px] font-black uppercase bg-indigo-500 text-white hover:bg-indigo-400 transition-all shadow-[0_0_20px_rgba(99,102,241,0.3)]">
-                                Seal Vault
-                            </button>
-                        )}
+                        <button
+                            onClick={saveAll}
+                            className={`px-8 py-2.5 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 ${
+                                saved
+                                    ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                                    : 'bg-indigo-500 text-white hover:bg-indigo-400 shadow-[0_0_20px_rgba(99,102,241,0.3)]'
+                            }`}
+                        >
+                            {saved ? <><ShieldCheck size={14} /> Sealed ✓</> : <><Lock size={14} /> Seal Vault</>}
+                        </button>
                     </div>
                 </div>
             </div>

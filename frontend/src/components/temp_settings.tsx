@@ -24,7 +24,24 @@ import { VaultDashboard } from './workstation/settings/VaultDashboard';
 
 const PROVIDERS = MASTER_PROVIDER_LIBRARY;
 
-const SettingsModal: React.FC<any> = ({ 
+interface SettingsModalProps {
+    isOpen: boolean;
+    onClose: () => void;
+    activeProvider: string;
+    setActiveProvider: (provider: string) => void;
+    keys: Record<string, string>;
+    setKeys: (keys: Record<string, string>) => void;
+}
+
+interface LedgerEntry {
+    agent_id: string;
+    timestamp: string;
+    metrics?: {
+        total_tokens?: number;
+    };
+}
+
+const SettingsModal: React.FC<SettingsModalProps> = ({ 
     isOpen, 
     onClose, 
     activeProvider, 
@@ -36,7 +53,7 @@ const SettingsModal: React.FC<any> = ({
     const [saved, setSaved] = useState(false);
     const [valStatus, setValStatus] = useState<Record<string, string>>({});
     const [valMessages, setValMessages] = useState<Record<string, string>>({});
-    const [ledgerEntries, setLedgerEntries] = useState<any[]>([]);
+    const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]);
     const [totalTokens, setTotalTokens] = useState(0);
     const [localKeys, setLocalKeys] = useState<Record<string, string>>(keys);
 
@@ -53,9 +70,9 @@ const SettingsModal: React.FC<any> = ({
             const data = await res.json();
             if (data.history) {
                 setLedgerEntries(data.history);
-                setTotalTokens(data.history.reduce((acc: number, curr: any) => acc + (curr.metrics?.total_tokens || 0), 0));
+                setTotalTokens(data.history.reduce((acc: number, curr: LedgerEntry) => acc + (curr.metrics?.total_tokens || 0), 0));
             }
-        } catch (e) { console.error("Ledger fetch failed", e); }
+        } catch (e) { }
     };
 
     const handleKeyChange = (provider: string, value: string) => {
@@ -108,13 +125,13 @@ const SettingsModal: React.FC<any> = ({
 
                 <div className="flex-1 flex overflow-hidden">
                     <div className="w-48 border-r border-white/5 p-4 space-y-2 bg-black/20">
-                        {[
+                        {( [
                             { id: 'keys', icon: Key, label: 'Intelligence' },
                             { id: 'usage', icon: Activity, label: 'Vault Usage' }
-                        ].map(tab => (
+                        ] as const).map(tab => (
                             <button 
                                 key={tab.id}
-                                onClick={() => setActiveTab(tab.id as any)}
+                                onClick={() => setActiveTab(tab.id)}
                                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${activeTab === tab.id ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/20' : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}`}
                             >
                                 <tab.icon size={14} />

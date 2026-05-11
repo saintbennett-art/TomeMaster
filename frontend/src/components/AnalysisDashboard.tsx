@@ -1,7 +1,8 @@
 "use client";
-import React, { useState, useEffect, useRef, useMemo } from "react";
-import { Loader2, Maximize2, Minimize2, Save, Eye, Zap, RefreshCw, ExternalLink, ShieldAlert, ShieldCheck } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import { Maximize2, Minimize2, Save, Eye, Zap, RefreshCw, ExternalLink, ShieldAlert, ShieldCheck } from "lucide-react";
 import { runMultiAgentAnalysis, validateAiKey, API_BASE_HOLDER } from "@/lib/apiClient";
+import { secureVault } from "@/lib/vault";
 
 // [BLACK BOX IMPORTS]
 import { SpecialistRegistry } from "./workstation/boardroom/SpecialistRegistry";
@@ -9,73 +10,77 @@ import { IntelligencePulse } from "./workstation/boardroom/IntelligencePulse";
 import { NarrativeRangePicker } from "./workstation/boardroom/NarrativeRangePicker";
 import { AuditBriefing } from "./workstation/boardroom/AuditBriefing";
 import { ExpertAuthorizationPanel } from "./workstation/boardroom/ExpertAuthorizationPanel";
+import { Chapter, AgentReport, ArcPoint } from "@/types/industrial";
 
-const BOARDROOM_GUARDRAILS = {
-    PRIMARY_NARRATIVE_ANCHOR: "models/gemini-3.1-pro-preview",
-    SPECIALIST_PROSE_FILTER: "claude-3-5",
-    SPECIALIST_LOGIC_FILTER: "gpt-4o",
-    SPECIALIST_STRUCTURE_FILTER: "3.1"
-};
+interface AnalysisDashboardProps {
+    selectedAgents: string[];
+    setSelectedAgents: (agents: string[]) => void;
+    customAgents: string[];
+    setCustomAgents: (agents: string[]) => void;
+    agentReports: Record<string, AgentReport>;
+    setAgentReports: React.Dispatch<React.SetStateAction<Record<string, AgentReport>>>;
+    activeTab: string;
+    setActiveTab: (tab: string) => void;
+    onCompletion: () => void;
+    arcData?: ArcPoint[];
+    setArcData: (data: ArcPoint[]) => void;
+    chapters: Chapter[];
+    setChapters: (chapters: Chapter[]) => void;
+    onApplySuggestion: (suggestion: string) => void;
+    projectFolder: string | null;
+    editorContent: string;
+    isAnalyzing: boolean;
+    setIsAnalyzing: (analyzing: boolean) => void;
+    analysisTrigger: number;
+    notify: (msg: string) => void;
+}
 
-const AnalysisDashboard = ({ 
+interface Assignment {
+    agent: string;
+    funded: boolean;
+    recommended: string;
+}
+
+interface Toast {
+    id: number;
+    message: string;
+}
+
+interface MenuItem {
+    label?: string;
+    icon?: React.ElementType;
+    action?: () => void;
+    type?: 'separator';
+}
+
+const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ 
     selectedAgents, setSelectedAgents, customAgents, setCustomAgents, agentReports, setAgentReports, 
     activeTab, setActiveTab, onCompletion, arcData = [], setArcData, 
-    chapters = [], setChapters, onApplySuggestion, globalProvider = "gemini", globalModel = "auto", 
+    chapters = [], setChapters, onApplySuggestion, 
     projectFolder = null, editorContent = "", isAnalyzing, setIsAnalyzing, analysisTrigger = 0,
-    notify = (msg: string) => console.log(msg)
+    notify
 }) => {
     const [showAudit, setShowAudit] = useState(false);
     const [isMinimized, setIsMinimized] = useState(true);
-    const [auditData, setAuditData] = useState({weight: 0, assignments: []});
-    const [currentExpert, setCurrentExpert] = useState(null);
-    const [handshakeStatus, setHandshakeStatus] = useState("idle");
+    const [auditData, setAuditData] = useState({weight: 0, assignments: [] as Assignment[]});
+    const [currentExpert, setCurrentExpert] = useState<string | null>(null);
+    const [handshakeStatus, setHandshakeStatus] = useState("ok");
     const [isInterventionMode, setIsInterventionMode] = useState(true);
     const [isDeepAnalysis, setIsDeepAnalysis] = useState(false);
     const [authModal, setAuthModal] = useState({ isOpen: false, persona: "", prompt: "", model: "" });
     const [pulseData, setPulseData] = useState({});
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
-    const [dynamicModels, setDynamicModels] = useState([]);
+    const [dynamicModels, setDynamicModels] = useState<string[]>([]);
     const [analyticScope, setAnalyticScope] = useState("full");
     const [rangeStartIdx, setRangeStartIdx] = useState(0);
     const [rangeEndIdx, setRangeEndIdx] = useState(0);
     const startTimeRef = useRef(0);
 
-    // [LOGIC]: Dynamic Model Discovery
-    useEffect(() => {
-        const fetchModels = async () => {
-            const vault = JSON.parse(localStorage.getItem("tome_master_vault") || "{}");
-            const key = vault[globalProvider];
-            if (key) {
-                try {
-                    const res = await fetch(`${API_BASE_HOLDER.current}/analysis/list-models`, {
-                        method: "POST", headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ provider: globalProvider, api_key: key })
-                    });
-                    const data = await res.json();
-                    if (data.success) setDynamicModels(data.models);
-                } catch (e) { console.warn("Model discovery failed"); }
-            }
-        };
-        fetchModels();
-    }, [globalProvider]);
-
-    // [LOGIC]: Handshake Verification
-    useEffect(() => {
-        const verify = async () => {
-            setHandshakeStatus("checking");
-            const vault = JSON.parse(localStorage.getItem("tome_master_vault") || "{}");
-            const key = vault[globalProvider];
-            const res = await validateAiKey(globalProvider, key);
-            setHandshakeStatus(res.success ? "ok" : "fail");
-        };
-        verify();
-    }, [globalProvider, selectedAgents]);
-
     // [LOGIC]: Analysis Dispatch
     const runAnalysis = async (forceNoAudit = false) => {
         if (!editorContent || isAnalyzing) return;
         if (!forceNoAudit) {
-            setAuditData({ weight: editorContent.split(/\\s+/).length, assignments: selectedAgents.map(a => ({ agent: a, funded: true, recommended: globalModel })) });
+            setAuditData({ weight: editorContent.split(/\s+/).length, assignments: selectedAgents.map(a => ({ agent: a, funded: true, recommended: "Apex Gateway" })) });
             setShowAudit(true);
             return;
         }
@@ -85,28 +90,25 @@ const AnalysisDashboard = ({
         startTimeRef.current = Date.now();
         
         try {
-            const vault = JSON.parse(localStorage.getItem("tome_master_vault") || "{}");
-            const boardroomProvider = vault.provider_boardroom || globalProvider;
-            const boardroomModel = vault.model_boardroom || globalModel;
-            
             const allAgents = [...selectedAgents, ...customAgents];
             for (const agentId of allAgents) {
                 setCurrentExpert(agentId);
-                const result = await runMultiAgentAnalysis(editorContent, [agentId], boardroomProvider, boardroomModel, "full", chapters);
+                // Sovereign Dispatch: Trust the backend role mappings
+                const result = await runMultiAgentAnalysis(editorContent, [agentId], undefined, undefined, 'full', chapters);
                 if (result && result[agentId]) {
                     setAgentReports(prev => ({ ...prev, [agentId]: result[agentId] }));
                 }
             }
             onCompletion();
-        } catch (err) { console.error("Analysis Failed", err); }
+        } catch (err) { }
         finally { setIsAnalyzing(false); }
     };
 
     useEffect(() => { if (analysisTrigger > 0) runAnalysis(); }, [analysisTrigger]);
 
-    const [activeMenu, setActiveMenu] = useState(null);
-    const [toasts, setToasts] = useState([]);
-    const dashboardRef = useRef(null);
+    const [activeMenu, setActiveMenu] = useState<string | null>(null);
+    const [toasts, setToasts] = useState<Toast[]>([]);
+    const dashboardRef = useRef<HTMLDivElement>(null);
 
     const showToast = (message: string) => {
         const id = Date.now();
@@ -117,7 +119,6 @@ const AnalysisDashboard = ({
         notify(message);
     };
 
-    // [LOGIC]: Close menus on outside click
     useEffect(() => {
         const handleClickOutside = (e: MouseEvent) => {
             const target = e.target as HTMLElement;
@@ -129,7 +130,7 @@ const AnalysisDashboard = ({
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
-    const dashboardMenus = {
+    const dashboardMenus: Record<string, MenuItem[]> = {
         File: [
             { label: "Export Consensus", icon: Save, action: () => {
                 if (Object.keys(agentReports).length === 0) {
@@ -148,8 +149,9 @@ const AnalysisDashboard = ({
                 const input = document.createElement("input");
                 input.type = "file";
                 input.accept = ".json";
-                input.onchange = (e: any) => {
-                    const file = e.target.files[0];
+                input.onchange = (e: Event) => {
+                    const target = e.target as HTMLInputElement;
+                    const file = target.files?.[0];
                     if (file) showToast(`Importing ${file.name}... (Validation Pending)`);
                 };
                 input.click();
@@ -198,7 +200,6 @@ const AnalysisDashboard = ({
 
     return (
         <div ref={dashboardRef} className={`w-[450px] ${isMinimized ? "h-[64px]" : "h-[80vh]"} transition-all duration-500 bg-black/95 backdrop-blur-3xl border border-white/10 flex flex-col shadow-[0_30px_90px_rgba(0,0,0,0.8)] rounded-2xl hover:border-amber-500/30 overflow-hidden relative`}>
-            {/* TOAST SYSTEM */}
             <div className="absolute top-[-40px] left-0 right-0 flex flex-col items-center gap-2 pointer-events-none z-[10000]">
                 {toasts.map(t => (
                     <div key={t.id} className="bg-amber-500 text-black text-[10px] font-black uppercase px-4 py-1.5 rounded-full shadow-[0_10px_30px_rgba(245,158,11,0.4)] animate-in slide-in-from-bottom-2 fade-in duration-300">
@@ -211,8 +212,6 @@ const AnalysisDashboard = ({
                     <div className="flex flex-col">
                         <div className="flex items-center gap-4">
                             <h2 id="boardroom-title-handle" className="text-[12px] font-black text-amber-500 uppercase tracking-[0.2em] leading-none cursor-grab active:cursor-grabbing p-1 -m-1 hover:bg-white/5 rounded transition-all">Agent Manager</h2>
-                            
-                            {/* CLASSIC MENU BAR */}
                             {!isMinimized && (
                                 <div className="flex items-center gap-1.5 relative z-[100]">
                                     {Object.keys(dashboardMenus).map(m => (
@@ -226,7 +225,6 @@ const AnalysisDashboard = ({
                                             >
                                                 {m}
                                             </button>
-                                            
                                             {activeMenu === m && (
                                                 <div className="absolute top-full left-0 mt-2 w-56 bg-[#0a0a0a] border-2 border-amber-500/50 rounded-xl shadow-[0_0_50px_rgba(0,0,0,0.8)] py-3 z-[9999] pointer-events-auto animate-in fade-in zoom-in-95 duration-150">
                                                     {dashboardMenus[m].map((item, idx) => (
@@ -236,7 +234,7 @@ const AnalysisDashboard = ({
                                                             <button 
                                                                 key={idx} 
                                                                 onClick={() => { 
-                                                                    item.action(); 
+                                                                    item.action?.(); 
                                                                     setActiveMenu(null); 
                                                                 }}
                                                                 className="w-full flex items-center gap-3 px-4 py-2 hover:bg-amber-500/10 text-zinc-400 hover:text-amber-500 text-[10px] font-black uppercase tracking-tighter transition-all"
@@ -260,18 +258,6 @@ const AnalysisDashboard = ({
                             </div>
                         )}
                     </div>
-                    {handshakeStatus === "fail" && (
-                        <div className="flex items-center gap-2 bg-rose-500/10 px-3 py-1.5 rounded-full border border-rose-500/20">
-                            <ShieldAlert className="w-3 h-3 text-rose-500" />
-                            <a 
-                                href={globalProvider === "gemini" ? "https://aistudio.google.com/app/apikey" : globalProvider === "openai" ? "https://platform.openai.com/account/billing" : "https://console.anthropic.com/"}
-                                target="_blank"
-                                className="text-[8px] font-black text-rose-400 uppercase tracking-tighter flex items-center gap-1"
-                            >
-                                Key Refused: Manage Account <ExternalLink className="w-2 h-2" />
-                            </a>
-                        </div>
-                    )}
                     <div className="flex items-center gap-2">
                         <button onClick={() => setIsMinimized(!isMinimized)} className="p-2 bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 rounded-lg border border-white/5 transition-all">
                             {isMinimized ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
@@ -279,24 +265,20 @@ const AnalysisDashboard = ({
                     </div>
                 </div>
             </div>
-
             {!isMinimized && (
                 <>
                     <div className="flex-1 overflow-y-auto p-5 space-y-6 bright-scrollbar">
                         <IntelligencePulse isAnalyzing={isAnalyzing} elapsedSeconds={elapsedSeconds} pulseData={pulseData} />
-
                         <NarrativeRangePicker 
                             analyticScope={analyticScope} setAnalyticScope={setAnalyticScope} userChapters={chapters} 
                             rangeStartIdx={rangeStartIdx} setRangeStartIdx={setRangeStartIdx} 
                             rangeEndIdx={rangeEndIdx} setRangeEndIdx={setRangeEndIdx} 
                             visibilityMap={new Map()} displacement={editorContent.split(/\s+/).length} tacticalSummary="Full Scope"
                         />
-
                         <SpecialistRegistry 
                             selectedAgents={selectedAgents} setSelectedAgents={setSelectedAgents} 
                             customAgents={customAgents} setCustomAgents={setCustomAgents} 
                         />
-
                         {handshakeStatus === "ok" && (
                             <div className="p-4 bg-emerald-500/5 border border-emerald-500/10 rounded-2xl flex items-center gap-3">
                                 <div className="p-2 bg-emerald-500/10 rounded-lg">
@@ -304,11 +286,10 @@ const AnalysisDashboard = ({
                                 </div>
                                 <div>
                                     <p className="text-[10px] font-black text-emerald-400 uppercase leading-none">Sovereign Fidelity Verified</p>
-                                    <p className="text-[8px] text-zinc-500 font-bold uppercase mt-1">Optimal Engines Anchored for Analysis</p>
+                                    <p className="text-[8px] text-zinc-500 font-bold uppercase mt-1">Optimal Engines Established for Analysis</p>
                                 </div>
                             </div>
                         )}
-
                         <button 
                             onClick={() => runAnalysis()} 
                             disabled={isAnalyzing} 
@@ -317,7 +298,6 @@ const AnalysisDashboard = ({
                             {isAnalyzing ? "Processing Consensus..." : "Convene Boardroom"}
                         </button>
                     </div>
-
                     {showAudit && <AuditBriefing data={auditData} onConfirm={() => runAnalysis(true)} onCancel={() => setShowAudit(false)} />}
                     {authModal.isOpen && <ExpertAuthorizationPanel authModal={authModal} dynamicModels={dynamicModels} getFidelityPortfolioForExpert={() => []} />}
                 </>

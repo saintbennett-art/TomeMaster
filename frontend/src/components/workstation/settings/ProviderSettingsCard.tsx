@@ -11,12 +11,14 @@ import {
     Loader2,
     Zap,
     Sparkles,
-    Shield
+    Shield,
+    Clipboard
 } from 'lucide-react';
-import { isVisionModel } from '../../../lib/ai_config';
+import { isVisionModel, Provider } from '../../../lib/ai_config';
+import { SystemAudit } from '@/types/industrial';
 
 interface ProviderSettingsCardProps {
-    provider: any;
+    provider: Provider;
     localKeys: Record<string, string>;
     handleKeyChange: (id: string, val: string) => void;
     testConnection: (id: string) => void;
@@ -27,7 +29,7 @@ interface ProviderSettingsCardProps {
     cloudModels: Record<string, string[]>;
     cloudModelStatus: Record<string, string>;
     fetchCloudModels: (id: string) => void;
-    systemAudit?: any;
+    systemAudit?: SystemAudit | null;
 }
 
 export const ProviderSettingsCard: React.FC<ProviderSettingsCardProps> = ({
@@ -86,14 +88,37 @@ export const ProviderSettingsCard: React.FC<ProviderSettingsCardProps> = ({
                         value={localKeys[provider.id] || ''} 
                         onChange={(e) => handleKeyChange(provider.id, e.target.value)} 
                         placeholder={provider.placeholder} 
-                        className="w-full bg-black/40 border border-[#222] rounded-xl py-2.5 px-4 text-[10px] text-zinc-300 font-mono focus:border-indigo-500/50 outline-none transition-all placeholder:text-zinc-800 group-hover:border-white/10" 
+                        className="w-full bg-black/40 border border-[#222] rounded-xl py-2.5 px-4 pr-16 text-[10px] text-zinc-300 font-mono focus:border-indigo-500/50 outline-none transition-all placeholder:text-zinc-800 group-hover:border-white/10" 
                     />
-                    <button 
-                        onClick={() => setShowKey(!showKey)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-zinc-400 transition-colors"
-                    >
-                        {showKey ? <EyeOff size={12} /> : <Eye size={12} />}
-                    </button>
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                        <button 
+                            onClick={async () => {
+                                try {
+                                    const text = await navigator.clipboard.readText();
+                                    handleKeyChange(provider.id, text);
+                                } catch (e) {
+                                    console.error("Clipboard access denied", e);
+                                }
+                            }}
+                            className="text-zinc-600 hover:text-indigo-400 transition-colors"
+                            title="Paste from Clipboard"
+                        >
+                            <Clipboard size={12} />
+                        </button>
+                        <button 
+                            onClick={() => setShowKey(!showKey)}
+                            className="text-zinc-600 hover:text-zinc-400 transition-colors"
+                            title="Toggle Visibility"
+                        >
+                            {showKey ? <EyeOff size={12} /> : <Eye size={12} />}
+                        </button>
+                    </div>
+                </div>
+
+                <div className="flex gap-2 items-center px-1 mb-1">
+                    <span className="text-[7px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-1">
+                        <Clipboard size={8} className="text-zinc-600" /> Tip: Press <kbd className="px-1 py-0.5 rounded bg-zinc-800 text-zinc-400 font-mono text-[6px]">Win + V</kbd> to open Clipboard History
+                    </span>
                 </div>
 
                 <div className="flex gap-2">
@@ -192,7 +217,7 @@ export const ProviderSettingsCard: React.FC<ProviderSettingsCardProps> = ({
                                             const isBoard = localKeys.provider_boardroom === provider.id && localKeys.model_boardroom === m;
                                             const isVision = isVisionModel(m);
                                             
-                                            // [EXPERT GUIDANCE]: Hard-anchored recommendations for the user
+                                            // [EXPERT GUIDANCE]: Hard-established recommendations for the user
                                             const isTranscriptionApex = provider.id === 'groq' && m.includes('llama-3.2-11b');
                                             const isBoardroomApex = provider.id === 'gemini' && m.includes('3.1-pro');
                                             const isProseApex = provider.id === 'anthropic' && m.includes('sonnet');
@@ -289,7 +314,7 @@ export const ProviderSettingsCard: React.FC<ProviderSettingsCardProps> = ({
                     </p>
                     <p className="text-[8px] text-zinc-400 leading-tight">
                         {provider.id === 'groq' ? "Llama-3.2-11B Vision is the apex choice for 400-page manuscript resurrection due to its low-latency LPU architecture." :
-                         provider.id === 'gemini' ? "Gemini 3.1 Pro is the mandatory logic anchor for boardroom audits and deep-context narrative analysis." :
+                         provider.id === 'gemini' ? "Gemini 3.1 Pro is the mandatory logic foundation for boardroom audits and deep-context narrative analysis." :
                          provider.id === 'anthropic' ? "Claude 3.5 Sonnet provides the most symmetrical prose mirror for creative style audits." :
                          "Select an engine to synchronize this provider with your active mission objectives."}
                     </p>

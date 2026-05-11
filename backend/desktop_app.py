@@ -11,7 +11,8 @@ def get_free_port():
         s.bind(('127.0.0.1', 0))
         return s.getsockname()[1]
 
-PORT = 8080
+# [ZERO HARDCODING]: The OS dictates the port at runtime.
+PORT = get_free_port()
 
 _server_ready = threading.Event()
 
@@ -20,7 +21,7 @@ def start_server():
     import main
     for i in range(5):
         try:
-            print(f"BOARDROOM: Attempting to anchor Engine on 127.0.0.1:{PORT} (Attempt {i+1})...")
+            print(f"BOARDROOM: Attempting to establish Engine on 127.0.0.1:{PORT} (Attempt {i+1})...")
             config = uvicorn.Config(main.app, host="127.0.0.1", port=PORT, log_level="info")
             server = uvicorn.Server(config)
             _server_ready.set()
@@ -56,7 +57,8 @@ if __name__ == '__main__':
     if not _wait_for_server(timeout=15):
         print("BOARDROOM WARNING: Server did not respond within 15s. Launching viewport anyway.")
 
-    target_url = f'http://127.0.0.1:3000?api_port={PORT}'
+    # [UNIFIED ORIGIN]: Target the backend directly. The static frontend will be served from here.
+    target_url = f'http://127.0.0.1:{PORT}'
     window = webview.create_window('Tome-Master Boardroom', target_url, width=1400, height=900)
     
     # [SOVEREIGN BRIDGE]: Link the window to the services for native dialog support

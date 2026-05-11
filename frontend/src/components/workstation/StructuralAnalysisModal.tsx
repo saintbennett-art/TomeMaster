@@ -11,20 +11,28 @@ import {
     YAxis, Tooltip, CartesianGrid 
 } from "recharts";
 import { useWorkstationState, useWorkstationActions } from "@/context/WorkstationContext";
+import { useEditorState, useEditorActions } from "@/context/EditorContext";
 import { API_BASE_HOLDER } from "@/lib/apiClient";
+import { Chapter } from "@/types/industrial";
+import { secureVault } from "@/lib/vault";
 
 const StructuralAnalysisModal = () => {
     const { 
-        isStructuralModalOpen, content, activeFolderPath, 
-        activeProvider, activeModel, chapters: existingChapters 
+        isStructuralModalOpen, activeFolderPath
     } = useWorkstationState();
     
+    const {
+        content, chapters: existingChapters
+    } = useEditorState();
+    
     const { 
-        setIsStructuralModalOpen, notify, setChapters 
+        setIsStructuralModalOpen, notify
     } = useWorkstationActions();
 
+    const { setChapters } = useEditorActions();
+
     const [isAnalyzing, setIsAnalyzing] = useState(false);
-    const [proposedChapters, setProposedChapters] = useState<any[]>([]);
+    const [proposedChapters, setProposedChapters] = useState<Chapter[]>([]);
     const [error, setError] = useState<string | null>(null);
 
     const runStructuralAudit = async () => {
@@ -37,18 +45,10 @@ const StructuralAnalysisModal = () => {
         setError(null);
         
         try {
-            const vault = JSON.parse(localStorage.getItem("tome_master_vault") || "{}");
-            const key = vault[activeProvider];
-
             const response = await fetch(`${API_BASE_HOLDER.current}/analysis/structural-analysis`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    content,
-                    provider: activeProvider,
-                    api_key: key,
-                    model: activeModel === "auto" ? "gemini-3.1-pro-preview" : activeModel
-                })
+                body: JSON.stringify({ content })
             });
 
             const data = await response.json();
@@ -58,9 +58,9 @@ const StructuralAnalysisModal = () => {
             } else {
                 throw new Error(data.detail || "Structural analysis failed to return chapters.");
             }
-        } catch (err: any) {
-            console.error("Structural Error:", err);
-            setError(err.message || "Engine timeout during structural scan.");
+        } catch (err) {
+            const e = err as Error;
+            setError(e.message || "Sovereign Engine timeout during structural scan.");
         } finally {
             setIsAnalyzing(false);
         }
@@ -70,7 +70,7 @@ const StructuralAnalysisModal = () => {
         if (proposedChapters.length === 0) return;
         
         // [SOVEREIGN INJECTION]: Map proposed chapters to the workstation state
-        // In a real implementation, we would also find the text anchors and insert # headings
+        // In a real implementation, we would also find the text segments and insert # headings
         // For now, we update the state chapters which drives the TOC and Arc.
         const formattedChapters = proposedChapters.map(c => ({
             id: `chap-${c.chapter_number}`,
@@ -247,31 +247,8 @@ const StructuralAnalysisModal = () => {
                                         </div>
                                         <div className="flex-1">
                                             <p className="text-[11px] text-zinc-300 font-bold leading-tight">
-                                                {activeProvider === "gemini" 
-                                                    ? "Optimal Engine Engaged: Gemini 3.1 Pro is the supreme choice for Structural Architecture due to its massive context window."
-                                                    : "Sub-Optimal Engine: We recommend hiring Gemini 3.1 Pro for the best Structural Analysis."
-                                                }
+                                                Intelligence established via the Sovereign Gateway. The Apex Narrative Architect is currently optimizing your structural trajectory.
                                             </p>
-                                            
-                                            {error && error.toLowerCase().includes("key") && (
-                                                <div className="mt-3 p-3 bg-black/40 rounded-xl border border-rose-500/20">
-                                                    <p className="text-[9px] text-rose-400 font-bold uppercase mb-2">Handshake Failure Detected</p>
-                                                    <p className="text-[10px] text-zinc-500 mb-2">Your API key was refused. Please check your billing and quota on the provider's site.</p>
-                                                    <a 
-                                                        href={
-                                                            activeProvider === "gemini" ? "https://aistudio.google.com/app/apikey" : 
-                                                            activeProvider === "openai" ? "https://platform.openai.com/account/billing" : 
-                                                            activeProvider === "anthropic" ? "https://console.anthropic.com/" :
-                                                            activeProvider === "groq" ? "https://console.groq.com/keys" :
-                                                            "#" 
-                                                        }
-                                                        target="_blank"
-                                                        className="flex items-center gap-2 text-[9px] font-black text-amber-500 hover:text-amber-400 uppercase transition-all"
-                                                    >
-                                                        {activeProvider === "groq" ? "Manage Groq Console" : `Manage ${activeProvider} Account`} <ExternalLink className="w-2.5 h-2.5" />
-                                                    </a>
-                                                </div>
-                                            )}
                                         </div>
                                     </div>
                                 </div>
@@ -284,7 +261,7 @@ const StructuralAnalysisModal = () => {
                                 </h4>
                                 <p className="text-[11px] text-zinc-400 leading-relaxed">
                                     {proposedChapters.length > 0 
-                                        ? "I have analyzed your narrative trajectory. The pacing shows a strong secondary peak in Chapter 3. I recommend maintaining this tension before the Chapter 5 resolution."
+                                        ? "I have analyzed your narrative trajectory. The pacing shows a strong secondary peak. I recommend maintaining this tension before the final resolution."
                                         : "Engage the engine to generate structural recommendations. The Architect will analyze pacing, emotional spikes, and logical chapter boundaries."
                                     }
                                 </p>
@@ -304,7 +281,7 @@ const StructuralAnalysisModal = () => {
                 <div className="px-8 py-6 border-t border-border flex items-center justify-between bg-zinc-900/50">
                     <div className="flex items-center gap-2 text-muted-foreground italic text-[10px]">
                         <Activity className="w-3 h-3" />
-                        <span>Analysis powered by Gemini 3.1 Pro (Sovereign Context)</span>
+                        <span>Analysis powered by Apex Narrative Architect (Sovereign Context)</span>
                     </div>
                     <div className="flex items-center gap-4">
                         <button 
@@ -319,7 +296,7 @@ const StructuralAnalysisModal = () => {
                             className={`flex items-center gap-2 px-8 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-xl ${proposedChapters.length > 0 ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}`}
                         >
                             <CheckCircle2 className="w-4 h-4" />
-                            Apply Structural Anchor
+                            Apply Structural Definition
                         </button>
                     </div>
                 </div>

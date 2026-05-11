@@ -6,15 +6,7 @@ import os
 
 router = APIRouter()
 
-class TranscriptionRequest(BaseModel):
-    api_key: str = ""
-    provider: str = "gemini"
-    folder_path: Optional[str] = None
-    reset_cache: bool = False
-    mode: str = "batch"
-    model: Optional[str] = None
-    fallback_provider: Optional[str] = None
-    fallback_model: Optional[str] = None
+from schemas import TranscribeRequestSchema
 
 class AuditResolutionRequest(BaseModel):
     page_number: str
@@ -46,15 +38,32 @@ async def get_transcription_status(summary: bool = False):
         return state
 
 @router.post("/start")
-def start_transcription(req: TranscriptionRequest):
-    """Triggers the OCR background thread."""
+def start_transcription(req: TranscribeRequestSchema):
+    """Triggers the OCR background thread. All provider/model/key config resolved from Settings vault."""
+    from services import settings_service
+
+    # [SOVEREIGN DISCOVERY]: Resolve vision engine from the user's configured vault
+    # The API key in settings determines the provider and model — nothing is hardcoded.
+    vision_model  = settings_service.get_preferred_model("TRANSCRIBER_LEAD") or \
+                    settings_service.get_preferred_model("vision")
+    vision_config = settings_service.get_model_for_role("TRANSCRIBER_LEAD")
+    provider      = vision_config.get("provider", "gemini")
+    api_key       = vision_config.get("key", "")
+    model         = vision_config.get("model", vision_model)
+
+    # [FALLBACK CHAIN]: Velocity Engine (Groq) as spectrum fallback
+    fallback_config   = settings_service.get_model_for_role("COPY_EDITOR")  # closest to velocity
+    fallback_provider = "groq"
+    fallback_key      = settings_service.get_api_key("groq")
+    fallback_model    = settings_service.get_preferred_model("logic")
+
     success, used_folder = transcriber_service.start_transcription_background(
-        req.api_key, req.provider, req.folder_path, req.reset_cache, req.mode, req.model,
-        fallback_provider=req.fallback_provider, fallback_model=req.fallback_model
+        api_key, provider, req.folder_path, req.reset_cache, req.mode, model,
+        fallback_provider=fallback_provider, fallback_model=fallback_model
     )
     if not success:
         return {"status": "cancelled"}
-    return {"status": "started", "folder_path": used_folder}
+    return {"status": "started", "folder_path": used_folder, "provider": provider, "model": model}
 
 @router.post("/clear")
 def clear_transcription():

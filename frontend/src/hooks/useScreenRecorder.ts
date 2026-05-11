@@ -19,11 +19,12 @@ export function useScreenRecorder(folderPath: string | null) {
         
         // [SELF-HEALING HANDSHAKE]: If state is null, attempt emergency vault retrieval
         if (!activePath) {
-            activePath = await get<string>('tome_master_active_folder');
+            const cached = await get<string>('tome_master_active_folder');
+            activePath = cached || null;
         }
 
         if (!activePath) {
-            alert(`DIRECTORIAL DEADLOCK: Project folder must be anchored before recording.\n\n[DIAGNOSTICS]:\n- React State: ${folderPath}\n- Vault Search: NOT FOUND\n\nPlease anchor your folder again.`);
+            alert(`DIRECTORIAL DEADLOCK: Project folder must be targeted before recording.\n\n[DIAGNOSTICS]:\n- React State: ${folderPath}\n- Vault Search: NOT FOUND\n\nPlease set your project root again.`);
             return;
         }
 
@@ -62,11 +63,12 @@ export function useScreenRecorder(folderPath: string | null) {
                 // Re-verify path before upload
                 let uploadPath = folderPath;
                 if (!uploadPath) {
-                    uploadPath = await get<string>('tome_master_active_folder');
+                    const cached = await get<string>('tome_master_active_folder');
+                    uploadPath = cached || null;
                 }
 
                 if (uploadPath) {
-                    await uploadRecording(file, uploadPath);
+                    await uploadRecording(file, uploadPath as string);
                 }
 
                 setIsRecording(false);
@@ -84,7 +86,7 @@ export function useScreenRecorder(folderPath: string | null) {
             }, 1000);
 
         } catch (err) {
-            console.error("Directorial Capture Failure:", err);
+            // Silent Failure Loop
             setIsRecording(false);
         }
     }, [folderPath]);

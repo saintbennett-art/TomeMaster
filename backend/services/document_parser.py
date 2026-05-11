@@ -8,11 +8,12 @@ from PIL import Image
 from openai import OpenAI
 from docx import Document
 import ebooklib
-from ebooklib import epub
-from bs4 import BeautifulSoup
+from .ai.specialist_registry import get_specialist_config
 
-# MANUSCRIPT_REDLINE_PROMPT (Centralized for Upload + Transcription)
-from .transcriber_service import MANUSCRIPT_REDLINE_PROMPT
+# [SOVEREIGN VISION PROMPT]: Fetched dynamically from the registry
+def get_redline_prompt():
+    return get_specialist_config("Vision OCR")["template"]
+
 
 def _is_heading_candidate(text: str) -> bool:
     """Intelligent check to see if a paragraph is structurally a heading."""
@@ -387,41 +388,63 @@ def parse_pdf_smart(content: bytes, api_key: str = "") -> dict:
         # This prevents mid-sentence breaks before they reach the editor.
         html_fragments = [f"<p>{p}</p>" for p in paragraphs]
                 
-    else:
-        # PATH B: OCR VISION FALLBACK FOR SCANNED IMAGES
-        print("No native text layer detected. Booting Vision OCR...")
+        from .settings_service import get_preferred_model
+        # [SOVEREIGN OCR]: Pull preferred model from the Vault
+        provider = "gemini" 
+        model = get_preferred_model("vision")
+        
+        # Check if we should use OpenAI instead based on key presence
         if not api_key:
             from dotenv import load_dotenv
             load_dotenv()
-            api_key = os.getenv("OPENAI_API_KEY", "")
+            openai_key = os.getenv("OPENAI_API_KEY", "")
+            gemini_key = os.getenv("GEMINI_API_KEY", "")
             
+            if gemini_key:
+                api_key = gemini_key
+                provider = "gemini"
+            elif openai_key:
+                api_key = openai_key
+                provider = "openai"
+                model = "gpt-4o"
+        
         if not api_key:
-            raise ValueError("Missing OpenAI API Key for Handwriting Vision Analysis.")
-            
-        client = OpenAI(api_key=api_key)
+            raise ValueError("Missing API Key for Manuscript Vision Analysis. Please configure your Vault.")
+
+        from .transcriber_service import _get_ai_client
+        client = _get_ai_client(provider, api_key)
+        
         collected_text = ""
         for page_num in range(len(pdf_doc)):
             page = pdf_doc.load_page(page_num)
             pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             
-            buffered = io.BytesIO()
-            img.save(buffered, format="JPEG", quality=90)
-            img_b64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
-            
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": MANUSCRIPT_REDLINE_PROMPT},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
-                    ]
-                }],
-                max_tokens=2500
-            )
-            
-            raw_text = response.choices[0].message.content
+            if provider == "gemini":
+                # Use Gemini v2 SDK path
+                response = client.models.generate_content(
+                    model=model,
+                    contents=[get_redline_prompt(), img]
+                )
+                raw_text = response.text
+            else:
+                # OpenAI Path
+                buffered = io.BytesIO()
+                img.save(buffered, format="JPEG", quality=90)
+                img_b64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+                
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": get_redline_prompt()},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
+                        ]
+                    }],
+                    max_tokens=2500
+                )
+                raw_text = response.choices[0].message.content
             text_match = re.search(r'<text>(.*?)</text>', raw_text, re.DOTALL)
             if text_match:
                 page_content = text_match.group(1).strip()
@@ -528,45 +551,75 @@ def stream_pdf_smart(content: bytes, api_key: str = "", is_demo: bool = False, f
             yield json.dumps({"type": "page", "page": total_pages, "html": f"<p>{tail_buffer}</p>", "text": tail_buffer}) + "\n"
             
     else:
-        yield json.dumps({"type": "status", "message": "No text layer found. Booting Vision OCR stream..."}) + "\n"
+        # [SOVEREIGN OCR]: Aligning with Protocol for high-fidelity vision
+        provider = "gemini"
+        model = "gemini-1.5-pro"
+        
         if not api_key:
             from dotenv import load_dotenv
             load_dotenv()
-            api_key = os.getenv("OPENAI_API_KEY", "")
+            openai_key = os.getenv("OPENAI_API_KEY", "")
+            gemini_key = os.getenv("GEMINI_API_KEY", "")
             
+            if gemini_key:
+                api_key = gemini_key
+                provider = "gemini"
+            elif openai_key:
+                api_key = openai_key
+                provider = "openai"
+                model = "gpt-4o"
+
         if not api_key:
-            yield json.dumps({"type": "error", "message": "Missing OpenAI API Key for Vision Analysis."}) + "\n"
+            yield json.dumps({"type": "error", "message": "Missing API Key for Vision Analysis."}) + "\n"
             return
             
-        client = OpenAI(api_key=api_key)
+        from .transcriber_service import _get_ai_client
+        client = _get_ai_client(provider, api_key)
+        
         tail_buffer = ""
         for page_num in range(total_pages):
             page = pdf_doc.load_page(page_num)
             pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             
-            buffered = io.BytesIO()
-            img.save(buffered, format="JPEG", quality=90)
-            img_b64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
-            
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": MANUSCRIPT_REDLINE_PROMPT},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
-                    ]
-                }],
-                max_tokens=2500
-            )
-            
-            # [SOVEREIGN ACCOUNTING]: Log OCR Vision usage
-            from .ai_service import _log_api_usage
-            metrics = {"total_tokens": response.usage.total_tokens}
-            _log_api_usage(f"OCR Page {page_num+1}", "openai", "gpt-4o", metrics, folder_path)
-            
-            raw_text = response.choices[0].message.content
+            if provider == "gemini":
+                response = client.models.generate_content(
+                    model=model,
+                    contents=[get_redline_prompt(), img]
+                )
+                raw_text = response.text
+                # Manual usage logging for Gemini
+                from .logger_service import log_api_usage
+                metrics = {
+                    "prompt_tokens": response.usage_metadata.prompt_token_count,
+                    "candidates_tokens": response.usage_metadata.candidates_token_count,
+                    "total_tokens": response.usage_metadata.total_token_count
+                }
+                log_api_usage(f"OCR Page {page_num+1}", provider, model, metrics, folder_path)
+            else:
+                # OpenAI Path
+                buffered = io.BytesIO()
+                img.save(buffered, format="JPEG", quality=90)
+                img_b64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+                
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": get_redline_prompt()},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
+                        ]
+                    }],
+                    max_tokens=2500
+                )
+                
+                # [SOVEREIGN ACCOUNTING]: Log OCR Vision usage
+                from .logger_service import log_api_usage
+                metrics = {"total_tokens": response.usage.total_tokens}
+                log_api_usage(f"OCR Page {page_num+1}", provider, model, metrics, folder_path)
+                
+                raw_text = response.choices[0].message.content
             text_match = re.search(r'<text>(.*?)</text>', raw_text, re.DOTALL)
             if text_match:
                 page_content = text_match.group(1).strip()

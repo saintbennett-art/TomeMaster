@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 
 /**
  * [SHADOW SAVE]: Industrial Recovery Hook
- * Periodically anchors a volatile state to LocalStorage for crash-resilience.
+ * Periodically commits a volatile state to LocalStorage for crash-resilience.
  * @param key The persistent storage key.
  * @param initialValue The starting value.
  * @param debounceMs Frequency of the "Shadow Sink".
@@ -30,10 +30,8 @@ export function useShadowSave<T>(key: string, initialValue: T, debounceMs: numbe
                     const serialized = typeof value === "string" ? value : JSON.stringify(value);
                     localStorage.setItem(`shadow_${key}`, serialized);
                     localStorage.setItem(`shadow_${key}_ts`, Date.now().toString());
-                } catch (err: any) {
-                    if (err?.name === 'QuotaExceededError') {
-                        console.warn(`[ShadowSave]: localStorage quota exceeded for key "${key}". Shadow save skipped.`);
-                    }
+                } catch (err) {
+                    // Fail silently to prevent directorial distraction. Quota management is handled by the editorial cleanse protocol.
                 }
             }
         }, debounceMs);

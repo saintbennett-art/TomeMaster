@@ -11,6 +11,8 @@ import { useTextToSpeech } from "@/hooks/useTextToSpeech";
 import { useScreenRecorder } from "@/hooks/useScreenRecorder";
 import { exportDocx, exportEpub, exportPdf, checkTranscriptionStatus, saveSnapshot } from "@/lib/apiClient";
 import { useWorkstationState, useWorkstationActions } from "@/context/WorkstationContext";
+import { useEditorState, useEditorActions } from "@/context/EditorContext";
+import { secureVault } from "@/lib/vault";
 
 import WorkstationHeader from "./workstation/WorkstationHeader";
 import WorkstationViewport from "./workstation/WorkstationViewport";
@@ -23,24 +25,30 @@ interface MainEditorProps {
   onScrollComplete?: () => void;
   onPreviewChapter?: (startingWords: string) => void;
   onCoverUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onMisspelledCountChange?: (count: number) => void;
 }
 
 export default function MainEditor({ 
-  scrollToText, onScrollComplete, onPreviewChapter, onCoverUpload
+  scrollToText, onScrollComplete, onPreviewChapter, onCoverUpload, onMisspelledCountChange
 }: MainEditorProps) {
   const { 
-    content, htmlContent, chapters, agentReports, activeFolderPath,
-    isTranscribing, transcriptionStatus, wordCount, misspelledCount,
-    activeProvider, isActivated, processedPageCount, arcData, bookTitle, authorName, coverImage,
-    selectedText, currentChapterId, providerTranscribe, modelTranscribe
+    activeFolderPath, isTranscribing, transcriptionStatus,
+    isActivated, processedPageCount, bookTitle, authorName, coverImage
   } = useWorkstationState();
 
   const { 
-    setHtmlContent, setContent, setAgentReports,
-    notify, setIsTranscribing,
-    setTranscriptionStatus, setProcessedPageCount,
-    setSelectedText, setArcData, invokeTranscription
+    notify, setIsTranscribing, setTranscriptionStatus, setProcessedPageCount, invokeTranscription
   } = useWorkstationActions();
+
+  const {
+    content, htmlContent, chapters, agentReports, wordCount, misspelledCount,
+    arcData, selectedText, currentChapterId, currentParagraphText
+  } = useEditorState();
+
+  const {
+    setHtmlContent, setContent, setAgentReports, setSelectedText, setArcData,
+    setChapters, setCurrentParagraphText, setMisspelledCount
+  } = useEditorActions();
 
   const [activeTab, setActiveTab] = useState("Developmental Editor");
   const [selectedAgents, setSelectedAgents] = useState([]);
@@ -55,7 +63,6 @@ export default function MainEditor({
   const editorRef = useRef(null);
 
   const { speak, stop, isPlaying } = useTextToSpeech();
-  const vault = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("tome_master_vault") || "{}") : {};
 
   const handleStartTranscribe = async () => {
     setLastActionTime(Date.now());
@@ -88,9 +95,7 @@ export default function MainEditor({
           }
       },
       onDictation: (text) => editorRef.current?.insertDictation(text),
-      isSuperMuseMode,
-      provider: activeProvider,
-      apiKey: vault[activeProvider] || ""
+      isSuperMuseMode
   });
 
   useEffect(() => {
@@ -102,7 +107,6 @@ export default function MainEditor({
         const timeSinceAction = Date.now() - lastActionTime;
         
         if (state.status === "complete" && timeSinceAction < 5000) {
-            console.log("POLLING: Shielding from stale complete status...");
             return;
         }
 
@@ -122,19 +126,23 @@ export default function MainEditor({
         if (state.status === "complete") {
           setIsTranscribing(false);
           clearInterval(poll);
-          
-          // [INDUSTRIAL]: No 'Big Bang' overwrite. Trust the incremental stream.
           notify("Your manuscript is sealed and ready in the project folder!");
+        }
+        
+        if (state.status === "error") {
+          setIsTranscribing(false);
+          clearInterval(poll);
+          const msg = state.error_message || "Transcription engine encountered an error.";
+          notify(`ENGINE FAULT: ${msg}`);
         }
         
         if (state.status === "audit") {
             setIsTranscribing(false);
             clearInterval(poll);
             notify("DIRECTORIAL AUDIT: Sequence Disruption Detected.");
-            // The UI will now remain open in Audit mode due to the state update
         }
       } catch (e) {
-        console.error("Transcription Poll Error:", e);
+        notify("Transcription Pulse Weakened: Re-connecting...");
       }
     }, 2000);
     return () => clearInterval(poll);
@@ -154,7 +162,7 @@ export default function MainEditor({
 
   const handleTakeSnapshot = async () => {
     if (!activeFolderPath) {
-        notify("Anchor a project first to save snapshots.");
+        notify("Set a project root first to save snapshots.");
         return;
     }
     notify("Capturing architectural snapshot...");
@@ -181,7 +189,6 @@ export default function MainEditor({
       <div className="flex-1 flex overflow-hidden min-w-0 relative">
         <div className="flex-1 flex flex-col min-w-0 relative">
           <WorkstationHeader 
-            bookTitle={bookTitle} 
             onExportDocx={handleExportDocx}
             onClearFailedReports={() => {}}
             isLiaisonSpeaking={isLiaisonSpeaking}
@@ -210,7 +217,11 @@ export default function MainEditor({
             <WorkstationViewport
               editorRef={editorRef}
               onSelectionChange={setSelectedText}
-              onParagraphChange={() => {}}
+              onParagraphChange={setCurrentParagraphText}
+              onMisspelledCountChange={(count) => {
+                setMisspelledCount(count);
+                onMisspelledCountChange?.(count);
+              }}
               scrollToText={scrollToText}
               onScrollComplete={onScrollComplete}
             />
@@ -250,12 +261,13 @@ export default function MainEditor({
             <TranscriptionDashboard
               totalPageGoal={transcriptionStatus?.total_images || 0}
               processedPages={transcriptionStatus?.processed_images || 0}
+              missingPagesCount={transcriptionStatus?.missing_pages_count || 0}
               status={transcriptionStatus?.status || "idle"}
               errorMessage={transcriptionStatus?.error_message}
               isTranscribing={isTranscribing}
               onStart={handleStartTranscribe}
-              providerName={providerTranscribe}
-              modelName={modelTranscribe}
+              providerName="Sovereign Gateway"
+              modelName="Apex Vision"
               currentImageB64={transcriptionStatus?.current_image_b64}
             />
           </div>
@@ -265,22 +277,33 @@ export default function MainEditor({
             {/* [SOVEREIGN MAPPED]: Boardroom Engine (Fixed Top-Right) */}
       <DraggableDialog headerId="boardroom-title-handle" initialX={window?.innerWidth ? window.innerWidth - 480 : 800} initialY={110}>
         <AnalysisDashboard 
-          content={htmlContent} arcData={arcData} chapters={chapters} agentReports={agentReports}
-          onAgentReportsChange={setAgentReports} onApplySuggestion={handleApplySuggestion}
-          activeTab={activeTab} setActiveTab={setActiveTab}
-          selectedAgents={selectedAgents} setSelectedAgents={setSelectedAgents}
-          customAgents={customAgents} setCustomAgents={setCustomAgents}
-          isAnalyzing={isAnalyzing} setIsAnalyzing={setIsAnalyzing}
-          analysisTrigger={localAnalysisTrigger} globalProvider={activeProvider}
+          editorContent={htmlContent} 
+          arcData={arcData} 
+          setArcData={setArcData}
+          chapters={chapters} 
+          setChapters={setChapters}
+          agentReports={agentReports}
+          setAgentReports={setAgentReports} 
+          onApplySuggestion={handleApplySuggestion}
+          activeTab={activeTab} 
+          setActiveTab={setActiveTab}
+          selectedAgents={selectedAgents} 
+          setSelectedAgents={setSelectedAgents}
+          customAgents={customAgents} 
+          setCustomAgents={setCustomAgents}
+          isAnalyzing={isAnalyzing} 
+          setIsAnalyzing={setIsAnalyzing}
+          analysisTrigger={localAnalysisTrigger}
+          onCompletion={() => notify("Boardroom Consensus Established.")}
           notify={notify}
         />
       </DraggableDialog>
 
       <GuideAssistant 
         content={content} selectedText={selectedText} misspelledCount={misspelledCount}
-        wordCount={wordCount} hasToc={chapters.length > 0}
-        hasReports={Object.keys(agentReports).length > 0}
-        folderPath={activeFolderPath} provider={activeProvider} apiKey={vault[activeProvider]}
+        wordCount={wordCount} hasToc={(chapters?.length || 0) > 0}
+        hasReports={Object.keys(agentReports || {}).length > 0}
+        folderPath={activeFolderPath}
       />
     </main>
   );

@@ -13,14 +13,15 @@ export default function TomeToast() {
     const [toasts, setToasts] = useState<Toast[]>([]);
 
     useEffect(() => {
-        const handleToast = (e: any) => {
-            const { message, feature } = e.detail || {};
+        const handleToast = (e: Event) => {
+            const customEvent = e as CustomEvent<{ message?: string, feature?: string }>;
+            const { message, feature } = customEvent.detail || {};
             const id = Date.now();
             
             // Format the message specifically as requested by the user if it's a "locked" type
             const finalMessage = feature 
                 ? `The ${feature} is locked and will be unlocked once licensed.`
-                : message;
+                : message || "";
 
             setToasts(prev => [...prev, { id, message: finalMessage, feature }]);
 

@@ -13,3 +13,12 @@ pytesseract
 python-dotenv
 pymupdf
 httpx
+# --- GOVERNMENT CERTIFICATION STACK ---
+presidio-analyzer
+presidio-anonymizer
+spacy
+celery
+redis
+python-json-logger
+PyJWT
+cryptography

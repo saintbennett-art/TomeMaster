@@ -11,15 +11,13 @@ interface GuideAssistantProps {
     hasToc?: boolean;
     hasReports?: boolean;
     folderPath?: string | null;
-    provider?: string;
-    apiKey?: string;
 }
 
 /**
  * AmbientGuide: The Invisible Directorial Engine
  * Returns null (Invisible) but listens for focus/hover events to provide ambient speech.
  */
-function AmbientGuide({ content, wordCount = 0, hasToc = false, hasReports = false, folderPath = null, provider = 'openai', apiKey = '' }: GuideAssistantProps) {
+function AmbientGuide({ content, wordCount = 0, hasToc = false, hasReports = false, folderPath = null }: GuideAssistantProps) {
     const { speak } = useTextToSpeech();
     const [lastSpoken, setLastSpoken] = useState<string>("");
     const [lastSpokenTime, setLastSpokenTime] = useState<number>(0);
@@ -46,8 +44,9 @@ function AmbientGuide({ content, wordCount = 0, hasToc = false, hasReports = fal
     }, [speak, lastSpoken, lastSpokenTime]);
 
     useEffect(() => {
-        const handleGuideEvent = (e: any) => {
-            const detail = e.detail;
+        const handleGuideEvent = (e: Event) => {
+            const customEvent = e as CustomEvent<{ text: string }>;
+            const detail = customEvent.detail;
             if (!detail || !detail.text) return;
             directorialSpeak(detail.text);
         };
@@ -67,8 +66,8 @@ function AmbientGuide({ content, wordCount = 0, hasToc = false, hasReports = fal
             const welcomePrefix = "Welcome to Tome-Master. I am the System Workflow Coordinator. ";
 
             // [SOVEREIGN BRIEFING]: Attempt to pull high-fidelity session intel
-            if (folderPath && apiKey) {
-                const briefing = await getBriefing(folderPath, provider, apiKey);
+            if (folderPath) {
+                const briefing = await getBriefing(folderPath);
                 directorialSpeak(welcomePrefix + briefing);
             } else {
                 if (content.length < 100) {

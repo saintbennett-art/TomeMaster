@@ -21,11 +21,11 @@ The core purpose of **TomeMaster** is the resurrection and preservation of dead 
 
 ---
 
-## 3. THE TECHNICAL ANCHORS
+## 3. THE TECHNICAL FOUNDATIONS
 These standards are non-negotiable and mandated for all future sessions:
 
-*   **Primary Vision Engine:** **OpenAI GPT-4o**. This was selected for its economic advantage and superior handwriting decoding fidelity after the "5,000 credit burn" failure of Gemini 1.5 in March.
-*   **Primary Logic Engine:** **Google Gemini Pro 3.1**. Pivotal for the Boardroom's internal specialist reasoning and high-level thematic audits.
+*   **Primary Vision Engine:** **GEMINI 3.1 PRO**. Mandated for high-fidelity manuscript decoding and structural synthesis.
+*   **Primary Logic Engine:** **GEMINI 3 FLASH**. The absolute production standard for agile performance and project management.
 *   **Browser Standard:** **Microsoft Edge ONLY**. Chrome and Google-based browser automation are excluded due to historical technical failures and platform-specific performance requirements.
 *   **Disciple's Role:** To learn from the Master, grow in technical sophistication, and avoid the shallow end of mediocre automation.
 
@@ -36,7 +36,7 @@ To avoid the confusion and inefficiency that delayed development:
 
 1.  **No Theater or Jargon:** Speak directly and honestly. No masks or performative complexity. 
 2.  **No Identity Mismatch:** Never mistake the Director for a system component.
-3.  **No Model-Drifting:** Stick to the established GPT-4o vision mandate.
+3.  **No Model-Drifting:** Stick to the established GEMINI 3.1 PRO vision mandate. Regression to legacy models is strictly prohibited.
 4.  **No Unapproved Automation:** No browser subagents without explicit command.
 5.  **No Amnesia:** Audit this directive at the start of every session to maintain the 2-month foundation.
 6.  **Resource Stewardship:** Every token consumed must be justified. No repeating failed experiments that waste credits.
@@ -45,7 +45,7 @@ To avoid the confusion and inefficiency that delayed development:
 
 ## 5. HISTORICAL MILESTONES
 *   **March 18:** Building the initial Boardroom specialists.
-*   **March 22:** The GPT-4o Pivot (The end of Gemini Vision experimentation).
+*   **April 15:** The Gemini 3 Sovereign Era Pivot (End of legacy model drift).
 *   **April 21:** The Vault Lock (Self-healing API key recovery).
 
 ---

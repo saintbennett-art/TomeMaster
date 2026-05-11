@@ -4,7 +4,7 @@ import { X, HelpCircle, ChevronDown, ChevronRight, BookOpen, Cpu, Mic, ShieldChe
 
 interface AccordionSectionProps {
     title: string;
-    icon: any;
+    icon: React.ElementType;
     isOpen: boolean;
     onToggle: () => void;
     children: React.ReactNode;

@@ -1,10 +1,30 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { refineProse } from '@/lib/apiClient';
 
+interface SpeechRecognitionEvent extends Event {
+  results: SpeechRecognitionResultList;
+  resultIndex: number;
+}
+
+interface SpeechRecognitionErrorEvent extends Event {
+  error: string;
+}
+
+interface SpeechRecognition extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: (event: SpeechRecognitionEvent) => void;
+  onerror: (event: SpeechRecognitionErrorEvent) => void;
+  onend: () => void;
+  start: () => void;
+  abort: () => void;
+}
+
 declare global {
   interface Window {
-    SpeechRecognition: any;
-    webkitSpeechRecognition: any;
+    SpeechRecognition: new () => SpeechRecognition;
+    webkitSpeechRecognition: new () => SpeechRecognition;
   }
 }
 
@@ -19,7 +39,7 @@ interface UseDictationProps {
 export function useDictation({ onCommand, onDictation, isSuperMuseMode, provider, apiKey }: UseDictationProps) {
   const [isListening, setIsListening] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
   const isListeningRef = useRef(false);
   const isSuperMuseRef = useRef(isSuperMuseMode);
   
@@ -38,7 +58,6 @@ export function useDictation({ onCommand, onDictation, isSuperMuseMode, provider
     
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      console.warn("Speech API not natively supported in this browser.");
       return;
     }
 
@@ -47,7 +66,7 @@ export function useDictation({ onCommand, onDictation, isSuperMuseMode, provider
     recognition.interimResults = false; 
     recognition.lang = 'en-US';
 
-    recognition.onresult = async (e: any) => {
+    recognition.onresult = async (e: SpeechRecognitionEvent) => {
       if (!isListeningRef.current) return; 
       
       for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -79,8 +98,7 @@ export function useDictation({ onCommand, onDictation, isSuperMuseMode, provider
       }
     };
 
-    recognition.onerror = (e: any) => {
-      console.error("Speech Recognition Error:", e.error);
+    recognition.onerror = (e: SpeechRecognitionErrorEvent) => {
     };
 
     recognition.onend = () => {

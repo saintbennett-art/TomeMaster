@@ -22,17 +22,23 @@ declare module '@tiptap/core' {
  * Robust Dictionary Loader for Tome-Master.
  * Supports en-US (American) and en-GB (British) Hunspell assets.
  */
+interface SpellcheckStorage {
+  spell: any;
+  language: string;
+  ignoredWords: Set<string>;
+  customWords: Set<string>;
+  getSuggestions: (word: string) => string[];
+}
+
 const loadSpellEngine = async (lang: string, storage: any, editor: any) => {
   const dictionaryPrefix = lang.toLowerCase();
   try {
-    console.log(`Spellcheck: Initializing ${lang} engine...`);
     const [affResponse, dicResponse] = await Promise.all([
       fetch(`/dict/${dictionaryPrefix}.aff?t=${Date.now()}`),
       fetch(`/dict/${dictionaryPrefix}.dic?t=${Date.now()}`)
     ]);
 
     if (!affResponse.ok || !dicResponse.ok) {
-      console.error(`Spellcheck: Failed to fetch dictionary files for ${lang}`);
       return;
     }
 
@@ -40,7 +46,6 @@ const loadSpellEngine = async (lang: string, storage: any, editor: any) => {
     const dic = await dicResponse.text();
     
     storage.spell = nspell(aff, dic);
-    console.log(`Spellcheck: ${lang} engine ready.`);
     
     // Repopulate with custom words
     storage.customWords.forEach((word: string) => {
@@ -51,7 +56,6 @@ const loadSpellEngine = async (lang: string, storage: any, editor: any) => {
       editor.view.dispatch(editor.state.tr.setMeta('spellcheck_refresh', true));
     }
   } catch (err) {
-    console.error(`Spellcheck: Critical failure loading ${lang} engine`, err);
   }
 };
 
@@ -104,7 +108,7 @@ export const Spellcheck = Extension.create<SpellcheckOptions>({
   addCommands() {
     return {
       addWord: (word) => ({ editor }) => {
-        const storage = (editor.storage as any).spellcheck;
+        const storage = (editor.storage as any).spellcheck as SpellcheckStorage;
         const norm = word.replace(/[\u2018-\u201b\u02bc\u0060\u00b4]/g, "'").toLowerCase();
         if (storage && !storage.customWords.has(norm)) {
           storage.customWords.add(norm);
@@ -117,7 +121,7 @@ export const Spellcheck = Extension.create<SpellcheckOptions>({
         return true;
       },
       addWords: (words) => ({ editor }) => {
-        const storage = (editor.storage as any).spellcheck;
+        const storage = (editor.storage as any).spellcheck as SpellcheckStorage;
         let changed = false;
         words.forEach(word => {
           const norm = word.replace(/[\u2018-\u201b\u02bc\u0060\u00b4]/g, "'").toLowerCase();
@@ -136,7 +140,7 @@ export const Spellcheck = Extension.create<SpellcheckOptions>({
         return true;
       },
       ignoreWord: (word) => ({ editor }) => {
-        const storage = (editor.storage as any).spellcheck;
+        const storage = (editor.storage as any).spellcheck as SpellcheckStorage;
         const norm = word.replace(/[\u2018-\u201b\u02bc\u0060\u00b4]/g, "'").toLowerCase();
         if (storage && !storage.ignoredWords.has(norm)) {
           storage.ignoredWords.add(norm);
@@ -192,10 +196,9 @@ export const Spellcheck = Extension.create<SpellcheckOptions>({
         return true;
       },
       setLanguage: (lang) => ({ editor }) => {
-        const storage = (editor.storage as any).spellcheck;
+        const storage = (editor.storage as any).spellcheck as SpellcheckStorage;
         if (storage.language === lang && storage.spell) return true;
         storage.language = lang;
-        console.log(`Spellcheck: Language shifted to ${lang}`);
         if (typeof window !== 'undefined') localStorage.setItem('tome_master_language', lang);
         loadSpellEngine(lang, storage, editor);
         if (typeof window !== "undefined") {
@@ -211,14 +214,13 @@ export const Spellcheck = Extension.create<SpellcheckOptions>({
       try {
         const savedLang = localStorage.getItem('tome_master_language');
         if (savedLang && (savedLang === 'en-US' || savedLang === 'en-GB' || savedLang === 'en-CA')) {
-          (this.storage as any).language = savedLang;
+          (this.storage as { language?: string }).language = savedLang;
         }
         const savedCustom = localStorage.getItem('tome_master_custom_words');
         if (savedCustom) JSON.parse(savedCustom).forEach((w: string) => this.storage.customWords.add(w));
         const savedIgnored = localStorage.getItem('tome_master_ignored_words');
         if (savedIgnored) JSON.parse(savedIgnored).forEach((w: string) => this.storage.ignoredWords.add(w));
       } catch (e) {
-        console.error('Spellcheck: Hydration failed', e);
       }
     }
     // Defer dictionary load so the editor renders and becomes interactive first.
@@ -241,7 +243,7 @@ export const Spellcheck = Extension.create<SpellcheckOptions>({
               return set.map(tr.mapping, tr.doc);
             }
 
-            const { spell, ignoredWords, customWords } = (extension.storage as any);
+            const { spell, ignoredWords, customWords } = extension.storage as SpellcheckStorage;
             if (!spell) return DecorationSet.empty;
 
             const decorations: Decoration[] = [];

@@ -2,6 +2,7 @@
 
 import React from "react";
 import { useWorkstationState, useWorkstationActions } from "@/context/WorkstationContext";
+import { useEditorState, useEditorActions } from "@/context/EditorContext";
 import ResurrectionDashboard from "@/components/ResurrectionDashboard";
 
 
@@ -31,11 +32,14 @@ const ResurrectionSidebar: React.FC<ResurrectionSidebarProps> = ({
     localAnalysisTrigger
 }) => {
     const { 
-        content, arcData, chapters, agentReports, activeProvider, 
-        activeModel, transcriptionStatus, isTranscribing, processedPageCount
+        transcriptionStatus, isTranscribing, processedPageCount
     } = useWorkstationState();
+
+    const {
+        content, arcData, chapters, agentReports
+    } = useEditorState();
     
-    const { setAgentReports } = useWorkstationActions();
+    const { setAgentReports } = useEditorActions();
 
     if (!isOpen) return null;
 

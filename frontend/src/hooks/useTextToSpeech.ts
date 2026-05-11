@@ -82,13 +82,11 @@ export function useTextToSpeech() {
             }
             
             if (targetVoice) {
-                console.log(`VOICE: Calibrated to ${targetVoice.name} (Fluidity Active).`);
                 utterance.voice = targetVoice;
             }
         }
         
         utterance.onstart = () => {
-            console.log("VOICE: Liaison Speaking...");
             setIsPlaying(true);
             setIsPaused(false);
         };
@@ -100,7 +98,6 @@ export function useTextToSpeech() {
         utterance.onerror = (event) => {
             const silentErrors = ['interrupted', 'canceled', 'not-allowed', 'synthesis-failed'];
             if (!silentErrors.includes(event.error)) {
-                console.error("SpeechSynthesis Error Type:", event.error);
             }
             setIsPlaying(false);
             setIsPaused(false);
@@ -111,7 +108,6 @@ export function useTextToSpeech() {
             window.speechSynthesis.cancel();
             window.speechSynthesis.speak(utterance);
         } catch (e) {
-            console.warn("VOICE: Systemic vocalization blocked by browser policy.", e);
         }
     }, []);
 
@@ -128,7 +124,6 @@ export function useTextToSpeech() {
     useEffect(() => {
         if (typeof window === 'undefined') return;
         const handleVoicesChanged = () => {
-            console.log("VOICE: Narrative Archive Refreshed (Voices Loaded).");
         };
         window.speechSynthesis.onvoiceschanged = handleVoicesChanged;
         // Trigger manually for some browsers

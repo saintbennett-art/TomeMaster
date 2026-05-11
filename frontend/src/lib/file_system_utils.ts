@@ -10,7 +10,7 @@ export async function saveBlobWithSovereignty(blob: Blob, suggestedName: string,
     // 1. ATTEMPT NATIVE OS PICKER HANDSHAKE
     if ('showSaveFilePicker' in window) {
         try {
-            const handle = await (window as any).showSaveFilePicker({
+            const handle = await (window as Window & { showSaveFilePicker: (options: object) => Promise<{ createWritable: () => Promise<{ write: (data: Blob) => Promise<void>, close: () => Promise<void> }> }> }).showSaveFilePicker({
                 suggestedName,
                 types: [{
                     description: `${description} (.${extension})`,
@@ -22,10 +22,10 @@ export async function saveBlobWithSovereignty(blob: Blob, suggestedName: string,
             await writable.write(blob);
             await writable.close();
             return true; // Sovereign Transaction Complete
-        } catch (e: any) {
+        } catch (e) {
+            const err = e as Error;
             // Check for explicit user abortion
-            if (e.name === 'AbortError') return false; 
-            console.warn("[Sovereign Bridge] Native picker failed or restricted. Attempting Fallback Handshake...", e);
+            if (err.name === 'AbortError') return false; 
         }
     }
 

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\saint\\\\.gemini\\\\antigravity\\\\playground\\\\dark-schrodinger\" -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.IsReadOnly -eq $true } | Select-Object FullName | Format-Table -AutoSize)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\saint\\\\.gemini\\\\antigravity\\\\\" -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.IsReadOnly -eq $true } | Select-Object FullName | Format-Table -AutoSize)"
+    ]
+  }
+}

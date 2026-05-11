@@ -1,7 +1,15 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Request, UploadFile, File, Form
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    BackgroundTasks,
+    Request,
+    UploadFile,
+    File,
+    Form,
+)
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Any
-from services import ai_service
+from services import ai_service, vault_steward
 from services.style_mirror import MIRROR
 from fastapi.responses import StreamingResponse
 import json
@@ -14,24 +22,23 @@ import time
 
 try:
     import psutil
+
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
 
 router = APIRouter()
 
+
 @router.get("/vault-sync")
 async def sync_vault_from_env():
     # Returns only presence booleans — never returns raw key values over the wire
-    return {
-        "gemini": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
-        "openai": bool(os.environ.get("OPENAI_API_KEY", "").strip()),
-        "anthropic": bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()),
-        "groq": bool(os.environ.get("GROQ_API_KEY", "").strip()),
-    }
+    return vault_steward.check_vault_presence()
+
 
 class VaultSaveRequest(BaseModel):
     keys: Dict[str, str]
+
 
 ALLOWED_VAULT_KEYS = {
     "gemini": "GEMINI_API_KEY",
@@ -40,55 +47,107 @@ ALLOWED_VAULT_KEYS = {
     "groq": "GROQ_API_KEY",
 }
 
+
 @router.post("/vault-save")
 async def save_vault_to_env(req: VaultSaveRequest):
-    env_path = ".env"
-    if not os.path.exists(env_path):
-        env_path = "backend/.env"
+    success = vault_steward.save_vault_to_env(req.keys)
+    if not success:
+        raise HTTPException(status_code=500, detail="Vault Targeting Failure")
+    return {"success": True}
+
+
+@router.get("/models")
+async def discover_available_models(provider: str = "gemini"):
+    """
+    [SOVEREIGN DISCOVERY]: Queries the provider's live API using the stored key
+    to return the actual models available to this account. Zero assumptions.
+    """
+    from services import settings_service
+
+    api_key = settings_service.get_api_key(provider)
+    if not api_key:
+        return {"models": [], "error": f"No API key found for provider: {provider}"}
 
     try:
-        lines = []
-        if os.path.exists(env_path):
-            with open(env_path, "r") as f:
-                lines = f.readlines()
+        if provider == "gemini":
+            from google import genai
+            client = genai.Client(api_key=api_key)
+            response = client.models.list()
+            # Filter to models that support generateContent (vision/text capable)
+            models = []
+            for m in response:
+                name = m.name  # e.g. "models/gemini-3.1-pro-preview"
+                model_id = name.replace("models/", "")
+                # Only include generative models, skip embeddings/retrieval
+                supported = getattr(m, 'supported_actions', []) or []
+                if hasattr(m, 'supported_generation_methods'):
+                    supported = m.supported_generation_methods
+                if 'generateContent' in supported or not supported:
+                    models.append({
+                        "id": model_id,
+                        "name": getattr(m, 'display_name', model_id),
+                        "description": getattr(m, 'description', ''),
+                    })
+            return {"models": models, "provider": provider}
 
-        new_lines = []
-        updated_keys = set()
+        elif provider == "openai":
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key)
+            response = client.models.list()
+            models = [
+                {"id": m.id, "name": m.id, "description": ""}
+                for m in response.data
+                if "gpt" in m.id or "o1" in m.id or "o3" in m.id
+            ]
+            return {"models": models, "provider": provider}
 
-        for line in lines:
-            found = False
-            for provider, env_var in ALLOWED_VAULT_KEYS.items():
-                if line.startswith(f"{env_var}="):
-                    val = req.keys.get(provider, "").strip()
-                    if val:
-                        new_lines.append(f"{env_var}={val}\n")
-                        updated_keys.add(provider)
-                        found = True
-                        break
-            if not found:
-                new_lines.append(line)
+        elif provider == "groq":
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
+            response = client.models.list()
+            models = [
+                {"id": m.id, "name": m.id, "description": ""}
+                for m in response.data
+            ]
+            return {"models": models, "provider": provider}
 
-        for provider, env_var in ALLOWED_VAULT_KEYS.items():
-            val = req.keys.get(provider, "").strip()
-            if val and provider not in updated_keys:
-                new_lines.append(f"{env_var}={val}\n")
+        elif provider == "anthropic":
+            # Anthropic doesn't have a public list endpoint — return known current models
+            models = [
+                {"id": "claude-opus-4-6", "name": "Claude Opus 4.6 (Thinking)", "description": "Most capable"},
+                {"id": "claude-sonnet-4-6", "name": "Claude Sonnet 4.6 (Thinking)", "description": "Balanced"},
+                {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet", "description": "Fast, capable"},
+            ]
+            return {"models": models, "provider": provider}
 
-        with open(env_path, "w") as f:
-            f.writelines(new_lines)
+        return {"models": [], "error": f"Unknown provider: {provider}"}
 
-        # Propagate to live process env (strictly whitelisted keys only)
-        for provider, env_var in ALLOWED_VAULT_KEYS.items():
-            val = req.keys.get(provider, "").strip()
-            if val:
-                os.environ[env_var] = val
-
-        return {"success": True}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Vault Anchoring Failure: {str(e)}")
+        return {"models": [], "error": str(e)}
+
+
+
+class SettingsUpdateRequest(BaseModel):
+    preferred_models: Optional[Dict[str, str]] = None
+    preferences: Optional[Dict[str, Any]] = None
+
+@router.post("/settings")
+async def update_settings(req: SettingsUpdateRequest):
+    """[SOVEREIGN PERSIST]: Saves auto-discovered model assignments to settings.json."""
+    from services import settings_service
+    update = {}
+    if req.preferred_models:
+        update["preferred_models"] = req.preferred_models
+    if req.preferences:
+        update["preferences"] = req.preferences
+    success = settings_service.save_settings(update)
+    return {"success": success}
+
 
 @router.get("/pulse")
 async def boardroom_pulse_endpoint():
     """Real-Time Pulse: Streams expert handshake progress to all UI subscribers via Server-Sent Events."""
+
     async def event_generator():
         # [NEURAL TELEMETRY]: Real-time heartbeat of the specialist boardroom
         while True:
@@ -96,10 +155,13 @@ async def boardroom_pulse_endpoint():
             load = psutil.cpu_percent() if PSUTIL_AVAILABLE else 0
             yield f"data: {json.dumps({'pulse': 'active', 'neural_load': load, 'timestamp': time.time()})}\n\n"
             await asyncio.sleep(2)
+
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 
 class DnaUpdateRequest(BaseModel):
     text: str
+
 
 @router.post("/update-dna")
 async def update_authorial_dna(req: DnaUpdateRequest):
@@ -109,6 +171,7 @@ async def update_authorial_dna(req: DnaUpdateRequest):
     dna = MIRROR.extract_authorial_dna(req.text)
     return {"success": True, "dna": dna}
 
+
 class MultiAgentRequest(BaseModel):
     content: str
     requested_personas: List[str]
@@ -117,7 +180,7 @@ class MultiAgentRequest(BaseModel):
     model: Optional[str] = None
     custom_url: Optional[str] = None
     user_chapters: Optional[List[dict]] = None
-    analytic_scope: Optional[str] = 'full'
+    analytic_scope: Optional[str] = "full"
     key_bundle: Optional[dict] = None
     ledger: Optional[List[dict]] = None
     force_primary: Optional[bool] = False
@@ -126,9 +189,11 @@ class MultiAgentRequest(BaseModel):
     custom_prompt: Optional[str] = None
     project_folder: Optional[str] = None
 
+
 @router.post("/expert-stream")
 async def expert_stream(req: MultiAgentRequest):
     """Specialist Handshake: Streams the expert's thought process directly into the UI."""
+
     async def expert_generator():
         # [MASTER DIRECTIVE]: Mirroring Ron's voice in the thoughts
         yield f"data: {json.dumps({'agent': req.requested_personas[0], 'thought': 'Calibrating Style Mirror...', 'type': 'neural'})}\n\n"
@@ -137,8 +202,9 @@ async def expert_stream(req: MultiAgentRequest):
         # Simulate neural activity
         yield f"data: {json.dumps({'agent': req.requested_personas[0], 'thought': 'Auditing narrative rhythms...', 'type': 'neural'})}\n\n"
         await asyncio.sleep(1)
-        
+
     return StreamingResponse(expert_generator(), media_type="text/event-stream")
+
 
 class TextRequest(BaseModel):
     text: str
@@ -147,12 +213,14 @@ class TextRequest(BaseModel):
     model: Optional[str] = None
     local_mode: Optional[bool] = False
 
+
 class CreativeRequest(BaseModel):
     text: str
     provider: Optional[str] = "gemini"
     api_key: Optional[str] = None
     model: Optional[str] = None
     local_mode: Optional[bool] = False
+
 
 @router.post("/refine-prose")
 async def refine_prose_endpoint(req: TextRequest):
@@ -163,15 +231,15 @@ async def refine_prose_endpoint(req: TextRequest):
         # [SOVEREIGN INJECTION]: Force the Style Mirror DNA into the refinement prompt
         prefix = MIRROR.get_muse_prompt_prefix()
         prompt = f"{prefix}\n\nREWRITE THIS DICTATION FOR FLOW AND FIDELITY. MAINTAIN ALL CORE MEANING BUT SMOOTH THE TRANSCRIPTION ARTIFACTS:\n\n{req.text}"
-        
+
         # [MASTER DIRECTIVE]: Mandating GPT-4o for refinement
         result = await ai_service.run_boardroom_parallel(
-            prompt, 
-            ["Editor-in-Chief"], 
-            req.provider or "openai", 
-            req.api_key, 
+            prompt,
+            ["Editor-in-Chief"],
+            req.provider or "openai",
+            req.api_key,
             model="gpt-4o",
-            local_mode=False
+            local_mode=False,
         )
         # Extract refined text from the agent response
         refined = result.get("Editor-in-Chief", {}).get("feedback", req.text)
@@ -179,16 +247,19 @@ async def refine_prose_endpoint(req: TextRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 class BriefingRequest(BaseModel):
     folder_path: str
     provider: Optional[str] = "openai"
     api_key: Optional[str] = None
+
 
 @router.post("/briefing")
 async def get_briefing_endpoint(req: BriefingRequest):
     """[DIRECTORIAL BRIEFING]: Generates a session summary and priority audit."""
     try:
         from services import ledger
+
         stats = ledger.get_stats(req.folder_path)
         prompt = f"AUDIT THIS PROJECT DATA AND PROVIDE A 3-SENTENCE DIRECTORIAL BRIEFING FOR THE ARCHITECT. FOCUS ON RECENT PROGRESS AND THE TOP 2 NARRATIVE GAPS. DATA: {json.dumps(stats)}"
         result = await ai_service.run_boardroom_parallel(
@@ -197,12 +268,17 @@ async def get_briefing_endpoint(req: BriefingRequest):
             req.provider,
             req.api_key,
             model="gpt-4o",
-            local_mode=False
+            local_mode=False,
         )
-        briefing = result.get("Sovereign Liaison", {}).get("feedback", "Operational link established. The boardroom is standing by.")
+        briefing = result.get("Sovereign Liaison", {}).get(
+            "feedback", "Operational link established. The boardroom is standing by."
+        )
         return {"briefing": briefing}
     except Exception:
-        return {"briefing": "Directorial link established. Standing by for manuscript resurrection."}
+        return {
+            "briefing": "Directorial link established. Standing by for manuscript resurrection."
+        }
+
 
 def _validate_project_path(folder_path: str) -> str:
     """Resolves and validates that a path stays within the user's home directory tree."""
@@ -212,10 +288,10 @@ def _validate_project_path(folder_path: str) -> str:
         raise HTTPException(status_code=403, detail="Path outside permitted directory.")
     return resolved
 
+
 @router.post("/save-recording")
 async def save_recording_endpoint(
-    file: UploadFile = File(...),
-    folder_path: str = Form(...)
+    file: UploadFile = File(...), folder_path: str = Form(...)
 ):
     """[DIRECTORIAL CAPTURE]: Persists a demo recording to the project root."""
     try:
@@ -235,9 +311,11 @@ async def save_recording_endpoint(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 class SnapshotRequest(BaseModel):
     data_url: str
     folder_path: str
+
 
 @router.post("/save-snapshot")
 async def save_snapshot_endpoint(req: SnapshotRequest):
@@ -264,7 +342,10 @@ async def save_snapshot_endpoint(req: SnapshotRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Snapshot Archival Failure: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Snapshot Archival Failure: {str(e)}"
+        )
+
 
 @router.post("/emotional-arc")
 async def analyze_emotional_arc(req: TextRequest):
@@ -272,10 +353,17 @@ async def analyze_emotional_arc(req: TextRequest):
     if not req.text:
         raise HTTPException(status_code=400, detail="Text is required")
     try:
-        result = await ai_service.analyze_emotional_arc_async(req.text, req.provider, req.api_key, model=req.model, local_mode=req.local_mode)
+        result = await ai_service.analyze_emotional_arc_async(
+            req.text,
+            req.provider,
+            req.api_key,
+            model=req.model,
+            local_mode=req.local_mode,
+        )
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 class StructuralRequest(BaseModel):
     content: str
@@ -284,10 +372,11 @@ class StructuralRequest(BaseModel):
     model: Optional[str] = None
     local_mode: Optional[bool] = False
 
+
 @router.post("/structural-analysis")
 async def perform_structural_analysis(req: StructuralRequest):
     """
-    [THE ARCHITECT]: Scans the unified manuscript to suggest chapter breaks 
+    [THE ARCHITECT]: Scans the unified manuscript to suggest chapter breaks
     and calculate chapter-by-chapter emotional arcs.
     """
     if not req.content:
@@ -295,19 +384,23 @@ async def perform_structural_analysis(req: StructuralRequest):
     try:
         # [SOVEREIGN DISPATCH]: Using Gemini 3.1 Pro as the primary structural engine
         result = await ai_service.run_structural_analysis_async(
-            req.content, req.provider, req.api_key, 
-            model=req.model or "gemini-3.1-pro-preview", 
-            local_mode=req.local_mode
+            req.content,
+            req.provider,
+            req.api_key,
+            model=req.model or "gemini-3.1-pro-preview",
+            local_mode=req.local_mode,
         )
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 class MoodboardRequest(BaseModel):
     text: str
     provider: Optional[str] = "gemini"
     api_key: Optional[str] = None
     model: Optional[str] = None
+
 
 @router.post("/moodboard")
 async def generate_moodboard(req: MoodboardRequest):
@@ -322,35 +415,46 @@ async def generate_moodboard(req: MoodboardRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 class EnhancementRequest(BaseModel):
     content: str
     provider: Optional[str] = "gemini"
     api_key: Optional[str] = None
     model: Optional[str] = None
 
+
 @router.post("/sentinel")
 async def run_continuity_sentinel(req: EnhancementRequest):
     """Audits manuscript for logical inconsistencies and character drift."""
     try:
-        return await ai_service.run_sentinel_async(req.content, req.provider, req.api_key, req.model)
+        return await ai_service.run_sentinel_async(
+            req.content, req.provider, req.api_key, req.model
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/heatmap")
 async def run_pacing_heatmap(req: EnhancementRequest):
     """Calculates real-time pacing density and narrative tension heatmap."""
     try:
-        return await ai_service.run_heatmap_async(req.content, req.provider, req.api_key, req.model)
+        return await ai_service.run_heatmap_async(
+            req.content, req.provider, req.api_key, req.model
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/dynamic-arc")
 async def run_dynamic_arc(req: EnhancementRequest):
     """Interactive emotional arc adjustment with plot-point recommendations."""
     try:
-        return await ai_service.run_dynamic_arc_async(req.content, req.provider, req.api_key, req.model)
+        return await ai_service.run_dynamic_arc_async(
+            req.content, req.provider, req.api_key, req.model
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 class DraftExpertRequest(BaseModel):
     content: str
@@ -358,24 +462,35 @@ class DraftExpertRequest(BaseModel):
     user_chapters: Optional[List[dict]] = None
     synthesis_mode: Optional[bool] = False
 
+
 @router.post("/convene")
 async def convene_boardroom(req: MultiAgentRequest):
     """Dispatches manuscript to requested AI specialists simultaneously."""
     if not req.content or not req.requested_personas:
-        raise HTTPException(status_code=400, detail="Content and requested_personas are required")
+        raise HTTPException(
+            status_code=400, detail="Content and requested_personas are required"
+        )
     try:
-        # COLLECT ALL ANCHORED BRAINS FOR BEST-USE ORCHESTRATION
+        # COLLECT ALL ESTABLISHED BRAINS FOR BEST-USE ORCHESTRATION
         all_keys = {
-            "gemini": req.api_key if req.provider == "gemini" else os.environ.get("GEMINI_API_KEY"),
-            "anthropic": req.api_key if req.provider == "anthropic" else os.environ.get("ANTHROPIC_API_KEY"),
-            "openai": req.api_key if req.provider == "openai" else os.environ.get("OPENAI_API_KEY"),
-            "emergent": req.api_key if req.provider == "emergent" else os.environ.get("EMERGENT_API_KEY")
+            "gemini": req.api_key
+            if req.provider == "gemini"
+            else os.environ.get("GEMINI_API_KEY"),
+            "anthropic": req.api_key
+            if req.provider == "anthropic"
+            else os.environ.get("ANTHROPIC_API_KEY"),
+            "openai": req.api_key
+            if req.provider == "openai"
+            else os.environ.get("OPENAI_API_KEY"),
+            "emergent": req.api_key
+            if req.provider == "emergent"
+            else os.environ.get("EMERGENT_API_KEY"),
         }
         payload = await ai_service.run_boardroom_parallel(
-            req.content, 
-            req.requested_personas, 
-            req.provider or "gemini", 
-            req.api_key, 
+            req.content,
+            req.requested_personas,
+            req.provider or "gemini",
+            req.api_key,
             model=req.model,
             user_chapters=req.user_chapters,
             key_bundle=req.key_bundle,
@@ -385,13 +500,16 @@ async def convene_boardroom(req: MultiAgentRequest):
             synthesis_mode=req.synthesis_mode,
             all_keys=all_keys,
             custom_prompt=req.custom_prompt,
-            project_folder=req.project_folder
+            project_folder=req.project_folder,
         )
         if not payload:
-            raise ValueError("All requested Board Members failed to respond. Please check your credentials and model availability.")
+            raise ValueError(
+                "All requested Board Members failed to respond. Please check your credentials and model availability."
+            )
         return payload
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/draft-expert")
 async def draft_expert_prompt(req: DraftExpertRequest):
@@ -400,14 +518,13 @@ async def draft_expert_prompt(req: DraftExpertRequest):
     Enables Directorial Oversight (Review & Edit) in the Command Center.
     """
     try:
-        prompt, is_json = ai_service._build_prompt(req.content, req.persona, req.user_chapters, req.synthesis_mode)
-        return {
-            "prompt": prompt,
-            "is_json": is_json,
-            "persona": req.persona
-        }
+        prompt, is_json = ai_service._build_prompt(
+            req.content, req.persona, req.user_chapters, req.synthesis_mode
+        )
+        return {"prompt": prompt, "is_json": is_json, "persona": req.persona}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Drafting Failure: {str(e)}")
+
 
 @router.get("/usage")
 async def get_api_usage():
@@ -415,7 +532,7 @@ async def get_api_usage():
     USAGE_LOG_PATH = "api_usage_log.jsonl"
     if not os.path.exists(USAGE_LOG_PATH):
         return {"history": []}
-        
+
     try:
         history = []
         with open(USAGE_LOG_PATH, "r", encoding="utf-8") as f:
@@ -425,6 +542,7 @@ async def get_api_usage():
         return {"history": history}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/expenditure")
 async def get_total_expenditure():
@@ -445,16 +563,17 @@ async def get_total_expenditure():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.get("/ledger")
 async def get_project_ledger(folder_path: str):
     """Returns the line-by-line transaction ledger for a specific project folder."""
     if not folder_path or not os.path.isdir(folder_path):
         return {"ledger": []}
-    
+
     ledger_path = os.path.join(folder_path, "ai_usage_ledger.jsonl")
     if not os.path.exists(ledger_path):
         return {"ledger": []}
-        
+
     try:
         ledger_data = []
         with open(ledger_path, "r", encoding="utf-8") as f:
@@ -465,34 +584,46 @@ async def get_project_ledger(folder_path: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 class ExportMarkdownRequest(BaseModel):
     markdown: str
+
 
 @router.post("/export/docx")
 async def export_analysis_docx_endpoint(req: ExportMarkdownRequest):
     """Converts a raw Markdown analysis report into a formatted MS Word DOCX file."""
     from services.exporter import generate_analysis_docx
-    
+
     if not req.markdown:
         raise HTTPException(status_code=400, detail="Markdown content is required")
-        
+
     try:
         file_stream = generate_analysis_docx(req.markdown)
         return StreamingResponse(
-            file_stream, 
+            file_stream,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={"Content-Disposition": 'attachment; filename="tome_master_Analysis_Report.docx"'}
+            headers={
+                "Content-Disposition": 'attachment; filename="tome_master_Analysis_Report.docx"'
+            },
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/world-bible")
 async def get_world_bible(req: CreativeRequest):
     """Extracts characters and locations (World-Building Wiki)."""
     try:
-        return await ai_service.analyze_world_bible_async(req.text, req.provider, req.api_key, model=req.model, local_mode=req.local_mode)
+        return await ai_service.analyze_world_bible_async(
+            req.text,
+            req.provider,
+            req.api_key,
+            model=req.model,
+            local_mode=req.local_mode,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 class ValidateKeyRequest(BaseModel):
     provider: str
@@ -500,19 +631,26 @@ class ValidateKeyRequest(BaseModel):
     model: Optional[str] = None
     custom_url: Optional[str] = None
 
+
 @router.post("/validate-key")
 async def validate_ai_key(req: ValidateKeyRequest):
     """Performs a lightweight handshake check with a 15s systemic saturation gate."""
     try:
         result = await asyncio.wait_for(
-            ai_service.validate_key_async(req.provider, req.api_key, model=req.model, custom_url=req.custom_url),
-            timeout=60.0
+            ai_service.validate_key_async(
+                req.provider, req.api_key, model=req.model, custom_url=req.custom_url
+            ),
+            timeout=60.0,
         )
         return result
     except asyncio.TimeoutError:
-        return {"success": False, "message": "Local Resource Saturation: Engine Handshake Timed Out (30s). Please check CPU usage."}
+        return {
+            "success": False,
+            "message": "Local Resource Saturation: Engine Handshake Timed Out (30s). Please check CPU usage.",
+        }
     except Exception as e:
         return {"success": False, "message": f"Critical Handshake Failure: {str(e)}"}
+
 
 class ForecastRequest(BaseModel):
     word_count: int
@@ -521,35 +659,46 @@ class ForecastRequest(BaseModel):
     api_key: Optional[str] = None
     model: Optional[str] = None
 
+
 @router.post("/forecast")
 async def get_processing_forecast(req: ForecastRequest):
     """Returns a local processing duration estimate based on word and persona count."""
     try:
         words_per_second = 150
         persona_overhead = 1.5
-        estimated_seconds = round((req.word_count / words_per_second) * req.persona_count * persona_overhead, 1)
-        return {"estimate": f"~{estimated_seconds}s ({req.persona_count} specialist(s), {req.word_count:,} words)"}
+        estimated_seconds = round(
+            (req.word_count / words_per_second) * req.persona_count * persona_overhead,
+            1,
+        )
+        return {
+            "estimate": f"~{estimated_seconds}s ({req.persona_count} specialist(s), {req.word_count:,} words)"
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/list-models")
 async def list_ai_models(req: ValidateKeyRequest):
     """Discovery Pulse: Returns the authorized portfolio of models for the given provider."""
     try:
         result = await asyncio.wait_for(
-            ai_service.list_models_async(req.provider, req.api_key),
-            timeout=10.0
+            ai_service.list_models_async(req.provider, req.api_key), timeout=10.0
         )
         return result
     except asyncio.TimeoutError:
         return {"success": False, "message": "Discovery Timeout (10s).", "models": []}
     except Exception as e:
-        return {"success": False, "message": f"Discovery Failure: {str(e)}", "models": []}
+        return {
+            "success": False,
+            "message": f"Discovery Failure: {str(e)}",
+            "models": [],
+        }
+
 
 @router.get("/system-audit")
 async def sovereign_system_audit():
     """
-    Hardware Audit: Calculates the user's system fidelity and 
+    Hardware Audit: Calculates the user's system fidelity and
     emits warnings if Local Mode is likely to cause architectural saturation.
     """
     try:
@@ -559,19 +708,19 @@ async def sovereign_system_audit():
                 "ram_total_gb": "Unknown",
                 "fidelity_score": "unknown",
                 "recommendation": "Engine in Standby. Cloud Mode Recommended.",
-                "warning": "Hardware Telemetry Unavailable: psutil sensor missing."
+                "warning": "Hardware Telemetry Unavailable: psutil sensor missing.",
             }
-            
-        total_ram = psutil.virtual_memory().total / (1024**3) # GB
-        available_ram = psutil.virtual_memory().available / (1024**3) # GB
+
+        total_ram = psutil.virtual_memory().total / (1024**3)  # GB
+        available_ram = psutil.virtual_memory().available / (1024**3)  # GB
         cpu_count = psutil.cpu_count(logical=False)
         cpu_logical = psutil.cpu_count(logical=True)
         cpu_usage = psutil.cpu_percent(interval=0.1)
-        
+
         fidelity_score = "stable"
         recommendation = "Local Mode Authorized."
         warning = None
-        
+
         if total_ram < 8:
             fidelity_score = "critical"
             recommendation = "CLOUD MODE MANDATORY."
@@ -580,7 +729,7 @@ async def sovereign_system_audit():
             fidelity_score = "low"
             recommendation = "Small Models Only (under 4B)."
             warning = "Low RAM Profile (Found < 16GB). High-fidelity narrative audits may stutter."
-        
+
         return {
             "os": f"{platform.system()} {platform.release()}",
             "ram_total_gb": round(total_ram, 1),
@@ -590,10 +739,11 @@ async def sovereign_system_audit():
             "cpu_usage_current": cpu_usage,
             "fidelity_score": fidelity_score,
             "recommendation": recommendation,
-            "warning": warning
+            "warning": warning,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Audit Failure: {str(e)}")
+
 
 @router.post("/kill-switch")
 async def emergency_kill_switch():
@@ -603,8 +753,13 @@ async def emergency_kill_switch():
     Unlike the process-exit, this keeps the UI running.
     """
     try:
-        print("BOARDROOM: LOCAL MODE KILL SWITCH ACTIVATED. Deactivating Ollama pathways...")
+        print(
+            "BOARDROOM: LOCAL MODE KILL SWITCH ACTIVATED. Deactivating Ollama pathways..."
+        )
         ai_service.KILL_LOCAL_MODE = True
-        return {"status": "deactivated", "message": "Local Mode has been forcibly deactivated. The Boardroom will now rely on Cloud intelligence."}
+        return {
+            "status": "deactivated",
+            "message": "Local Mode has been forcibly deactivated. The Boardroom will now rely on Cloud intelligence.",
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

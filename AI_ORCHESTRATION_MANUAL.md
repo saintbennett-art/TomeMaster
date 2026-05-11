@@ -41,4 +41,4 @@ While a mission is active, monitor the **Resurrection Dashboard**:
 ---
 
 > [!IMPORTANT]
-> **The Golden Anchor**: Always ensure **Gemini 3.1 Pro** is assigned as either the Boardroom Lead or the Failover Fallback. Its massive context window is the final safety net for the 400-page manuscript.
+> **The Golden Standard**: Always ensure **Gemini 3.1 Pro** is assigned as either the Boardroom Lead or the Failover Fallback. Its massive context window is the final safety net for the 400-page manuscript.
