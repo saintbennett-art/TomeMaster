@@ -20,7 +20,7 @@ DEFAULT_SETTINGS = {
         "COPY_EDITOR": "claude-3-5-sonnet-20241022",
         "TRANSCRIBER_LEAD": "gemini-3-flash-preview",
     },
-    "preferences": {"theme": "dark", "auto_stitch": True, "language": "en"},
+    "preferences": {"theme": "dark", "auto_stitch": True, "language": "en", "pii_scrub": False},
 }
 
 
@@ -33,7 +33,7 @@ def get_settings_path():
 _PERMITTED_TOP_KEYS = set(DEFAULT_SETTINGS.keys())
 _PERMITTED_API_KEYS = {"openai", "gemini", "groq", "anthropic", "slot_primary", "slot_specialist", "slot_velocity"}
 _PERMITTED_MODEL_KEYS = {"vision", "logic", "analysis", "NARRATIVE_ARCHITECT", "COPY_EDITOR", "TRANSCRIBER_LEAD"}
-_PERMITTED_PREF_KEYS = {"theme", "auto_stitch", "language"}
+_PERMITTED_PREF_KEYS = {"theme", "auto_stitch", "language", "pii_scrub"}
 
 
 def _validate_settings(data: dict) -> dict:
@@ -152,42 +152,67 @@ def get_preferred_model(category: str, provider: str = None):
     return model
 
 
+def _infer_provider_from_model(model: str) -> str:
+    """[ROUTING HEURISTIC]: Maps a model id to its provider brand.
+
+    Ordering matters — Groq's llama/mixtral/gemma families are checked
+    explicitly so they don't fall through to the gemini default.
+    """
+    if not model:
+        return "gemini"
+    m = model.lower()
+    if "gpt" in m or m.startswith("o1") or m.startswith("o3"):
+        return "openai"
+    if "claude" in m:
+        return "anthropic"
+    # Groq portfolio: llama-*, mixtral-*, gemma-*, meta-llama/*, etc.
+    if "llama" in m or "mixtral" in m or m.startswith("gemma") or "meta-llama" in m:
+        return "groq"
+    if "gemini" in m:
+        return "gemini"
+    return "gemini"
+
+
 def get_model_for_role(role: str) -> dict:
     """[SOVEREIGN MAPPING]: Maps an industrial role to its commissioned model and gateway key."""
     settings = load_settings()
-    
-    # 1. Map role to category
+
+    # 1. Map role to category. NARRATIVE_ARCHITECT is the structural editor —
+    # it needs the analysis (Gemini 3.1 Pro) tier, not vision. Vision is for
+    # OCR/transcription only.
     category_map = {
-        "NARRATIVE_ARCHITECT": "vision",
-        "COPY_EDITOR": "analysis",
-        "TRANSCRIBER_LEAD": "vision",   # Vision required for manuscript OCR
-        "Editor-in-Chief": "analysis",
-        "Sovereign Liaison": "logic"
+        "NARRATIVE_ARCHITECT": "analysis",
+        "COPY_EDITOR":         "analysis",
+        "MARKETING_ANALYST":   "logic",
+        "SOVEREIGN_LIAISON":   "logic",
+        "TRANSCRIBER_LEAD":    "vision",   # Vision required for manuscript OCR
+        "OCR_ENGINE":          "vision",
+        "Editor-in-Chief":     "analysis",
+        "Sovereign Liaison":   "logic",
     }
-    
+
     category = category_map.get(role, "logic")
-    model = get_preferred_model(category)
-    
-    # 2. Determine provider based on model prefix or slot
-    # (Simple logic: if gemini is in name, use gemini provider)
-    provider = "gemini"
-    if "gpt" in model.lower() or "claude" in model.lower():
-        provider = "openai" if "gpt" in model.lower() else "anthropic"
-        
+
+    # 2. Prefer the user's explicit role-level pinning if set; otherwise category default.
+    models_pref = settings.get("preferred_models", {})
+    model = models_pref.get(role) or get_preferred_model(category)
+
+    # 3. Determine provider from the model id (handles Groq llama/mixtral/gemma).
+    provider = _infer_provider_from_model(model)
     key = get_api_key(provider)
-    
-    # 3. Construct gateway config
-    # [CERTIFICATION]: The URL is derived from the provider, keeping the service brand-agnostic.
+
+    # 4. Construct gateway config. URL is derived from the provider so the
+    # dispatcher stays brand-agnostic.
     urls = {
-        "gemini": "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "openai": "https://api.openai.com/v1/",
-        "anthropic": "https://api.anthropic.com/v1/", # Placeholder for gateway bridge
-        "groq": "https://api.groq.com/openai/v1/"
+        "gemini":    "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "openai":    "https://api.openai.com/v1/",
+        "anthropic": "https://api.anthropic.com/v1/",  # adapter switches to /messages
+        "groq":      "https://api.groq.com/openai/v1/",
     }
-    
+
     return {
-        "url": urls.get(provider, urls["gemini"]),
-        "key": key,
-        "model": model,
-        "provider": provider
+        "url":      urls.get(provider, urls["gemini"]),
+        "key":      key,
+        "model":    model,
+        "provider": provider,
     }

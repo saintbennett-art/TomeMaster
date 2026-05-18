@@ -31,9 +31,15 @@ class PIIScrubberService:
             return anonymized_result.text
             
         except Exception as e:
-            siem_logger.error("PII Scrubbing failed. Blocking outbound text.", extra={"event_type": "DATA_LEAK_PREVENTION"})
-            # Fail closed: If we can't guarantee it's clean, we don't send it.
-            raise ValueError("Govt Compliance Block: PII Scrubbing failed on this chunk.") from e
+            # The scrubber is opt-in (gated by preferences.pii_scrub). When the
+            # caller has explicitly turned it on but the engine itself faults,
+            # surface the failure to the caller rather than corrupting prose.
+            # Logged for SIEM; the call stack decides whether to abort.
+            siem_logger.error(
+                f"PII Scrubbing engine failure: {e}",
+                extra={"event_type": "DATA_LEAK_PREVENTION"},
+            )
+            raise ValueError(f"PII Scrubbing engine failure: {e}") from e
 
 # Singleton instance
 pii_scrubber = PIIScrubberService()
