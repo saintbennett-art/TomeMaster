@@ -55,6 +55,22 @@ def save_vault_to_env(keys: Dict[str, str]) -> bool:
             if val:
                 os.environ[env_var] = val
 
+        # [VAULT UNIFICATION]: The AI dispatcher resolves keys from settings.json
+        # via settings_service.get_api_key(). Without mirroring here, the .env
+        # write succeeds but every gateway call still 401s on a stale vault.
+        try:
+            from .settings_service import load_settings, save_settings
+            current = load_settings()
+            existing = current.get("api_keys", {}) or {}
+            for provider in ALLOWED_VAULT_KEYS:
+                val = keys.get(provider, "").strip()
+                if val:
+                    existing[provider] = val
+            save_settings({"api_keys": existing})
+        except Exception as sync_err:
+            # Mirror failure is loud but non-fatal: .env + os.environ still work.
+            print(f"VAULT STEWARD WARN: settings.json mirror failed: {sync_err}")
+
         return True
     except Exception as e:
         print(f"VAULT STEWARD ERROR: Persistence Failure: {e}")
