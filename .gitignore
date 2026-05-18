@@ -28,6 +28,8 @@ project_ledger.json
 backend/.env
 backend/*.lic
 *.lic
+backend/settings.json
+backend/settings.json.bak
 
 # OS generated files
 .DS_Store
