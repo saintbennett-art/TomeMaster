@@ -1,3 +1,21 @@
+"""
+⚠️  DEPRECATED — vault_steward.py
+This module writes API keys to .env files, which contradicts the
+vault-only architecture defined in MASTER_DESIGN.md.
+
+The canonical vault path is: src/tomemaster/vault_loader.py
+
+This file is kept temporarily because backend/routers/analysis.py
+imports save_vault_to_env() and check_vault_presence().
+TODO: Migrate analysis router to use vault_loader.py, then delete this file.
+"""
+import warnings
+warnings.warn(
+    "vault_steward is deprecated. Use src/tomemaster/vault_loader.py instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import os
 from typing import Dict
 
