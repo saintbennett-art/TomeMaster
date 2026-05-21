@@ -1,0 +1,23 @@
+chapterize_manuscript:
+  description: >
+    Analyze the following raw manuscript text:
+    
+    {text}
+    
+    Insert clean Markdown chapter breaks and titles. Fix pacing or layout inconsistencies if needed.
+  expected_output: >
+    A structured markdown manuscript with clear chapter demarcations.
+
+marketing_analysis:
+  description: >
+    Based on the chapterized text, write a compelling back-cover blurb and outline 
+    key promotional hooks.
+  expected_output: >
+    A marketing report containing a blurb, target demographic, and campaign ideas.
+
+pacing_review:
+  description: >
+    Read the chapterized structural output and map out the narrative arc. Identify 
+    emotional beats and any lulls in the pacing.
+  expected_output: >
+    A pacing matrix report outlining the narrative flow and emotional speed.
