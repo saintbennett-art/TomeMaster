@@ -20,7 +20,7 @@ def check_master_password(password: str) -> bool:
         return False
     return password.strip() == master
 
-SECRET_SALT = "TomeMaster-2026-StandardConsulting-Salt"
+SECRET_SALT = "TomeMaster-2026-BennettConsulting-Salt"
 
 def verify_product_key(machine_id: str, key: str) -> bool:
     """Mathematical verification against the developer's offline keygen algorithm."""
