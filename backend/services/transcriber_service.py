@@ -423,9 +423,9 @@ def pick_directory() -> str:
         print(f"Native Picker Failure: {e}")
         return None
 
-from celery_app import app as celery_app
-
-@celery_app.task(name='services.transcriber_service.run_transcription_job')
+# [DEPRECATED]: celery_app removed during CrewAI migration. Transcription is now
+# triggered via TomeMasterPipeline in src/tomemaster/main.py. This function is
+# retained as legacy reference only.
 def run_transcription_job(api_key: str, folder_path: str, provider: str = "openai", reset_cache: bool = False, mode: str = "batch", model_override: str = None, fallback_provider: str = None, fallback_model: str = None):
     if not model_override:
         raise ValueError(f"Directorial Error: No model selected for {provider}. Please open the Vault and choose a commissioned model.")

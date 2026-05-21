@@ -2,8 +2,9 @@ import os
 import json
 import threading
 
-# [SOVEREIGN SETTINGS]: Standard filename for persistent application configuration
-SETTINGS_FILE = "settings.json"
+# [SOVEREIGN SETTINGS]: All persistent configuration is now routed through
+# the hardware-encrypted vault (src/tomemaster/vault_loader.py -> settings.enc).
+# The legacy plaintext settings.json has been permanently retired.
 SETTINGS_LOCK = threading.Lock()
 
 # Default empty schema for the TomeMaster Vault
@@ -23,11 +24,6 @@ DEFAULT_SETTINGS = {
     "preferences": {"theme": "dark", "auto_stitch": True, "language": "en", "pii_scrub": False},
 }
 
-
-def get_settings_path():
-    """Returns the absolute path to the settings vault in the backend root."""
-    backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(backend_root, SETTINGS_FILE)
 
 
 _PERMITTED_TOP_KEYS = set(DEFAULT_SETTINGS.keys())
@@ -60,25 +56,27 @@ def _validate_settings(data: dict) -> dict:
 
 
 def load_settings():
-    """[VAULT HYDRATION]: Recovers settings from disk or returns defaults if missing."""
-    path = get_settings_path()
-    if not os.path.exists(path):
-        return DEFAULT_SETTINGS
-
+    """[VAULT HYDRATION]: Recovers settings securely from the hardware-locked vault."""
+    import sys
+    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
+        from src.tomemaster.vault_loader import load_vault
+        raw = load_vault()
+        if not raw:
+            return DEFAULT_SETTINGS
         return _validate_settings(raw)
     except Exception as e:
-        print(f"SETTINGS ERROR: Failed to hydrate vault: {e}")
+        print(f"SETTINGS ERROR: Failed to hydrate from secure vault: {e}")
         return DEFAULT_SETTINGS
 
 
 def save_settings(new_settings):
-    """[VAULT SEALING]: Commits new settings to the persistent backend storage."""
-    path = get_settings_path()
-    with SETTINGS_LOCK:
-        try:
+    """[VAULT SEALING]: Encrypts and commits new settings to the hardware-locked storage."""
+    import sys
+    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+    try:
+        from src.tomemaster.vault_loader import save_vault
+        with SETTINGS_LOCK:
             current = load_settings()
             validated = _validate_settings(new_settings)
             for key in validated:
@@ -87,17 +85,11 @@ def save_settings(new_settings):
                 else:
                     current[key] = validated[key]
 
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(current, f, indent=4)
-
-            backup_path = path + ".bak"
-            with open(backup_path, "w", encoding="utf-8") as f:
-                json.dump(current, f, indent=4)
-
+            save_vault(current)
             return True
-        except Exception as e:
-            print(f"SETTINGS ERROR: Failed to seal vault: {e}")
-            return False
+    except Exception as e:
+        print(f"SETTINGS ERROR: Failed to seal secure vault: {e}")
+        return False
 
 
 def get_api_key(provider):

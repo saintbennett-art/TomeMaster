@@ -1,0 +1,14 @@
+transcribe_page:
+  description: >
+    Review the attached handwritten manuscript page in {filename}. 
+    Extract all text verbatim. Fix clear spelling mistakes, but leave the grammar exactly as written.
+  expected_output: >
+    A clean, plain-text document of the transcribed page with clear paragraph breaks.
+
+compile_manuscript:
+  description: >
+    Review the transcriptions from all previous asynchronous tasks. 
+    Compile them into a single, cohesive document in chronological order. 
+    Do not change any of the text.
+  expected_output: >
+    A single text string containing the full transcribed manuscript.
