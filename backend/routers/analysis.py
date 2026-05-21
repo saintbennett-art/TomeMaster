@@ -133,7 +133,7 @@ class SettingsUpdateRequest(BaseModel):
 
 @router.post("/settings")
 async def update_settings(req: SettingsUpdateRequest):
-    """[SOVEREIGN PERSIST]: Saves auto-discovered model assignments to settings.json."""
+    """[SOVEREIGN PERSIST]: Saves auto-discovered model assignments to the encrypted vault."""
     from services import settings_service
     update = {}
     if req.preferred_models:
