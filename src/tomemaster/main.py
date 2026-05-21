@@ -14,7 +14,7 @@ import hashlib
 
 def generate_valid_license():
     machine_id = get_machine_fingerprint()
-    combined = f"{machine_id}::TomeMaster-2026-StandardConsulting-Salt"
+    combined = f"{machine_id}::TomeMaster-2026-BennettConsulting-Salt"
     full_hash = hashlib.sha256(combined.encode()).hexdigest()
     prefix = full_hash[:12].upper()
     return f"TOME-{prefix[:4]}-{prefix[4:8]}-{prefix[8:]}"
