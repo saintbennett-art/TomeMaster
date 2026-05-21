@@ -32,22 +32,22 @@ class TomeMasterPipeline(Flow[TomeMasterState]):
 
     @start()
     def setup_security(self):
-        print("🔐 Phase 0: Initializing Sovereign Security & Loading Vault...")
+        print("\U0001f510 Phase 0: Initializing Sovereign Security & Loading Vault...")
         if not inject_keys_to_env():
-            print("❌ CRITICAL: Vault not found. Please run config_wizard.py first.")
+            print("\u274c CRITICAL: Vault not found. Please run config_wizard.py first.")
             sys.exit(1)
             
         vault = load_vault()
         if vault.get('license_key') == generate_valid_license():
-            print("✅ PRO LICENSE CONFIRMED. Watermarks disabled.")
+            print("\u2705 PRO LICENSE CONFIRMED. Watermarks disabled.")
             self.state.is_freemium = False
         else:
-            print("⚠️ RUNNING IN FREEMIUM MODE. All outputs will be watermarked.")
+            print("\u26a0\ufe0f RUNNING IN FREEMIUM MODE. All outputs will be watermarked.")
             self.state.is_freemium = True
 
     @listen(setup_security)
     def run_transcription(self):
-        print(f"🔍 Phase 1: Initiating Asynchronous Batch Transcription on {self.state.folder_path}...")
+        print(f"\U0001f50d Phase 1: Initiating Asynchronous Batch Transcription on {self.state.folder_path}...")
         # Kick off the isolated transcription sub-system with dynamic folder path
         tc = TranscriptionCrew()
         my_crew = tc.crew()
@@ -71,16 +71,21 @@ class TomeMasterPipeline(Flow[TomeMasterState]):
     @listen(run_transcription)
     def run_chapterization(self):
         """Phase 2: Structural Editor — must complete before downstream specialists."""
-        print("📖 Phase 2: Launching Structural Editor for Chapterization...")
+        print("\U0001f4d6 Phase 2: Launching Structural Editor for Chapterization...")
         from tomemaster.crews.publishing_crew.publishing_crew import PublishingCrew
         pc = PublishingCrew()
         editor_agent = pc.editor()
         chapter_task = pc.chapterize_manuscript()
         from crewai import Crew, Process
-        Crew(agents=[editor_agent], tasks=[chapter_task], process=Process.sequential, verbose=True).kickoff(
-            inputs={"text": self.state.raw_manuscript}
-        )
-        print("✅ Chapterization complete.")
+        result = Crew(
+            agents=[editor_agent], tasks=[chapter_task],
+            process=Process.sequential, verbose=True
+        ).kickoff(inputs={"text": self.state.raw_manuscript})
+
+        # [N1 FIX]: Capture output so downstream crews receive the chapterized text
+        self.state.chapterized_book = result.raw
+        print("\u2705 Chapterization complete.")
+        return self.state.chapterized_book
 
     # --- THE BOARDROOM FAN-OUT (Parallel Execution per Gemini Blueprint) ---
     # Both methods listen to the same trigger. CrewAI executes them simultaneously.
@@ -88,33 +93,46 @@ class TomeMasterPipeline(Flow[TomeMasterState]):
     @listen(run_chapterization)
     def run_marketing_analysis(self):
         """Phase 3A: Marketing Director generates assets in parallel."""
-        print("📢 Phase 3A: Launching Marketing Strategy Loop...")
+        print("\U0001f4e2 Phase 3A: Launching Marketing Strategy Loop...")
         from tomemaster.crews.publishing_crew.publishing_crew import PublishingCrew
         pc = PublishingCrew()
         director_agent = pc.director()
         marketing_task = pc.marketing_analysis()
         from crewai import Crew, Process
-        Crew(agents=[director_agent], tasks=[marketing_task], process=Process.sequential, verbose=True).kickoff()
+        # [N1 FIX]: Pass the chapterized text so the task description gets populated
+        result = Crew(
+            agents=[director_agent], tasks=[marketing_task],
+            process=Process.sequential, verbose=True
+        ).kickoff(inputs={"text": self.state.chapterized_book})
+        self.state.marketing_blurb = result.raw
+        return self.state.marketing_blurb
 
     @listen(run_chapterization)
     def run_pacing_analysis(self):
         """Phase 3B: Pacing Analyst generates report in parallel."""
-        print("📈 Phase 3B: Launching Emotional Pacing Review...")
+        print("\U0001f4c8 Phase 3B: Launching Emotional Pacing Review...")
         from tomemaster.crews.publishing_crew.publishing_crew import PublishingCrew
         pc = PublishingCrew()
         analyst_agent = pc.analyst()
         pacing_task = pc.pacing_review()
         from crewai import Crew, Process
-        Crew(agents=[analyst_agent], tasks=[pacing_task], process=Process.sequential, verbose=True).kickoff()
+        # [N1 FIX]: Pass the chapterized text so the task description gets populated
+        result = Crew(
+            agents=[analyst_agent], tasks=[pacing_task],
+            process=Process.sequential, verbose=True
+        ).kickoff(inputs={"text": self.state.chapterized_book})
+        self.state.pacing_report = result.raw
+        return self.state.pacing_report
 
+    # [N2 VERIFIED]: @listen with multiple args uses AND semantics in CrewAI Flows —
+    # finalize_outputs fires only after BOTH run_marketing_analysis AND run_pacing_analysis complete.
     @listen(run_marketing_analysis, run_pacing_analysis)
     def finalize_outputs(self):
-        print("✨ Finalizing Artifacts...")
+        print("\u2728 Finalizing Artifacts...")
         if self.state.is_freemium:
-            print("💧 Applying Freemium Watermarks to outputs...")
+            print("\U0001f4a7 Applying Freemium Watermarks to outputs...")
             watermark = "\n\n" + "="*50 + "\nPRODUCED WITH TOMEMASTER FREEMIUM\nPurchase a Pro License to remove this watermark.\n" + "="*50 + "\n"
             
-            # [N2 FIX]: Resolve output_dir relative to project root, not CWD
             project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
             output_dir = os.path.join(project_root, "output")
             if os.path.exists(output_dir):
@@ -124,7 +142,7 @@ class TomeMasterPipeline(Flow[TomeMasterState]):
                         with open(path, "a", encoding="utf-8") as f:
                             f.write(watermark)
 
-        print("🚀 TomeMaster execution successfully completed.")
+        print("\U0001f680 TomeMaster execution successfully completed.")
 
 if __name__ == "__main__":
     pipeline = TomeMasterPipeline()
