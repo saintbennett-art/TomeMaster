@@ -1283,14 +1283,16 @@ def start_transcription_background(api_key: str, provider: str, folder_path: str
             "stream_buffer": []
         })
     
-    # [CERTIFICATION GRADE]: Dispatched to the distributed Celery worker fleet.
-    # This prevents local resource exhaustion and ensures process resilience.
-    from celery_app import app as celery_app
-    celery_app.send_task(
-        'services.transcriber_service.run_transcription_job',
-        args=[api_key, folder, provider, reset_cache, mode, model],
-        kwargs={"fallback_provider": fallback_provider, "fallback_model": fallback_model}
+    # [DEPRECATED]: Legacy Celery dispatch replaced with direct threaded execution.
+    # CrewAI pipeline handles its own concurrency via async tasks.
+    import threading as _threading
+    job_thread = _threading.Thread(
+        target=run_transcription_job,
+        args=(api_key, folder, provider, reset_cache, mode, model),
+        kwargs={"fallback_provider": fallback_provider, "fallback_model": fallback_model},
+        daemon=True
     )
+    job_thread.start()
     
     return True, folder
 
