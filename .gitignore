@@ -34,3 +34,18 @@ backend/settings.json.bak
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# License keygen (secret salt — never commit)
+TomeMaster_Keygen.py
+
+# Encrypted vault / session files
+settings.enc
+*.enc
+.tome_session.json
+api_usage_log.jsonl
+
+# Build reference (large conversation log)
+Gemini_history.txt
+
+# Windows artifacts
+*.lnk
