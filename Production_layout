@@ -1,0 +1,19 @@
+tomemaster/
+├── .env                          # API credentials (KEYS vault data)
+├── pyproject.toml                # Project dependencies (managed via uv)
+├── src/
+│   └── tomemaster/
+│       ├── __init__.py
+│       ├── main.py               # The Core Flow (@start, @listen, state management)
+│       └── crews/                # Separate directories for specialized teams
+│           ├── transcription/
+│           │   ├── transcription_crew.py
+│           │   └── config/
+│           │       ├── agents.yaml
+│           │       └── tasks.yaml
+│           └── publishing/
+│               ├── publishing_crew.py
+│               └── config/
+│                   ├── agents.yaml
+│                   └── tasks.yaml
+└── test_batch/                   # Your live local image directory

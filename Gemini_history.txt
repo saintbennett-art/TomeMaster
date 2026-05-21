@@ -1,0 +1,1313 @@
+Stepping up to "pro thinking" means abandoning the concept of prompt engineering entirely. In 2026, building software with advanced intelligence is about agentic orchestration. You aren't asking an LLM to write a snippet; you are configuring an autonomous loop that can index a file system, run a terminal, read compiler errors, and self-correct.
+
+The modern developer stack relies on specialized environments built for durable execution, state management, and multi-repo reasoning.
+
+1. The Orchestration Runtimes (The "Boardroom")
+If you are building custom software pipelines, you don't use a single chat window—you define a specialized team of agents and let them work collaboratively.
+
+LangGraph & CrewAI: The industry standards for multi-agent architecture. CrewAI handles role-based tasking (e.g., assigning distinct "Architect" and "Senior Dev" personas to review each other's work), while LangGraph provides the durable, stateful execution needed to scale those workflows reliably across long horizons.
+
+The Protocol Layer (MCP): The Model Context Protocol (MCP) has become the backbone of these systems. Instead of writing custom plugins, MCP allows your agent boardroom to securely interface with your local file systems, databases, and APIs natively.
+
+2. Agent-First IDEs (The Visual Workspace)
+For engineers who want deep visual integration, these tools embed the agent loop directly into the file tree, fundamentally replacing traditional editors.
+
+Google Antigravity 2.0: Built explicitly for multi-agent parallel workspaces. You can spin up specialized sub-agents with cross-platform terminal sandboxing and hardened Git policies to orchestrate complex architectural builds without compromising your local environment.
+
+Cursor & Windsurf: The heavyweights of the VS Code forks. Cursor's primary advantage is its deep multi-repo reasoning, allowing it to track logic across highly complex projects. Windsurf relies on its "Cascade" feature, which automatically loads context across massive enterprise codebases so you spend less time manually tagging files.
+
+3. Terminal-Native Loops (Headless Execution)
+For developers who prefer to stay in the CLI and want the AI to handle the execution autonomously in the background.
+
+Claude Code: Anthropic's terminal-native agent powered by Opus 4.7. You anchor it to a working directory, give it a goal, and it executes a continuous tool-using loop—reading, writing, executing shell commands, and committing to Git until the feature is built or the bug is resolved.
+
+Aider & Cline: The best-in-class open-source alternatives. They act as Git-aware command-line agents, allowing you to plug in whatever underlying model you prefer to drive the execution loop.
+
+Before choosing a stack, you need to align the tool's architecture with how you prefer to handle context, debugging, and execution boundaries.
+
+
+
+Walk through setting up an agent boardroom
+
+Yes
+
+Walk me through the architecture of setting up a multi-agent boardroom using CrewAI and MCP for a custom software pipeline.
+
+Setting up a multi-agent boardroom requires configuring your environment so your autonomous agents can communicate natively with your file system and external tools. Using the Model Context Protocol (MCP) standardizes this, meaning you don't have to write custom integrations for every new capability.  
+CrewAI Documentation
++ 1
+
+Here is how to structure a CrewAI pipeline that leverages MCP for a custom software build like Manuscript Engine:
+
+While the setup above brings external MCP tools into your agent boardroom, you can also do the reverse: Turning Crew Agents Into An MCP Server walks through how to deploy your finished CrewAI flow as its own external MCP server, allowing other interfaces to call your custom pipeline natively.
+
+1
+Establish the Runtime Environment
+Dependencies and Credentials
+First, secure the necessary libraries to enable the protocol. Because you centralize your credentials in your KEYS vault, grab your required API keys (like Claude or OpenAI) and any tokens needed for remote MCP servers from there, and load them into your .env file.
+
+Bash
+    uv add crewai mcp
+    uv pip install 'crewai-tools[mcp]'
+    ```
+  
+  
+    CrewAI recently introduced a Domain Specific Language (DSL) that makes connecting MCP servers incredibly simple. Instead of building custom tool classes, you define the server endpoint directly. 
+
+    
+python
+import os
+from crewai import Agent
+
+# Example: A local filesystem MCP so agents can read/write the codebase
+local_fs_mcp = "npx -y @modelcontextprotocol/server-filesystem ./project_root"
+  
+  
+    Define the specialized personas for your pipeline. For an application architecture, you typically need an architect to plan the logic and a developer to execute it. Pass the `mcps` array to any agent that requires direct access to those external capabilities.
+
+    
+python
+architect = Agent(
+role="System Architect",
+goal="Design the AI IDE and document formatting structures",
+backstory="Expert in scalable software architecture and planning.",
+mcps=[local_fs_mcp],
+verbose=True
+)
+
+developer = Agent(
+    role="Senior Developer",
+    goal="Execute code generation and file system modifications",
+    backstory="Expert Python engineer who writes production-ready code.",
+    mcps=[local_fs_mcp],
+    verbose=True
+)
+  
+  
+    Bind the agents to specific, sequential tasks. The tasks dictate the execution flow—the architect outlines the component, and the developer uses the MCP filesystem tool to physically write the code to your directory.
+
+    
+python
+from crewai import Task
+
+plan_task = Task(
+    description="Analyze the requested feature and map out the required file changes.",
+    expected_output="A step-by-step implementation plan with file paths.",
+    agent=architect
+)
+
+execute_task = Task(
+    description="Using the plan, write the required code and save it to the local directory using your filesystem tools.",
+    expected_output="Confirmation of successful file writes.",
+    agent=developer
+)
+  
+  
+    Wrap the agents and tasks into a Crew and kick off the process. The Crew engine manages the state, handles the execution of tools through the MCP servers in the background, and routes the outputs between your agents until the tasks are complete.
+
+    
+python
+from crewai import Crew, Process
+
+dev_crew = Crew(
+    agents=[architect, developer],
+    tasks=[plan_task, execute_task],
+    process=Process.sequential
+)
+
+# Begin the autonomous loop
+result = dev_crew.kickoff()
+print(result)
+  
+
+
+How do I securely connect CrewAI to a remote MCP server over HTTP or SSE instead of using a local Stdio connection?
+
+Connecting CrewAI to a remote MCP server requires swapping the local Stdio transport for either Server-Sent Events (SSE) or Streamable HTTP. Both methods allow your agents to communicate with external servers over a network.
+
+CrewAI's recent Domain Specific Language (DSL) update makes this straightforward. Instead of running a local CLI command, you pass the network URL and your authentication headers directly into the agent's mcps array.
+
+Here is how to securely configure both transport types.
+
+1. The SSE Transport (Real-Time Streaming)
+Server-Sent Events provide a unidirectional, real-time stream from the remote server to your CrewAI agent. It is the most common transport for remote MCP servers.
+
+To secure the connection, always use https:// and pass your API keys or tokens through the headers dictionary.
+
+Python
+import os
+from crewai import Agent
+from crewai.mcp import MCPServerSSE
+
+# Securely load your credential from the environment (or your KEYS vault)
+remote_token = os.getenv("REMOTE_MCP_TOKEN")
+
+# Configure the SSE connection
+remote_sse_server = MCPServerSSE(
+    url="https://stream.example.com/mcp/sse",
+    headers={"Authorization": f"Bearer {remote_token}"},
+    cache_tools_list=True # Caches the tool schema to speed up agent execution
+)
+
+# Bind the server to the agent
+researcher = Agent(
+    role="Data Analyst",
+    goal="Analyze remote datasets securely",
+    backstory="Expert in securely handling external data streams.",
+    mcps=[remote_sse_server],
+    verbose=True
+)
+2. The Streamable HTTP Transport
+If the remote server relies on standard HTTP request-response patterns (often utilized for heavier, bi-directional API payloads), you will use the HTTP configuration.
+
+Python
+import os
+from crewai import Agent
+from crewai.mcp import MCPServerHTTP
+
+remote_token = os.getenv("REMOTE_MCP_TOKEN")
+
+# Configure the HTTP connection
+remote_http_server = MCPServerHTTP(
+    url="https://api.example.com/mcp",
+    headers={"Authorization": f"Bearer {remote_token}"},
+    streamable=True, # Enables streaming over the HTTP connection
+    cache_tools_list=True
+)
+
+developer = Agent(
+    role="Remote Systems Engineer",
+    goal="Execute code via remote server tools",
+    backstory="Specialist in distributed system execution.",
+    mcps=[remote_http_server],
+    verbose=True
+)
+3. Advanced Routing (Multiple Servers)
+You can mix and match transports natively. If your pipeline requires an agent to read a local file (Stdio) and then query a remote database (SSE), you simply array them together in the agent's definition.
+
+Python
+from crewai.mcp import MCPServerStdio, MCPServerSSE
+
+# Local filesystem access
+local_fs = MCPServerStdio(
+    command="npx",
+    args=["-y", "@modelcontextprotocol/server-filesystem", "./project_root"]
+)
+
+# Remote database access
+remote_db = MCPServerSSE(
+    url="https://db.example.com/mcp/sse",
+    headers={"Authorization": f"Bearer {db_token}"}
+)
+
+# The agent automatically discovers and routes between tools on both servers
+full_stack_agent = Agent(
+    role="Full Stack Architect",
+    goal="Read local architectures and query remote databases",
+    backstory="Expert at bridging local logic and remote data.",
+    mcps=[local_fs, remote_db]
+)
+Security Note: If you are building the remote MCP server yourself (rather than just connecting to one), ensure the server is configured to validate Origin headers on incoming SSE connections to prevent DNS rebinding attacks, and enforce PKCE validation if using OAuth flows.
+
+Explain in terms i can understand to implement multi agents on different parts of the manuscript project
+
+Instead of forcing one AI to try and do everything at once, building a multi-agent system for Manuscript Engine is exactly like staffing a real publishing house. You are creating a digital boardroom where each AI has a narrow, highly specialized job.
+
+Think about the workflow required to process a massive project—like taking 480 handwritten pages of a book like This Close and turning it into a polished, publishable file for Ron. If you ask a single, standard AI to transcribe the messy handwriting, edit the grammar, build the table of contents, and format the margins all in one prompt, it will lose focus, hallucinate, and make mistakes.
+
+With a multi-agent setup, you break that project into specialized desks.
+
+The Manuscript Boardroom
+Here is how you would structure the specific agents for your pipeline:
+
+1. The Scribe (The Transcription Agent)
+The Job: Getting the words on the page.
+
+The Setup: You give this agent the ability to read images. When photos of handwritten pages come in, the Scribe's only job is to accurately extract the text and fix obvious spelling errors without altering the author's original voice.
+
+2. The Structural Editor (The Logic Agent)
+The Job: Organizing the book.
+
+The Setup: This agent doesn't care about handwriting. It just waits for the Scribe to finish. Once it receives the clean text, it reviews the overall flow, defines the table of contents, and ensures the chapter breaks make narrative sense.
+
+3. The Typesetter (The Formatting Agent)
+The Job: Making it look professional.
+
+The Setup: This agent takes the finalized text from the Structural Editor. It applies the correct margins, page breaks, and chapter headers so the manuscript is perfectly prepped and ready for its final cover design.
+
+How the Handoff Works
+You don't have to manually pass the text between them. You write a framework (using a tool like CrewAI) that acts as the project manager. You hand the manager a batch of raw pages and hit "Go."
+
+1
+Step 1: Transcription
+The manager hands the raw photo files to the Scribe. The Scribe types them out into plain text and hands the document back to the manager.
+
+2
+Step 2: Editing
+The manager takes that typed text and hands it to the Structural Editor, who organizes it into cohesive chapters.
+
+3
+Step 3: Formatting
+The manager takes the chapterized text and hands it to the Typesetter for final layout and formatting.
+
+
+By giving each agent a narrow focus, the quality of the final book is incredibly high. And if something goes wrong—say, the margins are off—you don't have to troubleshoot the entire system. You just go into the boardroom and tweak the instructions for the Typesetter.
+
+Want to see the plain-English instructions for the Scribe agent?
+
+Yes
+
+Show me the exact plain-English setup to create the Scribe transcription agent for Manuscript Engine.
+
+Here is the exact setup to create the Scribe for Manuscript Engine.
+
+In CrewAI, programming an agent doesn't require complex math or dense logic. You are essentially just writing a highly specific job description in plain English, broken down into three main traits: the Role, the Goal, and the Backstory.
+
+Here is what the actual code looks like to define the agent responsible for reading the handwritten pages of This Close:
+
+Python
+from crewai import Agent, Task
+
+# 1. Define the Agent (The "Who")
+scribe_agent = Agent(
+    role="Senior Manuscript Transcriber",
+    
+    goal="Accurately transcribe handwritten pages of the manuscript 'This Close' into clean, readable digital text without altering the author's original voice.",
+    
+    backstory=(
+        "You are a meticulous archivist and digital transcriber. "
+        "Your expertise is reading difficult, cursive handwriting and converting it perfectly to text. "
+        "You know that preserving the original intent of the author is paramount. "
+        "You fix obvious spelling errors to make the text legible, but you never change the "
+        "style, tone, phrasing, or sentence structure of the original work."
+    ),
+    
+    allow_delegation=False, # The Scribe does its own work; it doesn't pass it off
+    verbose=True
+)
+Why this specific phrasing matters
+The Backstory sets the boundaries: By explicitly stating "never change the style, tone, phrasing," you are putting guardrails on the AI. Standard AI models love to "helpfully" rewrite things to sound more professional. This backstory forces the Scribe to act strictly as a typist, preserving the raw voice.
+
+The Goal is narrow: It isn't told to "write a book." It is specifically told to convert handwriting to digital text.
+
+Giving the Scribe a Task
+Once the agent exists, you have to give it a specific assignment (a Task). The task is the actual work order you hand to the Scribe when a new batch of photos is ready.
+
+Python
+# 2. Define the Task (The "What")
+transcribe_batch = Task(
+    description=(
+        "Review the provided batch of photographic image files containing handwritten pages. "
+        "Extract all text verbatim. Fix clear spelling mistakes, but leave the grammar exactly as written."
+    ),
+    
+    expected_output="A clean, plain-text document of the transcribed pages with clear paragraph breaks.",
+    
+    agent=scribe_agent
+)
+With this setup, the Scribe knows exactly who it is, what it is doing, and what the final document should look like when it hands the work over to the Structural Editor.
+
+Want to give the Scribe eyes to read photos?
+
+Yes
+
+How do I configure a vision tool so the Scribe agent can actually read the photos of the handwritten manuscript pages?
+
+In 2026, you no longer have to cobble together third-party OCR (Optical Character Recognition) tools to get your agents to read images. CrewAI introduced native multimodality, meaning you can pass images directly to the underlying model (like GPT-4o or Claude 3.5 Sonnet) and let its built-in vision handle the heavy lifting.  
+CrewAI Documentation
+
+To give your Scribe eyes, you just need to enable a single flag on the agent and use the crewai_files package to hand the photo to the task.
+
+Here is the exact code to configure it.
+
+1. Enable Multimodality on the Scribe
+When defining your Scribe agent, you simply add multimodal=True. This automatically equips the agent with the necessary internal tools to process non-text content.  
+CrewAI Documentation
+
+Python
+from crewai import Agent
+
+scribe_agent = Agent(
+    role="Senior Manuscript Transcriber",
+    goal="Accurately transcribe handwritten pages into clean, readable digital text.",
+    backstory="You are an expert at reading difficult, cursive handwriting.",
+    multimodal=True,  # <-- This single line gives the agent vision capabilities
+    allow_delegation=False,
+    verbose=True
+)
+2. Attach the Photo to the Task
+Instead of just telling the agent a file path in plain text, you use the ImageFile class. This securely loads the photo and formats it exactly how the LLM needs to see it.
+
+You map the image to a variable name (like page_image) and inject that directly into the task description.
+
+Python
+from crewai import Task
+from crewai_files import ImageFile
+
+transcribe_task = Task(
+    description=(
+        "Review the attached handwritten manuscript page in {page_image}. "
+        "Extract all text verbatim. Fix clear spelling mistakes, but leave the grammar exactly as written."
+    ),
+    expected_output="A clean, plain-text document of the transcribed page with clear paragraph breaks.",
+    agent=scribe_agent,
+    
+    # Pass the actual image file directly into the task context
+    input_files={
+        "page_image": ImageFile(source="./raw_pages/page_01.jpg") 
+    }
+)
+3. The Legacy Method (For Older Setups)
+If you are running an older version of CrewAI that doesn't support the crewai_files package natively, you can explicitly attach the VisionTool from the toolkit.
+
+Python
+from crewai import Agent
+from crewai_tools import VisionTool
+
+# Initialize the standalone vision tool
+vision_tool = VisionTool()
+
+scribe_agent = Agent(
+    role="Senior Manuscript Transcriber",
+    goal="Accurately transcribe handwritten pages into clean digital text.",
+    backstory="You are an expert at reading difficult, cursive handwriting.",
+    tools=[vision_tool], # <-- Explicitly attach the tool here
+    allow_delegation=False,
+    verbose=True
+)
+The advantage of the native method (Option 1 & 2): It is significantly faster and handles large files much better. CrewAI will automatically compress and format the image according to the strict token limits of the specific model you are using, meaning the Scribe won't crash midway through reading a dense, messy page of handwriting.
+
+Cool how do i implement this on my TomeMaster project. And upgrade the existing tooling. Adding CrewAI for managing the process from transcribing hundreds or even thousands photos in directory to chapterizing the manuscript to engaging the boardroom of specialists to creat the highest level product ready for publication by the various publication houses and even self publishing. ie: multiple outputs while the user spends the time elsewhere. ie: the project is handled from start to completion of the multiple output including writing analysis reports. Emotional pacing analysis and report. Marketing management reports. And anything else the user wishes.
+
+Scaling the pipeline from a single page to the TomeMaster project—where you are dropping thousands of photos into a folder and walking away while the system builds the book and the marketing collateral—requires a shift in architecture.
+
+If you try to hand a standard AI agent 1,000 photos at once, its context window will collapse, it will hallucinate, and the API costs will skyrocket.
+
+To build TomeMaster, you must move away from a simple step-by-step list and use CrewAI Flows combined with Asynchronous Execution. This allows the system to process massive amounts of data in chunks, compile it, and then split the final workload among your specialized agents simultaneously.
+
+Here is the architectural blueprint for the TomeMaster pipeline:
+
+1
+Phase 1: Asynchronous Batch Transcription
+The Ingestion Engine
+Instead of passing the whole directory to the Scribe at once, you write a Python loop that reads the folder (e.g., ./raw_pages/). For every image it finds, it fires off a Task to the Scribe agent.
+
+Crucially, you set async_execution=True on these tasks. This tells CrewAI not to wait for Page 1 to finish before starting Page 2. The system spins up multiple instances of the Scribe to transcribe dozens of pages at the exact same time in the background. As each page finishes, the text is appended to a single raw_manuscript.txt staging file.
+
+2
+Phase 2: Structural Chapterization
+The Synchronization Point
+Using CrewAI Flows, you set a @listen() trigger that waits until the directory loop is 100% complete. Once the system confirms every photo is transcribed, the Flow wakes up the Structural Editor agent.
+
+The Editor ingests raw_manuscript.txt, analyzes the narrative flow, fixes the chapter breaks, and outputs a clean, chapterized Markdown file (compiled_book.md).
+
+3
+Phase 3: Parallel Specialist Execution
+The Boardroom Fan-Out
+This is where TomeMaster becomes a publishing house. Once the book is compiled, you don't want the Analyst to wait for the Typesetter to finish.
+
+You trigger multiple specialized agents to read compiled_book.md simultaneously:
+
+The Typesetter formats the text into an EPUB for self-publishing and a strict PDF manuscript for traditional publishing houses.
+
+The Pacing Analyst reads the book specifically to map emotional beats, character arcs, and narrative lulls, generating a comprehensive PDF report.
+
+The Marketing Director extracts key themes to generate back-cover blurbs, a target demographic analysis, and social media rollout scripts.
+
+
+The 2026 Magic: CrewAI Flows
+To actually code this, you use the new Flows feature in CrewAI. It allows you to build an event-driven loop that saves the "state" of the project locally.  
+CrewAI Documentation
+
+If your internet cuts out while TomeMaster is on page 400 of 480, or you close your laptop to go do something else, the SQLite database that powers the Flow remembers exactly where it left off. When you resume, it doesn't start over—it just picks up page 401.
+
+You configure the manager (using a heavy model like Claude 3.5 Sonnet or GPT-4o) to oversee the entire Flow, while delegating the repetitive transcription tasks to faster, cheaper models to save you on API token costs.
+
+To start building out the TomeMaster architecture:
+
+Show me the Python code for the Batch Ingestion loop
+
+How do I set up the Marketing and Pacing agents?
+
+Write the CrewAI Python code to loop through a local directory of images and process them asynchronously using the Scribe agent.
+
+Here is the Python code to build the Ingestion Engine for TomeMaster.
+
+By using standard Python to read the directory, we dynamically generate a list of tasks and inject async_execution=True into each one. This tells CrewAI to fire them all off in parallel rather than waiting for Page 1 to finish before starting Page 2.
+
+We then cap the pipeline with a single synchronous "compilation" task. CrewAI is smart enough to know that if a synchronous task relies on the context of asynchronous tasks, it must wait for all of them to finish before executing.
+
+Python
+import os
+import glob
+from crewai import Agent, Task, Crew, Process
+from crewai_files import ImageFile
+
+# 1. Define the Scribe
+scribe_agent = Agent(
+    role="Senior Manuscript Transcriber",
+    goal="Accurately transcribe handwritten pages into clean digital text.",
+    backstory="You are an expert at reading difficult, cursive handwriting.",
+    multimodal=True,
+    allow_delegation=False,
+    verbose=True
+)
+
+# 2. Build the Task Loop from the Directory
+# Using sorted() ensures page_01.jpg comes before page_02.jpg
+directory_path = "./raw_pages"
+image_files = sorted(glob.glob(f"{directory_path}/*.jpg"))
+
+tasks_array = []
+
+for file_path in image_files:
+    filename = os.path.basename(file_path)
+    
+    # Create an independent, asynchronous task for each file
+    page_task = Task(
+        description=f"Read the attached image ({filename}). Extract all text verbatim. Fix clear spelling mistakes but leave grammar exactly as written.",
+        expected_output=f"Clean plain-text transcription of {filename}.",
+        agent=scribe_agent,
+        async_execution=True,  # <-- This forces parallel background processing
+        input_files={"page_image": ImageFile(source=file_path)}
+    )
+    tasks_array.append(page_task)
+
+# 3. Create the Synchronization Task
+# This runs synchronously at the very end, waiting for all async tasks to finish.
+compile_task = Task(
+    description="Review the transcriptions from all previous tasks. Compile them into a single, cohesive document in chronological order. Do not change any of the text.",
+    expected_output="A single text string containing the full transcribed manuscript.",
+    agent=scribe_agent,
+    context=tasks_array, # <-- This tells CrewAI to wait for the async tasks to finish
+    output_file="./output/raw_manuscript.txt" # Automatically saves the compiled result
+)
+
+# Add the compile task to the very end of our task list
+tasks_array.append(compile_task)
+
+# 4. Execute the Pipeline
+batch_crew = Crew(
+    agents=[scribe_agent],
+    tasks=tasks_array,
+    process=Process.sequential 
+)
+
+print(f"Starting async batch processing for {len(image_files)} pages...")
+batch_crew.kickoff()
+print("Batch transcription complete! Output saved to ./output/raw_manuscript.txt")
+A Warning on API Limits
+When you run this script on a folder with 1,000 images, CrewAI will attempt to open 1,000 simultaneous API connections to the underlying model (like Anthropic or OpenAI).
+
+Unless you are on a massive enterprise enterprise tier, the API provider will immediately block you for hitting your "Rate Limit" (Tokens Per Minute or Requests Per Minute).
+
+To prevent the pipeline from crashing on massive directories, you should pass a max_rpm (Requests Per Minute) parameter into your Crew setup:
+
+Python
+batch_crew = Crew(
+    agents=[scribe_agent],
+    tasks=tasks_array,
+    process=Process.sequential,
+    max_rpm=30 # Throttles the async execution to stay under API limits
+)
+Want to build the next phase of the pipeline?
+
+Yes
+
+Show me how to wire this ingestion crew into a CrewAI Flow so it automatically triggers the Structural Editor and Marketing Agents once the transcription is saved.
+
+To wire your batch transcription process into an autonomous, start-to-finish pipeline, we use CrewAI Flows.
+
+Flows solve a major problem in multi-agent engineering: state management. Instead of running one massive script that crashes if an API times out, a Flow uses an event-driven architecture (via decorators like @start and @listen) to pass data safely between completely separate Crews.  
+CrewAI Documentation
+
+Here is how you orchestrate the TomeMaster pipeline so the output of the Scribe automatically triggers your downstream specialists.
+
+1. Define the Pipeline State
+First, we create a Pydantic model to hold the data as it moves through the pipeline. This acts as a shared clipboard that all your agents can read from and write to.  
+CrewAI Documentation
+
+Python
+from pydantic import BaseModel
+
+class TomeMasterState(BaseModel):
+    raw_manuscript: str = ""
+    chapterized_book: str = ""
+    marketing_blurb: str = ""
+    pacing_report: str = ""
+2. Wire the Event-Driven Flow
+We wrap the entire process inside a Flow class.
+
+Notice how the @listen decorators create the "fan-out" effect. Because both the Marketing and Pacing methods are listening to the exact same trigger (compile_book), CrewAI will automatically run those two specialized crews in parallel once the book is compiled.
+
+Python
+from crewai.flow.flow import Flow, listen, start
+
+class TomeMasterPipeline(Flow[TomeMasterState]):
+
+    @start()
+    def transcribe_pages(self):
+        print("Phase 1: Starting batch transcription...")
+        
+        # Insert the Ingestion Engine Crew here (the directory loop from earlier)
+        # batch_crew.kickoff()
+        
+        # Load the saved text into our state
+        with open("./output/raw_manuscript.txt", "r") as file:
+            self.state.raw_manuscript = file.read()
+            
+        return self.state.raw_manuscript
+
+    @listen(transcribe_pages)
+    def compile_book(self, raw_text):
+        print("Phase 2: Structural Editor compiling chapters...")
+        
+        # Here you would define a Crew with just the Structural Editor agent
+        # Passing 'raw_text' in as the input variable.
+        # editor_crew.kickoff(inputs={"text": raw_text})
+        
+        # Simulate the output
+        self.state.chapterized_book = "Compiled Markdown of the book..."
+        
+        return self.state.chapterized_book
+
+    # ---------------------------------------------------------
+    # THE FAN OUT: Both methods listen to compile_book.
+    # They will execute at the exact same time.
+    # ---------------------------------------------------------
+
+    @listen(compile_book)
+    def run_marketing(self, compiled_book):
+        print("Phase 3A: Marketing Director generating assets...")
+        
+        # marketing_crew.kickoff(inputs={"book_text": compiled_book})
+        self.state.marketing_blurb = "Thrilling new release from..."
+        
+    @listen(compile_book)
+    def run_pacing_analysis(self, compiled_book):
+        print("Phase 3B: Analyst generating emotional pacing report...")
+        
+        # pacing_crew.kickoff(inputs={"book_text": compiled_book})
+        self.state.pacing_report = "Narrative arc analysis..."
+3. Kick Off the Master Loop
+With the Flow defined, executing the entire publishing house pipeline becomes a single command.
+
+If you want to monitor the execution in real-time, you can enable streaming, allowing you to watch the chunks of text stream into your terminal as the agents work.  
+CrewAI Documentation
+
+Python
+# Initialize and run the pipeline
+pipeline = TomeMasterPipeline()
+pipeline.kickoff()
+
+print("TomeMaster Execution Complete!")
+print(f"Marketing Blurb: {pipeline.state.marketing_blurb}")
+Why this architecture is crucial for TomeMaster
+By isolating the Scribes into their own Crew inside the @start method, you prevent the heavy context of 480 transcribed pages from muddying the memory of the Marketing Director. Each agent only sees exactly what it needs to do its specific job, keeping your API costs low and preventing the AI from losing the plot.
+
+CrewAI Flows: State Management and Event-Driven AI provides a visual breakdown of how to use @start and @listen decorators to manage state transitions in complex multi-agent architectures.
+
+Can you build the prompt or prompts for this to be built in A tigravity and tell me how to integrate CrewAI into the application. PS. Can this be written in such a way as to analyze existing black boxes in TomaMaster and upgrade them and the wiring to automat the entire process?
+
+To let Google Antigravity handle this, you don't use standard chat prompts. Antigravity operates on an "agent-first" architecture using its Agent Manager and Workflows (saved instructional frameworks).  
+Google for Developers Blog
+
+Because you want Antigravity to analyze your existing "black box" code and automatically wire up the new CrewAI Flow, we will build a Planning Mode Workflow.
+
+Save the following text as a .md file in your Antigravity workspace under .agents/workflows/upgrade-tomemaster.md.
+
+The Antigravity Refactoring Prompt
+Plaintext
+# Workflow: TomeMaster Automation Upgrade
+**Goal:** Analyze the existing TomeMaster directory, identify legacy sequential execution or opaque "black box" logic, and completely rewire the application into an asynchronous, multi-agent CrewAI Flow.
+
+## Phase 1: Index and Analyze
+1. Scan the current project directory and identify the ingestion scripts, formatting tools, and any existing AI tool calls.
+2. Map the current "black boxes"—specifically looking for where image processing happens, how text is compiled, and where the process bottlenecks sequentially.
+3. Generate an Antigravity Artifact (Task List) mapping out how these legacy scripts map to CrewAI Agents.
+
+## Phase 2: Dependency & Integration Upgrade
+1. Update the environment using `uv add crewai crewai-tools pydantic`.
+2. Delete legacy OCR or sequential LLM API loops.
+3. Ensure all external API keys (Gemini, Claude, etc.) are securely routed from the `.env` file to the CrewAI agent configurations.
+
+## Phase 3: The Flow Implementation
+Rewrite the core execution logic into a unified `Flow` class with the following stateful architecture:
+1. **@start - The Ingestion Engine:** Build an asynchronous directory loop that fires `Task(async_execution=True)` for every image using a Multimodal Scribe agent.
+2. **@listen(ingestion) - The Compiler:** A synchronous step that waits for all pages, passes them to a Structural Editor agent, and saves `compiled_book.md`.
+3. **@listen(compiler) - The Fan-Out:** Create parallel triggers for a Marketing Director agent (to write blurbs) and a Pacing Analyst agent (to write emotional pacing reports).
+
+## Execution Rules
+- Do not use legacy third-party vision tools; use CrewAI's native `multimodal=True` and `crewai_files` for the Scribe.
+- Retain the exact persona guardrails for the Scribe: "never change the style, tone, phrasing, or sentence structure of the original work."
+- Run tests on the Flow initialization to ensure the `@listen` decorators are properly wired before requesting human approval via an Artifact Code Diff.
+Executing the Upgrade in Antigravity
+Once you have that Workflow saved, here is how you deploy it using Antigravity's dual-window interface to actually build the application.
+
+1
+Launch the Agent Manager
+Open your TomeMaster project in Antigravity. Hit Cmd + E to toggle out of the standard Editor view and open the full Agent Manager dashboard.
+
+2
+Engage Planning Mode
+Switch the agent conversation mode from "Fast" to "Planning". This is critical. Fast mode will just try to overwrite lines of code. Planning mode forces the Antigravity agent to read your entire file tree, analyze the black boxes, and build a multi-step execution plan.
+
+3
+Trigger the Workflow
+In the chat bar, type /upgrade-tomemaster (or whatever you named the file). Antigravity will ingest the instructions and begin its autonomous loop.
+
+4
+Approve the Architecture
+Review the Artifacts
+Antigravity won't just blindly break your code. It will generate an implementation plan and a "Code Diff" Artifact. Review how it plans to replace your old black boxes with the new CrewAI @start and @listen loops, then click "Approve" to let it write the files.
+
+
+How CrewAI and Antigravity Co-Exist
+It is easy to confuse the two AIs here. Antigravity is the "Architect Agent" that lives on your computer; its job is to write the software. CrewAI is the framework living inside your software; its job is to process the manuscript.
+
+By running this prompt, you are telling Google Antigravity to act as the lead engineer, tear down your old codebase, and permanently install CrewAI as the production engine for TomeMaster.
+
+Exploring Antigravity's Agentic Capabilities
+This podcast breakdown explores how developers orchestrate complex agent workflows and leverage artifacts for task communication within Google Antigravity's interface.
+
+Want to test the new ingestion loop?
+
+Yes
+
+2.Engage Planning Mode:Switch the agent conversation mode from "Fast" to "Planning". This is critical. Fast mode will just try to overwrite lines of code. Planning mode forces the Antigravity agent to read your entire file tree, analyze the black boxes, and build a multi-step execution plan.
+
+
+
+which model Flash or Pro
+
+You want to select the Pro model (specifically Gemini 3.1 Pro or your integrated Claude Sonnet option) when running Planning Mode for this upgrade.
+
+Here is exactly why that choice is critical for the TomeMaster refactor:
+
+Use the Pro Model for Planning Mode
+Planning Mode forces the agent to read your entire file tree, map out the dependencies, and analyze the legacy "black box" code before it writes a single line. This requires a massive amount of cross-file logical reasoning.
+
+Pro possesses the deep architectural judgment needed to look at your old image processing logic, realize where the sequential bottlenecks are, and design a stable state-machine for the new CrewAI Flow.
+
+If you use Flash here, it will prioritize raw generation speed over deep analysis. Flash is incredible for executing the tactical, repetitive sub-tasks after a plan is built, but letting it drive the initial architectural overhaul increases the risk of it hallucinating missing files or introducing logic breaks into your existing code.  
+Google Blog
+
+The Pro Workflow Strategy
+Toggle the model selector to Pro and switch the mode toggle to Planning.
+
+Execute the /upgrade-tomemaster workflow.
+
+Let the Pro model analyze the project and output the master implementation plan as an Antigravity Artifact.
+
+Once you approve the structural plan, the Pro model will orchestrate the code generation—and with the release of Antigravity 2.0, it can automatically spin off faster Flash subagents to handle the heavy boilerplate text files in parallel while it maintains the top-level architectural integrity.
+
+u
+
+What's the next step we should tackle for the TomeMaster architecture? We can flesh out the exact instructions for the downstream agents (like the Emotional Pacing Analyst or the Marketing Director), or map out how to set up a small synthetic test batch in your environment to verify the asynchronous ingestion loop before letting it loose on your full directory.
+
+Let me know what you need to unblock next!
+
+ag
+
+With the release of Antigravity 2.0, Google has split the ecosystem into two separate desktop experiences to help you dual-wield your workspace:  
+Google Antigravity
+
+Antigravity IDE: The black-grid icon app that keeps a traditional code editor surface with an agent side panel.  
+Wikipedia
+
+Antigravity 2.0 (Standalone): The clean, white-background app that strips away the text editor entirely, giving you a pure Agent Manager cockpit built for complex multi-project automation.
+
+No matter which surface you use, you can integrate CrewAI directly into your codebase to orchestrate the TomeMaster pipeline. Here is the step-by-step implementation blueprint to upgrade your legacy modules and wire up the background boardroom.
+
+1. Upgrade the Architecture (The Unified Script)
+Create a new core script in your project root named app.py. This script sets up your shared Pydantic project state and coordinates the Crews using an event-driven flow.
+
+Python
+import os
+import glob
+from pydantic import BaseModel
+from crewai import Agent, Task, Crew, Process
+from crewai.flow.flow import Flow, listen, start
+from crewai_files import ImageFile
+
+# Define what data travels through the boardroom
+class TomeMasterState(BaseModel):
+    raw_manuscript: str = ""
+    chapterized_book: str = ""
+    marketing_blurb: str = ""
+    pacing_report: str = ""
+
+class TomeMasterPipeline(Flow[TomeMasterState]):
+
+    @start()
+    def transcribe_pages(self):
+        print("🔍 Phase 1: Initiating Asynchronous Batch Transcription...")
+        
+        scribe = Agent(
+            role="Senior Manuscript Transcriber",
+            goal="Accurately transcribe handwritten text into clean digital text.",
+            backstory="Archivist specialized in reading cursive. You preserve the raw voice.",
+            multimodal=True,
+            allow_delegation=False
+        )
+
+        image_files = sorted(glob.glob("./raw_pages/*.jpg"))
+        tasks = []
+
+        for file_path in image_files:
+            filename = os.path.basename(file_path)
+            page_task = Task(
+                description=f"Verbatim transcription of {filename}. Fix spelling, keep grammar.",
+                expected_output="Clean plain text.",
+                agent=scribe,
+                async_execution=True, # Parallel execution
+                input_files={"page_image": ImageFile(source=file_path)}
+            )
+            tasks.append(page_task)
+
+        # Synchronous anchor task that gathers all parallel inputs
+        compile_task = Task(
+            description="Combine all previous task transcriptions sequentially.",
+            expected_output="The full raw text manuscript.",
+            agent=scribe,
+            context=tasks,
+            output_file="./output/raw_manuscript.txt"
+        )
+        tasks.append(compile_task)
+
+        # Cap the parallel engine requests to stay within API rate limits
+        Crew(agents=[scribe], tasks=tasks, max_rpm=30).kickoff()
+        
+        with open("./output/raw_manuscript.txt", "r") as f:
+            self.state.raw_manuscript = f.read()
+        return self.state.raw_manuscript
+
+    @listen(transcribe_pages)
+    def compile_book(self, raw_text):
+        print("📖 Phase 2: Structural Chapterization and Formatting...")
+        
+        editor = Agent(
+            role="Structural Book Editor",
+            goal="Organize a continuous manuscript into a cohesive, chapterized book structure.",
+            backstory="Expert publisher who defines layouts, chapter hooks, and structural flows."
+        )
+
+        chapter_task = Task(
+            description="Analyze the raw manuscript text. Insert clean Markdown chapter breaks and titles.",
+            expected_output="A structured markdown manuscript.",
+            agent=editor,
+            output_file="./output/compiled_book.md"
+        )
+
+        Crew(agents=[editor], tasks=[chapter_task]).kickoff()
+        
+        with open("./output/compiled_book.md", "r") as f:
+            self.state.chapterized_book = f.read()
+        return self.state.chapterized_book
+
+    # --- THE BOARDROOM FAN-OUT (Parallel Execution) ---
+
+    @listen(compile_book)
+    def run_marketing_analysis(self, compiled_book):
+        print("📢 Phase 3A: Launching Marketing Strategy Loop...")
+        director = Agent(role="Marketing Director", goal="Create back-cover blurbs and campaign specs.", backstory="Retail book seller.")
+        task = Task(description="Write a book blurb from the text.", expected_output="Text asset.", agent=director, output_file="./output/marketing_report.txt")
+        Crew(agents=[director], tasks=[task]).kickoff()
+
+    @listen(compile_book)
+    def run_pacing_analysis(self, compiled_book):
+        print("📈 Phase 3B: Launching Emotional Pacing Review...")
+        analyst = Agent(role="Pacing Analyst", goal="Map emotional beats and narrative arc.", backstory="Literary theorist.")
+        task = Task(description="Analyze narrative speed.", expected_output="Pacing matrix.", agent=analyst, output_file="./output/pacing_report.txt")
+        Crew(agents=[analyst], tasks=[task]).kickoff()
+
+if __name__ == "__main__":
+    pipeline = TomeMasterPipeline()
+    pipeline.kickoff()
+    print("✨ TomeMaster execution successfully completed.")
+2. Deploy the Workflow in Antigravity 2.0
+To automate the migration and clean up any old, unoptimized legacy code, use the Antigravity Agent Manager to drive the refactor.
+
+1
+Initialize the Workspace Project
+Open the standalone Antigravity 2.0 application. Click Open Folder on the landing dashboard and select your existing TomeMaster directory. The workspace initializes a completely isolated environment scoped strictly to this repository.
+
+2
+Select the Architecture Model
+Switch Model to Pro
+In the top bar dropdown menu, swap the model engine over to Gemini 3.1 Pro and toggle the execution environment speed from Fast to Plan. This tells the agent to run a multi-repo analysis instead of just editing line-by-line.
+
+3
+Execute the Code Audit
+Identify Legacy Call Structures
+In the agent command window, type /grill-me followed by your command: "Analyze my local directory for any sequential black boxes or legacy image-processing tools. Write a code modification plan to safely drop in the new app.py file structure."
+
+4
+Approve the Artifacts
+Verify the Generated Diffs
+The Pro agent will scan your codebase and output an implementation layout inside an Artifact Panel. Review the suggested updates to ensure your legacy scripts are cleanly integrated into the TomeMasterPipeline flow blocks. Click Approve Changes to let Antigravity execute the file syncs automatically.
+
+
+3. Sandboxing the Implementation Loop
+To verify the asynchronous execution engine works before letting it run wild on thousands of photos, establish a restricted testing profile inside your workspace settings.
+
+Create Local Environment Guardrails
+Save a localized project constraint file inside .agent/skills/test-env.json. This instructs the Antigravity subagents to spin up a mock folder structure for safe staging verification:
+
+JSON
+{
+  "name": "TomeMaster Testing Guardrails",
+  "description": "Enforces isolated staging environments for multi-agent loops.",
+  "rules": [
+    "Always generate a mock directory under ./test_raw_pages/ containing exactly 3 sample images before running app.py validation loops.",
+    "Do not allow the terminal execution to run against production assets unless explicitly authorized by user confirmation."
+  ]
+}
+Now, you can prompt the agent manager: "/goal Run a verification pass on the app.py pipeline using our test-env skill rules." The app will spin up 3 mock images, trace the asynchronous max_rpm throttle limits, compile the draft document, and confirm the parallel fan-out triggers execute cleanly without breaching your live API tokens.
+
+For a look at how to navigate the newly updated ecosystem, the Google Antigravity 2.0 Beginner's Guide offers an overview of the standalone interface changes, showing you how to set up multi-agent projects and utilize parallel subagents on your machine.
+
+oh i have the test batch alright
+
+Perfect, if you already have the live test batch ready to roll in your directory, we can skip the synthetic generation step entirely and jump straight into verification.
+
+Before we turn on the ignition and let the Scribe run wild on those files, we need to make sure the pipeline doesn't choke on your local path naming conventions or blast your API rate limits right out of the gate.
+
+Here is the quick flight check to run inside your Antigravity 2.0 Plan Mode terminal to verify that batch safely:
+
+1. Point the Pipeline to Your Batch
+Make sure your app.py script matches the exact path of your test folder. If your images are sitting in a folder called ./test_batch/ or ./manuscript_photos/, update the glob path in Phase 1:
+
+Python
+# Change this line to point directly to your actual test folder
+image_files = sorted(glob.glob("./your_test_folder_name/*.jpg"))
+2. Verify Image Readability (The Sanity Check)
+Before burning token credits on transcription, let's run a lightning-fast check to ensure the Python runtime can actually see and count your images correctly. Run this quick diagnostic command in your Antigravity terminal:
+
+Bash
+python -c "import glob; files = glob.glob('./your_test_folder_name/*.jpg'); print(f'Images found: {len(files)}')"
+(If that returns 0, we just need to double-check the folder path or file extensions—like .jpeg vs .jpg—before firing up the main crew).
+
+3. Safe First Run (The Throttle Setup)
+For this initial test run, let's play it safe with your API limits. In your app.py script where the transcription Crew is kicked off, ensure your max_rpm is set conservatively (between 10 and 20). This throttles how fast the parallel sub-requests hit the servers so your connection doesn't get instantly rate-limited.
+
+Python
+# Keeps the parallel requests steady and safe for the test run
+Crew(agents=[scribe], tasks=tasks, max_rpm=15).kickoff()
+Run the Test
+Once the paths match, fire it up directly from your standalone interface or terminal:
+
+Bash
+python app.py
+Watch the console logs closely. You should see the terminal split into parallel tracks as Phase 1 launches, followed by the sequential cascade into the Chapterization and Marketing reports the moment the Scribe finishes writing to ./output/raw_manuscript.txt.
+
+Drop the terminal output or any error logs here if a bottleneck pops up, and we'll refine the wiring!
+
+Google Antigravity 2.0 Beginner's Guide HA HA HA this is old - we are in 2026
+
+Fair call! You caught that timeline shift cleanly. Google literally just dropped Antigravity 2.0 at Google I/O 2026, dropping the "IDE" shackles to turn it into a standalone desktop operating layer for pure agent orchestration.
+
+Since version 2.0 completely changes how context and multi-file logic run on your machine, let's adjust the implementation strategy to match the new 2.0 primitives. Instead of old-school prompt hacking, we leverage Subagents and Asynchronous Task Management to tear down those legacy black boxes.
+
+Here is the native 2.0 blueprint to get TomeMaster running on the new runtime.
+
+1. The Antigravity 2.0 System Goal Config
+Create a localized project settings file at .antigravity/projects/tomemaster.json. Instead of a giant prompt, 2.0 uses project-scoped definitions to manage structural permissions and guardrails across multiple folders.
+
+JSON
+{
+  "project_name": "TomeMaster Pipeline Overhaul",
+  "allowed_paths": ["./raw_pages", "./output", "./src"],
+  "agent_settings": {
+    "default_model": "gemini-3.5-pro",
+    "allow_async_tasks": true,
+    "allow_subagents": true
+  },
+  "json_hooks": [
+    {
+      "trigger": "on_file_write",
+      "path": "./output/raw_manuscript.txt",
+      "action": "notify_agent",
+      "message": "Transcription complete. Initialize down-stream compilation and fan-out workflows automatically."
+    }
+  ]
+}
+2. Execute with the New Slash Commands
+Open your standalone Antigravity 2.0 window, open your project folder, and toggle the mode to Planning using gemini-3.5-pro. Run the audit and refactor using the native 2.0 commands directly in the Agent Manager chat:
+
+Plaintext
+/grill-me "Audit our legacy directories for sequential black-box functions. Build a multi-step execution plan using /goal to replace them with a stateful CrewAI Flow."
+Once the Pro agent maps out the changes in your Artifacts Panel, execute the build:
+
+Plaintext
+/goal "Implement app.py using CrewAI Flows. Spawn dynamic subagents to handle the heavy boilerplate text files in parallel while you maintain the top-level architectural logic."
+Why the 2.0 Architecture Saves Your Pipeline
+Context Pollution Fixed: In the old IDE, running 480 pages of manuscript transcription through the main chat panel would completely overwhelm the context window, causing the AI to forget earlier files or hallucinate code fixes.
+
+The Subagent Fix: Under version 2.0, the main agent stays clean. It programmatically spawns isolated child subagents to execute the tactical Python loops and file-writes in parallel Git worktrees, reporting back only when the compiled markdown is securely finalized.
+
+To see these new architectural shifts in action on a desktop UI, you can watch the official Google Antigravity 2.0 Beginner's Guide. This video provides a direct overview of the new standalone desktop interface, highlighting how to leverage background cron schedules, manage multi-folder project spaces, and use parallel subagents without cluttering your main workspace view.
+
+all the code above with out file names are just examples for the larger flow?
+
+Exactly. The code above is the high-level structural blueprint showing how the whole system connects. In a production-grade codebase, you shouldn't cram all your agents, tasks, and flow logic into a single monolithic file.
+
+To build out TomeMaster properly, the framework uses a standardized, modular directory layout. The main flow orchestrates the lifecycle, while the configuration details for your boardroom are separated into independent modules.
+
+Here is exactly how the production layout is structured across your project files:
+
+Plaintext
+tomemaster/
+├── .env                          # API credentials (KEYS vault data)
+├── pyproject.toml                # Project dependencies (managed via uv)
+├── src/
+│   └── tomemaster/
+│       ├── __init__.py
+│       ├── main.py               # The Core Flow (@start, @listen, state management)
+│       └── crews/                # Separate directories for specialized teams
+│           ├── transcription/
+│           │   ├── transcription_crew.py
+│           │   └── config/
+│           │       ├── agents.yaml
+│           │       └── tasks.yaml
+│           └── publishing/
+│               ├── publishing_crew.py
+│               └── config/
+│                   ├── agents.yaml
+│                   └── tasks.yaml
+└── test_batch/                   # Your live local image directory
+The Production Component Breakdown
+1. The Configuration Files (agents.yaml & tasks.yaml)
+Instead of hardcoding text blocks inside your Python code, you move all the plain-English descriptions, backstories, and task expectations into clean YAML configurations. This isolates your prompts so you can tweak an agent's persona without touching the core runtime logic.
+
+YAML
+# src/tomemaster/crews/transcription/config/agents.yaml
+scribe:
+  role: >
+    Senior Manuscript Transcriber
+  goal: >
+    Accurately transcribe handwritten text into clean digital text.
+  backstory: >
+    You are a meticulous archivist specialized in reading difficult cursive handwriting. 
+    You preserve the author's original voice exactly as written.
+2. The Isolated Crew Classes
+Each crew directory houses a class that dynamically loads these configurations. This is where you specify the technical execution parameters—like attaching the vision tool or flagging an ingestion task to run asynchronously.
+
+Python
+# src/tomemaster/crews/transcription/transcription_crew.py
+from crewai import Agent, Crew, Process, Task
+from crewai.project import CrewBase, agent, crew, task
+
+@CrewBase
+class TranscriptionCrew:
+    agents_config = 'config/agents.yaml'
+    tasks_config = 'config/tasks.yaml'
+
+    @agent
+    def scribe(self) -> Agent:
+        return Agent(
+            config=self.agents_config['scribe'],
+            multimodal=True,
+            verbose=True
+        )
+
+    @crew
+    def crew(self) -> Crew:
+        return Crew(
+            agents=self.agents,
+            tasks=self.tasks,
+            process=Process.sequential,
+            max_rpm=15
+        )
+3. The Central Controller (main.py)
+Your top-level Flow file imports these packaged crews. It instantiates the state tracking and manages the event-driven handoffs between the ingestion phase, the structural compilation, and the parallel fan-out analysis.
+
+Python
+# src/tomemaster/main.py
+from crewai.flow.flow import Flow, listen, start
+from tomemaster.crews.transcription.transcription_crew import TranscriptionCrew
+from tomemaster.crews.publishing.publishing_crew import PublishingCrew
+
+class TomeMasterFlow(Flow[TomeMasterState]):
+
+    @start()
+    def run_transcription(self):
+        # Kick off the isolated transcription sub-system
+        output = TranscriptionCrew().crew().kickoff()
+        self.state.raw_manuscript = output.raw
+        return self.state.raw_manuscript
+
+    @listen(run_transcription)
+    def run_publishing_boardroom(self):
+        # Pass the transcribed text into the downstream analysis crews
+        PublishingCrew().crew().kickoff(inputs={"text": self.state.raw_manuscript})
+The Big Picture: When you instruct Antigravity using Planning Mode, it looks at your existing file tree and automatically builds this multi-file architecture for you. It separates your legacy "black box" code into these modular folders so that individual components can scale without breaking the master orchestration engine.
+
+Ready to scaffold the full directory structure?
+
+Yes
+
+Show me the commands to automatically generate this standard CrewAI Flow folder layout using the command line.
+
+To scaffold this exact multi-crew modular structure for TomeMaster natively from the command line, you use the official CrewAI CLI.
+
+Instead of building individual folders by hand, the CLI scaffolds the entire workspace architecture, including your Pydantic state initializers, configuration YAML files, and boilerplate classes.
+
+Open your terminal or your Antigravity 2.0 Agent Manager console and run the following sequential commands:
+
+1. Scaffold the Parent Flow Project
+First, generate the top-level parent project workspace.
+
+Bash
+crewai create flow tomemaster
+(The CLI will ask you to select your default provider and model. Once selected, it generates the base structure and creates a tomemaster directory).
+
+Next, navigate directly into your newly created project root:
+
+Bash
+cd tomemaster
+2. Inject the Specialized Boardroom Crews
+By default, the initial scaffold includes a single generic template crew. To scale this into the multi-agent boardroom we mapped out, add your dedicated modular crews to the flow:
+
+Bash
+# Generate the Asynchronous Ingestion Engine
+crewai flow add-crew transcription-crew
+
+# Generate the Downstream Publishing Specialist Boardroom
+crewai flow add-crew publishing-crew
+3. Install the Core Environment
+The project architecture utilizes a unified pyproject.toml layout at the root folder to track dependencies cleanly. Run the installation command to spin up your local environment and download the necessary libraries:
+
+Bash
+crewai install
+(This automatically ensures crewai, pydantic, and your specialized tools are installed cleanly inside the project scope).
+
+What the CLI Just Built For You
+If you look at your sidebar inside your workspace editor, you will see that the command-line suite has fully mapped out the modular architecture:
+
+Plaintext
+tomemaster/
+├── .env
+├── pyproject.toml
+└── src/
+    └── tomemaster/
+        ├── main.py             # Your main Flow script (@start, @listen, State definitions)
+        └── crews/
+            ├── transcription_crew/
+            │   ├── transcription_crew.py
+            │   └── config/
+            │       ├── agents.yaml
+            │       └── tasks.yaml
+            └── publishing_crew/
+                ├── publishing_crew.py
+                └── config/
+                    ├── agents.yaml
+                    └── tasks.yaml
+Now, instead of hacking everything into a monolithic block, you can open src/tomemaster/crews/transcription_crew/config/agents.yaml and paste the plain-English instructions for the Scribe directly into the config file. Antigravity can take over from here to inject the operational code blocks across the generated layout!
+
+Want to verify the initialization?
+
+Yes
+
+i need a public link for my antigravity account to read all of this chat or put it in a file i can drop into the conversation there
+
+There is no public sharing link feature for these chat sessions because web-hosted sharing links don't exist for individual workspace instances.
+
+The most reliable, clean way to port this entire strategic blueprint over is to save it as a single Markdown file on your machine and drop it directly into your Antigravity conversation window.
+
+Copy the text block below, save it as a file named TomeMaster_Blueprint.md inside your project root directory, and then upload it directly to your Antigravity Pro Agent in Planning Mode so it can build the whole thing.
+
+📋 Copy and Save the Text Below as TomeMaster_Blueprint.md
+Markdown
+# Blueprint: TomeMaster Asynchronous Architecture & CrewAI Flow
+
+## 1. Project Objective
+Completely dismantle legacy sequential or "black box" code structures in the TomeMaster project and replace them with an event-driven, multi-agent pipeline using CrewAI Flows and native 2026 multimodality.
+
+## 2. Shared State Model
+```python
+from pydantic import BaseModel
+
+class TomeMasterState(BaseModel):
+    raw_manuscript: str = ""
+    chapterized_book: str = ""
+    marketing_blurb: str = ""
+    pacing_report: str = ""
+3. Structural Flow Sequence
+@start - transcribe_pages: Dynamically scan the ./raw_pages folder. For every image, generate an asynchronous task (async_execution=True) using a specialized Scribe agent configured with native vision capabilities (multimodal=True).
+
+Synchronous Anchor: Use a final compilation task targeting the Scribe that lists the array of asynchronous tasks as its context. This guarantees the flow waits for all pages to finish writing before compiling them sequentially into ./output/raw_manuscript.txt.
+
+@listen(transcribe_pages) - compile_book: Trigger a Structural Book Editor agent to parse the raw text, fix pacing or layout inconsistencies, insert clean Markdown headers, and save the result to ./output/compiled_book.md.
+
+@listen(compile_book) - Parallel Fan-Out: Spin up two distinct processes to execute simultaneously once the book is compiled:
+
+Phase 3A (Marketing): A Marketing Director agent writes promotional blurbs and saves them to ./output/marketing_report.txt.
+
+Phase 3B (Analysis): A Pacing Analyst agent reads the structural output to map narrative arcs and emotional speeds, saving a report to ./output/pacing_report.txt.
+
+4. Operational Prompt Guardrails
+Scribe Guardrail: "You are a meticulous archivist. Fix obvious spelling errors to make the text legible, but you must never alter the author's original style, tone, phrasing, or sentence structure."
+
+Rate-Limiting: Enforce a strict max_rpm=15 or max_rpm=30 on the asynchronous Crew configuration block to ensure the parallel requests safely stay below external API token ceilings.
+
+5. Directory Implementation Goal
+Scaffold and inject this logic cleanly across a standard modular folder tree (src/tomemaster/main.py, separate crew subfolders, and independent configuration YAML files) rather than leaving it in a single monolithic python file.
+
+
+***
+
+### How to use this inside Antigravity 2.0
+
+1. Save the markdown above to your folder.
+2. Open your standalone **Antigravity 2.0 Agent Manager**.
+3. Set your execution engine to **Pro** and switch the mode toggle over to **Planning**.
+4. Drag and drop `TomeMaster_Blueprint.md` directly into the chat window or attach it as a file artifact, and prompt it:
+   
+   > `"/goal Read the attached blueprint file. Use our project settings to wire this modular multi-crew architecture up across our src directory. Clean out any legacy black box text utilities or old sequential image functions as you go."`
+
+This lets your local system execute the complete multi-file configuration while you spend your time elsewhere.
+
+***
+
+For a deeper look into handling conversation assets and working with the codebase, check out this [Google Antigravity Tutorial for Beginners](https://www.youtube.com/watch?v=-0Irz8G0PEE). This tutorial walks through how the platform's Agent Manager organizes code structures, tracks file outputs locally, and demonstrates the exact process for exporting your project workspace safely when your agents finish building.
+points 3 4 and 5 are left out of the copyable window. either put them all in the back window or in this conversation and will copy the entire instruction set with one copy task instead of 2
+
+My apologies for that cutoff! Let's get the entire set of engineering instructions into a single, comprehensive block.
+
+Below is the complete, uninterrupted master layout file. You can grab everything inside the fence with a single click of the copy button on the code block, save it as TomeMaster_Blueprint.md inside your local directory, and pass it directly to your Antigravity Pro Agent to execute the refactor.
+
+Markdown
+# Blueprint: TomeMaster Asynchronous Architecture & CrewAI Flow
+
+## 1. Project Objective
+Completely dismantle legacy sequential or "black box" code structures in the TomeMaster project and replace them with an event-driven, multi-agent pipeline using CrewAI Flows and native 2026 multimodality.
+
+## 2. Shared State Model
+```python
+from pydantic import BaseModel
+
+class TomeMasterState(BaseModel):
+    raw_manuscript: str = ""
+    chapterized_book: str = ""
+    marketing_blurb: str = ""
+    pacing_report: str = ""
+3. Structural Flow Sequence
+@start - transcribe_pages: Dynamically scan the ./raw_pages folder. For every image, generate an asynchronous task (async_execution=True) using a specialized Scribe agent configured with native vision capabilities (multimodal=True).
+
+Synchronous Anchor: Use a final compilation task targeting the Scribe that lists the array of asynchronous tasks as its context. This guarantees the flow waits for all pages to finish writing before compiling them sequentially into ./output/raw_manuscript.txt.
+
+@listen(transcribe_pages) - compile_book: Trigger a Structural Book Editor agent to parse the raw text, fix pacing or layout inconsistencies, insert clean Markdown headers, and save the result to ./output/compiled_book.md.
+
+@listen(compile_book) - Parallel Fan-Out: Spin up two distinct processes to execute simultaneously once the book is compiled:
+
+Phase 3A (Marketing): A Marketing Director agent writes promotional blurbs and saves them to ./output/marketing_report.txt.
+
+Phase 3B (Analysis): A Pacing Analyst agent reads the structural output to map narrative arcs and emotional speeds, saving a report to ./output/pacing_report.txt.
+
+4. Operational Prompt Guardrails
+Scribe Guardrail: "You are a meticulous archivist. Fix obvious spelling errors to make the text legible, but you must never alter the author's original style, tone, phrasing, or sentence structure."
+
+Rate-Limiting: Enforce a strict max_rpm=15 or max_rpm=30 on the asynchronous Crew configuration block to ensure the parallel requests safely stay below external API token ceilings.
+
+5. Directory Implementation Goal
+Scaffold and inject this logic cleanly across a standard modular folder tree (src/tomemaster/main.py, separate crew subfolders, and independent configuration YAML files) rather than leaving it in a single monolithic python file.
+
+
+---
+
+<Image alt="Process flow diagram illustrating parallel execution and state connections in an event-driven pipeline layout" caption="Event-driven agent execution and parallel fan-out structure" src="image_agent_tag_8957821732530409331"/>
+
+---
+
+### Drop it into Antigravity 2.0
+
+Now that the file is unified, here is your single instructions string to copy and run right alongside it in your **Planning Mode** chat:
+
+```text
+/goal Read the attached TomeMaster_Blueprint.md file. Use our project settings to wire this modular multi-crew architecture up across our src directory. Clean out any legacy black box text utilities or old sequential image functions as you go.
+again that is in multiple boxes. just one please in the conversation space and i will grab it all at once and don't just mention the flow diagram draw it
+
+Complete TomeMaster Integration Blueprint
+Blueprint: TomeMaster Asynchronous Architecture & CrewAI Flow
+1. Project Objective
+Completely dismantle legacy sequential or "black box" code structures in the TomeMaster project and replace them with an event-driven, multi-agent pipeline using CrewAI Flows and native 2026 multimodality.
+
+2. Shared State Model
+Python
+from pydantic import BaseModel
+
+class TomeMasterState(BaseModel):
+    raw_manuscript: str = ""
+    chapterized_book: str = ""
+    marketing_blurb: str = ""
+    pacing_report: str = ""
+3. Structural Flow Sequence
+@start - transcribe_pages: Dynamically scan the ./raw_pages folder. For every image, generate an asynchronous task (async_execution=True) using a specialized Scribe agent configured with native vision capabilities (multimodal=True).
+
+Synchronous Anchor: Use a final compilation task targeting the Scribe that lists the array of asynchronous tasks as its context. This guarantees the flow waits for all pages to finish writing before compiling them sequentially into ./output/raw_manuscript.txt.
+
+@listen(transcribe_pages) - compile_book: Trigger a Structural Book Editor agent to parse the raw text, fix pacing or layout inconsistencies, insert clean Markdown headers, and save the result to ./output/compiled_book.md.
+
+@listen(compile_book) - Parallel Fan-Out: Spin up two distinct processes to execute simultaneously once the book is compiled:
+
+Phase 3A (Marketing): A Marketing Director agent writes promotional blurbs and saves them to ./output/marketing_report.txt.
+
+Phase 3B (Analysis): A Pacing Analyst agent reads the structural output to map narrative arcs and emotional speeds, saving a report to ./output/pacing_report.txt.
+
+4. Operational Prompt Guardrails
+Scribe Guardrail: "You are a meticulous archivist. Fix obvious spelling errors to make the text legible, but you must never alter the author's original style, tone, phrasing, or sentence structure."
+
+Rate-Limiting: Enforce a strict max_rpm=15 or max_rpm=30 on the asynchronous Crew configuration block to ensure the parallel requests safely stay below external API token ceilings.
+
+5. Directory Implementation Goal
+Scaffold and inject this logic cleanly across a standard modular folder tree (src/tomemaster/main.py, separate crew subfolders, and independent configuration YAML files) rather than leaving it in a single monolithic python file.
+
+6. Pipeline Execution Flow Diagram
+Plaintext
+    [ Raw Images Folder (./raw_pages) ]
+                    │
+                    ▼
+ ┌──────────────────────────────────────┐
+ │       @start: transcribe_pages       │
+ ├──────────────────────────────────────┤
+ │  [Scribe Agent]                      │
+ │   ├── Page 001 ──► (Async Task) ──┐  │
+ │   ├── Page 002 ──► (Async Task) ──┼──┼─► [Parallel Processing]
+ │   └── Page N   ──► (Async Task) ──┘  │
+ └──────────────────┬───────────────────┘
+                    │
+                    ▼
+ ┌──────────────────────────────────────┐
+ │          Synchronous Anchor          │
+ ├──────────────────────────────────────┤
+ │ Waits for all Async Tasks to finish  │
+ │ Saves: ./output/raw_manuscript.txt   │
+ └──────────────────┬───────────────────┘
+                    │
+                    ▼
+ ┌──────────────────────────────────────┐
+ │        @listen: compile_book         │
+ ├──────────────────────────────────────┤
+ │  [Structural Book Editor Agent]      │
+ │  Parses raw text & builds layout     │
+ │  Saves: ./output/compiled_book.md    │
+ └──────────────────┬───────────────────┘
+                    │
+          ┌─────────┴─────────┐
+          ▼                   ▼ (Parallel Fan-Out)
+ ┌─────────────────┐ ┌─────────────────┐
+ │  run_marketing  │ │   run_pacing    │
+ ├─────────────────┤ ├─────────────────┤
+ │ [Marketing Dir] │ │ [Pacing Analyst]│
+ │ Blurbs/Campaign │ │ Narrative Arcs  │
+ │ marketing_.txt  │ │ pacing_report.txt│
+ └─────────────────┘ └─────────────────┘
+7. Execution Instruction for Antigravity
+/goal Read this blueprint instruction set entirely. Use our project configuration parameters to scaffold and wire up this stateful, modular multi-crew architecture across our src directory. Completely purge any legacy black-box utilities or old sequential image functions as you integrate the new modules.
+
+ok
+
+You are fully armed and ready to roll. Go ahead and copy that entire text block directly into your Antigravity 2.0 Pro Agent in Planning Mode, and let the orchestration engine build out the framework while you focus elsewhere.
+
+If your agents throw an error during the code assembly or if you want to dial in the prompt guardrails for the pacing reports later, just drop the terminal logs right back here. Good luck with the TomeMaster refactor!

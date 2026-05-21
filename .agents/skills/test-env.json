@@ -1,0 +1,8 @@
+{
+    "name": "TomeMaster Testing Guardrails",
+    "description": "Enforces isolated staging environments for multi-agent loops.",
+    "rules": [
+        "Always generate a mock directory under ./test_raw_pages/ containing exactly 3 sample images before running app.py validation loops.",
+        "Do not allow the terminal execution to run against production assets unless explicitly authorized by user confirmation."
+    ]
+}
