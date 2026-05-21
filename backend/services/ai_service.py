@@ -97,7 +97,7 @@ async def _call_standard_gateway(role: str, prompt: str, is_json: bool = True, o
     provider = config.get("provider")
 
     # [PII GATE]: Off by default — the editor needs real character names to
-    # reach the model. Set preferences.pii_scrub=true in settings.json to enable
+    # reach the model. Set preferences.pii_scrub=true in the encrypted vault to enable
     # for compliance-sensitive deployments.
     from .settings_service import load_settings
     if load_settings().get("preferences", {}).get("pii_scrub", False):
@@ -327,7 +327,7 @@ async def run_boardroom_parallel(
     Uses true concurrency to ensure minimal directorial latency.
 
     Per-request `provider`/`api_key`/`model` override the role-based gateway
-    resolved from settings.json, so the UI's slot and key choices take effect.
+    resolved from the encrypted vault, so the UI's slot and key choices take effect.
     """
     override = _build_override(provider, api_key, model)
 
