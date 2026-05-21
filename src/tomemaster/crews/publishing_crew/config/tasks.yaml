@@ -10,14 +10,18 @@ chapterize_manuscript:
 
 marketing_analysis:
   description: >
-    Based on the chapterized text, write a compelling back-cover blurb and outline 
-    key promotional hooks.
+    Based on the following chapterized manuscript text, write a compelling 
+    back-cover blurb and outline key promotional hooks:
+
+    {text}
   expected_output: >
     A marketing report containing a blurb, target demographic, and campaign ideas.
 
 pacing_review:
   description: >
-    Read the chapterized structural output and map out the narrative arc. Identify 
-    emotional beats and any lulls in the pacing.
+    Read the following chapterized manuscript text and map out the narrative arc.
+    Identify emotional beats and any lulls in the pacing:
+
+    {text}
   expected_output: >
     A pacing matrix report outlining the narrative flow and emotional speed.
