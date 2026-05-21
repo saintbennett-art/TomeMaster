@@ -3,6 +3,8 @@ from pydantic import BaseModel
 from typing import Optional, List
 from services import transcriber_service
 import os
+import sys
+import threading
 
 router = APIRouter()
 
@@ -11,6 +13,17 @@ from schemas import TranscribeRequestSchema
 class AuditResolutionRequest(BaseModel):
     page_number: str
     apply_offset: bool = False
+
+class PipelineRequest(BaseModel):
+    """Request body for the CrewAI pipeline endpoint."""
+    folder_path: str = "./test_batch"
+
+# ─────────────────────────────────────────────────────────
+# LEGACY ENDPOINTS — transcriber_service.py (OCR dispatch)
+# These remain the default until the CrewAI pipeline is
+# battle-tested. The two systems share TRANSCRIPTION_STATE
+# so the frontend can poll /status regardless of which was used.
+# ─────────────────────────────────────────────────────────
 
 @router.get("/ingest")
 async def ingest_project_baseline(folder_path: str):
@@ -90,3 +103,93 @@ async def resort_manuscript_get(folder_path: str):
         thread.daemon = True
         thread.start()
     return {"status": "stitching"}
+
+
+# ─────────────────────────────────────────────────────────
+# CREWAI PIPELINE ENDPOINT — TomeMasterPipeline
+# [N3 FIX]: Bridges the CrewAI Flow to the FastAPI layer.
+# The pipeline runs: Security → Transcription → Chapterization
+#   → Marketing + Pacing (parallel) → Watermark/Finalize
+# The frontend polls /status as usual — TranscriptionCrew's
+# ui_sync_callback writes to TRANSCRIPTION_STATE automatically.
+# ─────────────────────────────────────────────────────────
+
+def _run_pipeline_thread(folder_path: str):
+    """Background thread: runs the full CrewAI TomeMasterPipeline."""
+    from services.transcriber_service import TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK
+
+    # Set initial state so the frontend shows progress
+    with TRANSCRIPTION_LOCK:
+        TRANSCRIPTION_STATE["status"] = "running"
+        TRANSCRIPTION_STATE["folder"] = folder_path
+        TRANSCRIPTION_STATE["error_message"] = "CrewAI pipeline starting..."
+        TRANSCRIPTION_STATE["stream_buffer"] = []
+
+    try:
+        # Import the pipeline from the CrewAI source tree
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+        src_path = os.path.join(project_root, "src")
+        if src_path not in sys.path:
+            sys.path.insert(0, src_path)
+
+        from tomemaster.main import TomeMasterPipeline, TomeMasterState
+
+        # Override the default folder_path with the user's request
+        pipeline = TomeMasterPipeline()
+        pipeline.state = TomeMasterState(folder_path=folder_path)
+        pipeline.kickoff()
+
+        # Pipeline complete — update state with final results
+        with TRANSCRIPTION_LOCK:
+            TRANSCRIPTION_STATE["status"] = "complete"
+            TRANSCRIPTION_STATE["text"] = pipeline.state.chapterized_book or pipeline.state.raw_manuscript
+            TRANSCRIPTION_STATE["error_message"] = None
+            # Expose the full pipeline output for the UI
+            TRANSCRIPTION_STATE["pipeline_results"] = {
+                "raw_manuscript": pipeline.state.raw_manuscript[:500] + "..." if len(pipeline.state.raw_manuscript) > 500 else pipeline.state.raw_manuscript,
+                "chapterized": bool(pipeline.state.chapterized_book),
+                "marketing_blurb": pipeline.state.marketing_blurb[:300] if pipeline.state.marketing_blurb else None,
+                "pacing_report": pipeline.state.pacing_report[:300] if pipeline.state.pacing_report else None,
+                "is_freemium": pipeline.state.is_freemium,
+            }
+
+    except Exception as e:
+        import traceback
+        with TRANSCRIPTION_LOCK:
+            TRANSCRIPTION_STATE["status"] = "error"
+            TRANSCRIPTION_STATE["error_message"] = f"Pipeline error: {str(e)}"
+        traceback.print_exc()
+
+
+@router.post("/start-pipeline")
+def start_pipeline(req: PipelineRequest):
+    """
+    [N3]: Launches the full CrewAI TomeMasterPipeline in a background thread.
+
+    This runs the complete pipeline:
+      Phase 0: Vault/license check
+      Phase 1: Batch transcription (OCR via vision agents)
+      Phase 2: Chapterization (structural editor)
+      Phase 3: Marketing + Pacing analysis (parallel fan-out)
+      Phase 4: Watermark/finalize
+
+    The frontend polls GET /status as usual — the transcription crew's
+    ui_sync_callback writes progress to the shared TRANSCRIPTION_STATE.
+    """
+    from services.transcriber_service import TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK
+
+    with TRANSCRIPTION_LOCK:
+        if TRANSCRIPTION_STATE.get("status") == "running":
+            return {"status": "already_running", "message": "A transcription is already in progress."}
+
+    thread = threading.Thread(target=_run_pipeline_thread, args=(req.folder_path,), daemon=True)
+    thread.start()
+
+    return {
+        "status": "started",
+        "engine": "crewai_pipeline",
+        "folder_path": req.folder_path,
+        "message": "Full CrewAI pipeline launched. Poll /status for progress."
+    }
