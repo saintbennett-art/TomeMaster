@@ -3,8 +3,6 @@ import os
 import subprocess
 import threading
 
-from dotenv import load_dotenv
-load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 # [SOVEREIGN ENGINE]: Standard initialization sequence
 from fastapi import FastAPI
