@@ -38,7 +38,7 @@ echo [SOVEREIGN]: Waiting for frontend initialization...
 timeout /t 6 /nobreak >nul
 
 :: ─── PHASE 6: Open Browser WITH Port Handshake Injected ───────────────────────
-echo [SOVEREIGN]: Opening workstation at http://localhost:3000?api_port=%BACKEND_PORT%
+echo [SOVEREIGN]: Opening workstation at http://localhost:3333?api_port=%BACKEND_PORT%
 start "" "http://localhost:3333?api_port=%BACKEND_PORT%"
 
 echo.
