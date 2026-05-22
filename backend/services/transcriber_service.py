@@ -942,9 +942,16 @@ def ingest_project_baseline(folder_path: str):
             elif manuscript_exists:
                 # [S4]: UNIFIED FOUNDATIONS
                 try:
-                    with open(manuscript_path, "r", encoding="utf-8") as f:
-                        raw_text = f.read()
-                        final_text = check_and_strip_manuscript_markers(raw_text)
+                    # [PHASE 2]: Prefer Clean_Manuscript.md (post-stitch cleanup output) over raw
+                    clean_manuscript_path = os.path.join(folder_path, "Clean_Manuscript.md")
+                    if os.path.exists(clean_manuscript_path):
+                        with open(clean_manuscript_path, "r", encoding="utf-8") as f:
+                            final_text = f.read()
+                        print("BOARDROOM: Loaded Clean_Manuscript.md (Phase 2 processed)")
+                    else:
+                        with open(manuscript_path, "r", encoding="utf-8") as f:
+                            raw_text = f.read()
+                            final_text = check_and_strip_manuscript_markers(raw_text)
                     
                     if "MISSING" in final_text:
                         status_msg = "Voice of TomeMaster: I have identified disruptions in the manuscript sequence. I have injected anchors at the missing coordinates. Place the missing photos in the root for a Surgical Injection."
@@ -1181,6 +1188,25 @@ def resort_from_cache(folder_path: str):
                     })
                 save_persistent_state()
                 print(f"BOARDROOM: Manuscript Sealed at {output_path}")
+                
+                # ═══ PHASE 2: POST-STITCH CLEANUP ═══
+                # Produces Clean_Manuscript.md — deduplicated, artifact-free, chapter-structured
+                try:
+                    from services.transcriber.post_stitch_cleanup import run_post_stitch_cleanup
+                    cleanup_ok = run_post_stitch_cleanup(folder_path)
+                    if cleanup_ok:
+                        # Load the clean version into the editor state
+                        clean_path = os.path.join(folder_path, "Clean_Manuscript.md")
+                        if os.path.exists(clean_path):
+                            with open(clean_path, "r", encoding="utf-8") as cf:
+                                clean_text = cf.read()
+                            with TRANSCRIPTION_LOCK:
+                                TRANSCRIPTION_STATE["text"] = clean_text.strip()
+                            print("BOARDROOM: Clean manuscript loaded into editor state")
+                except Exception as cleanup_err:
+                    print(f"BOARDROOM WARNING: Phase 2 cleanup failed (non-fatal): {cleanup_err}")
+                    # Non-fatal — the raw Unified_Manuscript.md is still valid
+                
             return True
 
         except Exception as e:
@@ -1385,8 +1411,9 @@ def clear_transcription_state():
     # [EDITORIAL CLEANSE]: Remove disk artifacts so hydration cannot resurrect cleared content
     if folder:
         manuscript_path = os.path.join(folder, "Unified_Manuscript.md")
+        clean_path = os.path.join(folder, "Clean_Manuscript.md")
         lock_path = manuscript_path + ".STITCH_LOCK"
-        for path in [manuscript_path, lock_path]:
+        for path in [manuscript_path, clean_path, lock_path]:
             try:
                 if os.path.exists(path):
                     os.remove(path)
