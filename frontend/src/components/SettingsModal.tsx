@@ -127,52 +127,41 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
             }
         }
 
-        // [AUTO-ASSIGN]: Pick the best model per role — no user input required.
-        // Flash = fast/cheap (transcription, logic). Pro = deep reasoning (analysis, narrative).
-        const pickBest = (models: DiscoveredModel[], prefer: 'flash' | 'pro'): string => {
-            if (!models || models.length === 0) return '';
-            const ranked = [...models].sort((a, b) => {
-                const aId = a.id.toLowerCase();
-                const bId = b.id.toLowerCase();
-                if (prefer === 'flash') {
-                    if (aId.includes('flash') && !bId.includes('flash')) return -1;
-                    if (!aId.includes('flash') && bId.includes('flash')) return 1;
-                } else {
-                    if (aId.includes('pro') && !bId.includes('pro')) return -1;
-                    if (!aId.includes('pro') && bId.includes('pro')) return 1;
-                }
-                return 0;
+        // [DYNAMIC ROUTING]: Tell the backend to set all roles to "auto" so it
+        // queries the live model list and picks the best model for each role
+        // dynamically. No hardcoded model names in the frontend.
+        // The backend's _resolve_auto_model() handles the ranking per role.
+        const preferred_models: Record<string, string> = {
+            TRANSCRIBER_LEAD: "auto",
+            NARRATIVE_ARCHITECT: "auto",
+            COPY_EDITOR: "auto",
+            MARKETING_ANALYST: "auto",
+            SOVEREIGN_LIAISON: "auto",
+            vision: "auto",
+            logic: "auto",
+            analysis: "auto",
+        };
+
+        try {
+            const settingsRes = await fetch(`${API_BASE_HOLDER.current}/settings/update`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ preferred_models })
             });
-            return ranked[0].id;
-        };
+            if (settingsRes.ok) {
+                console.log("[VAULT]: Model routing set to dynamic auto-discovery.");
+            }
+        } catch { /* Silent — defaults remain in place */ }
 
-        const geminiModels = allDiscovered['gemini']    || [];
-        const groqModels   = allDiscovered['groq']      || [];
-        const openaiModels = allDiscovered['openai']    || [];
-        const claudeModels = allDiscovered['anthropic'] || [];
-
-        const autoSelected = {
-            TRANSCRIBER_LEAD:    pickBest(geminiModels, 'flash') || pickBest(groqModels, 'flash'),
-            NARRATIVE_ARCHITECT: pickBest(geminiModels, 'pro')   || pickBest(openaiModels, 'pro'),
-            COPY_EDITOR:         pickBest(claudeModels, 'pro')   || pickBest(openaiModels, 'pro'),
-            vision:              pickBest(geminiModels, 'flash') || pickBest(groqModels, 'flash'),
-            logic:               pickBest(geminiModels, 'flash') || pickBest(groqModels, 'flash'),
-            analysis:            pickBest(geminiModels, 'pro')   || pickBest(claudeModels, 'pro'),
-        };
-
-        const preferred_models = Object.fromEntries(
-            Object.entries(autoSelected).filter(([, v]) => v)
-        );
-
-        if (Object.keys(preferred_models).length > 0) {
-            setSelectedModels(autoSelected as Record<string, string>);
+        // [UI FEEDBACK]: Show what the backend actually resolved for display
+        if (Object.keys(allDiscovered).length > 0) {
             try {
-                await fetch(`${API_BASE_HOLDER.current}/analysis/settings`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ preferred_models })
-                });
-            } catch { /* Silent — defaults remain in place */ }
+                const resolvedRes = await fetch(`${API_BASE_HOLDER.current}/settings/resolved-models`);
+                if (resolvedRes.ok) {
+                    const resolved = await resolvedRes.json();
+                    setSelectedModels(resolved.models || {});
+                }
+            } catch { /* Silent */ }
         }
     };
 
