@@ -68,12 +68,13 @@ def scan_manuscript_folder(folder_path: str, artifacts_dir: str) -> Tuple[List[s
                 
     all_files = sorted(all_files, key=natural_sort_key)
     
-    # Check for existing artifacts to calculate already_processed count
+    # Check for existing artifacts to calculate already_processed count.
+    # ROOT ONLY — Archive holds completed work from prior runs and must
+    # never influence the discovery of pages that still need processing.
     existing_rtfs = set()
-    for area in [folder_path, artifacts_dir]:
-        if os.path.exists(area):
-            for rtf_file in glob.glob(os.path.join(area, "*.rtf")):
-                existing_rtfs.add(os.path.basename(rtf_file).lower())
+    if os.path.exists(folder_path):
+        for rtf_file in glob.glob(os.path.join(folder_path, "*.rtf")):
+            existing_rtfs.add(os.path.basename(rtf_file).lower())
     
     files_needing_processing = 0
     # Note: files_needing_processing is now less accurate than total_pages, 

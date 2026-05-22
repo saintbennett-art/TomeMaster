@@ -538,17 +538,13 @@ def run_transcription_job(api_key: str, folder_path: str, provider: str = "opena
             except Exception as e:
                 print("Cache load failed, starting fresh:", e)
 
-        # [HYDRATION]: Build a set of existing RTF artifacts (Root + Archive)
+        # [HYDRATION]: Build a set of existing RTF artifacts — ROOT ONLY.
+        # Archive is for post-transcription storage. Scanning it here would
+        # cause stale artifacts from previous runs to trick the engine into
+        # thinking pages are already processed, resulting in 0% forever.
         existing_rtfs = set()
-        for area in [folder_path, artifacts_path]:
-            if os.path.exists(area):
-                for rtf_file in glob.glob(os.path.join(area, "*.rtf")):
-                    existing_rtfs.add(os.path.basename(rtf_file).lower())
-        
-        # Also check _manuscript_source subdirectory for legacy support
-        src_subdir = os.path.join(folder_path, "_manuscript_source")
-        if os.path.isdir(src_subdir):
-            for rtf_file in glob.glob(os.path.join(src_subdir, "*.rtf")):
+        if os.path.exists(folder_path):
+            for rtf_file in glob.glob(os.path.join(folder_path, "*.rtf")):
                 existing_rtfs.add(os.path.basename(rtf_file).lower())
         
         files_needing_processing = 0
