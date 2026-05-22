@@ -5,6 +5,8 @@ python-multipart
 beautifulsoup4
 reportlab
 python-docx
+olefile
+pywin32; sys_platform == "win32"
 google-genai
 pillow
 ebooklib

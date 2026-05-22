@@ -36,9 +36,10 @@ def scan_manuscript_folder(folder_path: str, artifacts_dir: str) -> Tuple[List[s
     all_files = []
     seen_filenames = set()
     cover_path = None
-    # [FIX]: Include Word documents — they should be TEXT-PARSED, not OCR'd.
+    # [FIX]: Include Word documents and legacy formats — TEXT-PARSED, not OCR'd.
     # The transcription loop checks is_parseable_document() before routing.
-    extensions = ["jpg", "jpeg", "png", "pdf", "webp", "docx", "doc"]
+    # Legacy formats (.doc, .wpd, .wps, .odt) handled by legacy_parser.py
+    extensions = ["jpg", "jpeg", "png", "pdf", "webp", "docx", "doc", "wpd", "wps", "odt"]
     total_pages = 0
     
     for ext in extensions:
@@ -66,8 +67,8 @@ def scan_manuscript_folder(folder_path: str, artifacts_dir: str) -> Tuple[List[s
                         doc.close()
                     except:
                         total_pages += 1 # Fallback to 1 if corrupt
-                elif lower_path.endswith((".docx", ".doc")):
-                    # Word docs are variable-length; estimate 1 page per file
+                elif lower_path.endswith((".docx", ".doc", ".wpd", ".wps", ".odt")):
+                    # Document files are variable-length; estimate 1 page per file
                     # (actual page count determined during parsing)
                     total_pages += 1
                 else:

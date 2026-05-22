@@ -130,12 +130,15 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 } else {
                     notify(`Manuscript Ingested: ${result.filename}`);
                     notify(`Command set to: ${result.folder_path}`);
-                    if (['pdf', 'docx', 'doc'].includes(ext || '')) {
+                    if (['pdf', 'docx', 'doc', 'wpd', 'wps', 'odt'].includes(ext || '')) {
                         // [SMART ROUTE]: If the backend says this file is parseable
-                        // (digital PDF with text layer, or Word doc), auto-start
+                        // (digital PDF with text layer, Word doc, or legacy format), auto-start
                         // transcription — the backend will text-parse instead of OCR.
                         if (result.is_parseable) {
-                            notify("Digital document detected — extracting text (no OCR needed)...");
+                            const legacy = ['doc', 'wpd', 'wps', 'odt'].includes(ext || '');
+                            notify(legacy
+                                ? "Legacy document detected — resurrecting manuscript text..."
+                                : "Digital document detected — extracting text (no OCR needed)...");
                             // Auto-trigger transcription; backend smart-routes to text parser
                             await invokeTranscription();
                         } else {
