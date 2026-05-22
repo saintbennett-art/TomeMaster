@@ -36,7 +36,9 @@ def scan_manuscript_folder(folder_path: str, artifacts_dir: str) -> Tuple[List[s
     all_files = []
     seen_filenames = set()
     cover_path = None
-    extensions = ["jpg", "jpeg", "png", "pdf", "webp"]
+    # [FIX]: Include Word documents — they should be TEXT-PARSED, not OCR'd.
+    # The transcription loop checks is_parseable_document() before routing.
+    extensions = ["jpg", "jpeg", "png", "pdf", "webp", "docx", "doc"]
     total_pages = 0
     
     for ext in extensions:
@@ -55,14 +57,19 @@ def scan_manuscript_folder(folder_path: str, artifacts_dir: str) -> Tuple[List[s
                     print(f"BOARDROOM: Additional cover asset skipped: {fname}")
             else:
                 all_files.append(f_path)
-                # [PAGE DISCOVERY]: Count actual pages if it's a PDF
-                if f_path.lower().endswith(".pdf"):
+                # [PAGE DISCOVERY]: Count actual pages for multi-page assets
+                lower_path = f_path.lower()
+                if lower_path.endswith(".pdf"):
                     try:
                         doc = fitz.open(f_path)
                         total_pages += len(doc)
                         doc.close()
                     except:
                         total_pages += 1 # Fallback to 1 if corrupt
+                elif lower_path.endswith((".docx", ".doc")):
+                    # Word docs are variable-length; estimate 1 page per file
+                    # (actual page count determined during parsing)
+                    total_pages += 1
                 else:
                     total_pages += 1
                 
