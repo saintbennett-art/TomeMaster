@@ -117,30 +117,48 @@ def is_parseable_document(f_path: str) -> bool:
     """Returns True if the file should be TEXT-PARSED instead of OCR'd.
     
     This covers:
-    - .docx / .doc files (always parseable — they're never scans)
+    - .docx files (always parseable via python-docx)
+    - .doc / .wpd / .wps / .odt files (legacy formats — parsed via COM or fallback)
     - .pdf files WITH a native text layer (exported from Word, InDesign, etc.)
     
     Returns False for:
     - .pdf files that are pure scans (no text layer → needs OCR)
     - Image files (.jpg, .png, etc.)
     """
+    from services.transcriber.legacy_parser import LEGACY_EXTENSIONS
     lower = f_path.lower()
-    if lower.endswith(('.docx', '.doc')):
+    ext = os.path.splitext(lower)[1]
+    if lower.endswith('.docx'):
         return True
+    if ext in LEGACY_EXTENSIONS:
+        return True  # .doc, .wpd, .wps, .odt — always text, never scanned images
     if lower.endswith('.pdf'):
         return _pdf_has_text_layer(f_path)
     return False
 
 
 def parse_document_text(f_path: str) -> Optional[str]:
-    """[SMART ROUTER]: Extracts text from a parseable document (PDF or DOCX).
+    """[SMART ROUTER]: Extracts text from a parseable document.
     
+    Routes: .docx → python-docx, .doc/.wpd/.wps/.odt → legacy_parser, .pdf → PyMuPDF
     Returns <page>-tagged text ready for the RTF pipeline, or None on failure.
     Call is_parseable_document() first to verify the file qualifies.
     """
+    from services.transcriber.legacy_parser import LEGACY_EXTENSIONS, parse_legacy_document
     lower = f_path.lower()
-    if lower.endswith(('.docx', '.doc')):
+    ext = os.path.splitext(lower)[1]
+    
+    if lower.endswith('.docx'):
         return parse_text_docx(f_path)
+    if ext in LEGACY_EXTENSIONS:
+        # .doc, .wpd, .wps, .odt → Manuscript Resurrection Engine
+        result = parse_legacy_document(f_path)
+        if result:
+            print(f"[SMART ROUTE]: {os.path.basename(f_path)} → legacy parse (resurrected, no API credits)")
+            return result
+        # Legacy parser exhausted — caller will fall back to OCR
+        print(f"[SMART ROUTE]: Legacy parse failed for {os.path.basename(f_path)}, falling back to OCR")
+        return None
     if lower.endswith('.pdf'):
         return parse_text_pdf(f_path)
     return None
