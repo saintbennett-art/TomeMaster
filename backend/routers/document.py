@@ -288,12 +288,17 @@ async def load_manuscript_picker():
     folder = os.path.dirname(file_path).replace('\\', '/')
     transcriber_service.ingest_project_baseline(folder)
     
+    # [SMART ROUTE]: Check if this file can be text-parsed (no OCR needed)
+    from services.transcriber import vision_processor
+    is_parseable = vision_processor.is_parseable_document(file_path)
+    
     # Return both so the UI can update
     return {
         "status": "loaded", 
         "file_path": file_path, 
         "folder_path": folder,
-        "filename": os.path.basename(file_path)
+        "filename": os.path.basename(file_path),
+        "is_parseable": is_parseable  # Frontend uses this to skip "Click Transcribe" gate
     }
 
 @router.get("/read")
