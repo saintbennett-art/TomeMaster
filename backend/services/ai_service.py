@@ -33,11 +33,13 @@ def _resolve_gateway_config(role: str, override: dict = None) -> dict:
     if provider_override and provider_override != base.get("provider"):
         from .settings_service import get_api_key
         out["provider"] = provider_override
+        bitnet_host = os.getenv("BITNET_HOST", "http://localhost:8080")
         provider_urls = {
             "gemini":    "https://generativelanguage.googleapis.com/v1beta/openai/",
             "openai":    "https://api.openai.com/v1/",
             "anthropic": "https://api.anthropic.com/v1/",
             "groq":      "https://api.groq.com/openai/v1/",
+            "bitnet":    f"{bitnet_host}/v1/",
         }
         out["url"] = provider_urls.get(provider_override, base.get("url"))
         # If no per-request key supplied, look up the provider's key from vault.
@@ -216,11 +218,13 @@ async def auto_configure_gateway_async(api_key: str):
 
 # [ROUTING TABLE]: Default discovery endpoints per provider. Used when callers
 # don't pass an explicit gateway URL.
+_BITNET_HOST = os.getenv("BITNET_HOST", "http://localhost:8080")
 _PROVIDER_DISCOVERY_URLS = {
     "openai":    "https://api.openai.com/v1/",
     "gemini":    "https://generativelanguage.googleapis.com/v1beta/openai/",
     "groq":      "https://api.groq.com/openai/v1/",
     "anthropic": "https://api.anthropic.com/v1/",
+    "bitnet":    f"{_BITNET_HOST}/v1/",
 }
 
 
