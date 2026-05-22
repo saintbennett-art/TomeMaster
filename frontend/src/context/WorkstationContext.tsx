@@ -130,8 +130,17 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 } else {
                     notify(`Manuscript Ingested: ${result.filename}`);
                     notify(`Command set to: ${result.folder_path}`);
-                    if (['pdf', 'docx'].includes(ext || '')) {
-                        notify("ACTION REQUIRED: This is a complex file. Click 'Transcribe' to extract the manuscript prose.");
+                    if (['pdf', 'docx', 'doc'].includes(ext || '')) {
+                        // [SMART ROUTE]: If the backend says this file is parseable
+                        // (digital PDF with text layer, or Word doc), auto-start
+                        // transcription — the backend will text-parse instead of OCR.
+                        if (result.is_parseable) {
+                            notify("Digital document detected — extracting text (no OCR needed)...");
+                            // Auto-trigger transcription; backend smart-routes to text parser
+                            await invokeTranscription();
+                        } else {
+                            notify("ACTION REQUIRED: This is a scanned document. Click 'Transcribe' to OCR the manuscript.");
+                        }
                     } else {
                         notify("Ready for Structural Audit.");
                     }
