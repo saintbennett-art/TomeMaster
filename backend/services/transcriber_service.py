@@ -52,10 +52,38 @@ TRANSCRIPTION_STATE = {
     "stream_buffer": [], # Stores newest pages for lightweight frontend streaming
     "folder": None,
     "missing_pages_count": 0,
-    "diary": [] # [DIARY]: Persistent history of project milestones
+    "diary": [], # [DIARY]: Persistent history of project milestones
+    # [NERVE CENTER]: Active agent/model telemetry for real-time UI display
+    "active_agents": [],  # [{role, model, provider, status}]
 }
 
 TRANSCRIPTION_ARTIFACTS_DIR = "Archive"
+
+
+def _update_active_agent(role: str, model: str, provider: str, status: str):
+    """[NERVE CENTER]: Updates or inserts an active agent entry in TRANSCRIPTION_STATE.
+    
+    Each entry is {role, model, provider, status}. If the role already exists,
+    it gets updated in-place. Status: 'working', 'complete', 'error', 'idle'.
+    Must be called inside TRANSCRIPTION_LOCK.
+    """
+    agents = TRANSCRIPTION_STATE.get("active_agents", [])
+    # Update existing entry for this role
+    for agent in agents:
+        if agent.get("role") == role:
+            agent["model"] = model
+            agent["provider"] = provider
+            agent["status"] = status
+            return
+    # New role — append
+    agents.append({"role": role, "model": model, "provider": provider, "status": status})
+    TRANSCRIPTION_STATE["active_agents"] = agents
+
+
+def _clear_active_agents():
+    """Resets all agent entries to idle. Must be called inside TRANSCRIPTION_LOCK."""
+    TRANSCRIPTION_STATE["active_agents"] = []
+
 
 # Tracks whether a stitching thread is actually running in THIS process.
 # Unlike the ledger status (which persists across restarts), this is always
@@ -628,12 +656,20 @@ def run_transcription_job(api_key: str, folder_path: str, provider: str = "opena
                         batch_start_time = time.time()
                         
                         try:
+                            # [NERVE CENTER]: Announce the model before the call starts
+                            with TRANSCRIPTION_LOCK:
+                                _update_active_agent("TRANSCRIBER_LEAD", model_override or "resolving...", provider, "working")
+
                             # Direct await instead of asyncio.run
                             raw_text, used_prov, used_mod = await _call_ai_with_failover(
                                 img, provider, model_override, api_key,
                                 fallback_provider=fallback_provider,
                                 fallback_model=fallback_model
                             )
+
+                            # [NERVE CENTER]: Update with the actual model used (may differ after failover)
+                            with TRANSCRIPTION_LOCK:
+                                _update_active_agent("TRANSCRIBER_LEAD", used_mod, used_prov, "working")
                             
                             metrics = {"total_tokens": 0}
                             duration = round(time.time() - batch_start_time, 2)
@@ -642,6 +678,7 @@ def run_transcription_job(api_key: str, folder_path: str, provider: str = "opena
                             with TRANSCRIPTION_LOCK:
                                 TRANSCRIPTION_STATE["status"] = "error"
                                 TRANSCRIPTION_STATE["error_message"] = f"Spectrum Blackout: {str(failover_e)}"
+                                _update_active_agent("TRANSCRIBER_LEAD", model_override or "unknown", provider, "error")
                             return
 
                         with TRANSCRIPTION_LOCK:

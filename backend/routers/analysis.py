@@ -146,14 +146,27 @@ async def update_settings(req: SettingsUpdateRequest):
 
 @router.get("/pulse")
 async def boardroom_pulse_endpoint():
-    """Real-Time Pulse: Streams expert handshake progress to all UI subscribers via Server-Sent Events."""
+    """Real-Time Pulse: Streams expert handshake progress to all UI subscribers via Server-Sent Events.
+    
+    Includes active_agents telemetry from TRANSCRIPTION_STATE so the Nerve Center
+    can display which model is currently active per role.
+    """
 
     async def event_generator():
         # [NEURAL TELEMETRY]: Real-time heartbeat of the specialist boardroom
         while True:
-            # Calculate neural load based on CPU activity
             load = psutil.cpu_percent() if PSUTIL_AVAILABLE else 0
-            yield f"data: {json.dumps({'pulse': 'active', 'neural_load': load, 'timestamp': time.time()})}\n\n"
+
+            # [NERVE CENTER]: Pull active agent info from transcription state
+            active_agents = []
+            try:
+                from services.transcriber_service import TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK
+                with TRANSCRIPTION_LOCK:
+                    active_agents = list(TRANSCRIPTION_STATE.get("active_agents", []))
+            except Exception:
+                pass
+
+            yield f"data: {json.dumps({'pulse': 'active', 'neural_load': load, 'timestamp': time.time(), 'active_agents': active_agents})}\n\n"
             await asyncio.sleep(2)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

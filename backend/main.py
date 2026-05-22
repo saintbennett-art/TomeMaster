@@ -5,6 +5,19 @@ import threading
 
 
 # [SOVEREIGN ENGINE]: Standard initialization sequence
+# [KEY PERSISTENCE]: Hydrate env vars from encrypted vault at startup.
+# Keys saved via Settings → Seal Vault are written to settings.enc (Fernet AES).
+# This ensures they survive application restarts without re-entry.
+try:
+    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+    from src.tomemaster.vault_loader import inject_keys_to_env
+    if inject_keys_to_env():
+        print("[VAULT HYDRATION]: API keys restored from encrypted vault.")
+    else:
+        print("[VAULT HYDRATION]: No saved keys found — enter them in Settings.")
+except Exception as e:
+    print(f"[VAULT HYDRATION WARNING]: Could not restore keys: {e}")
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles

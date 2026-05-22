@@ -34,3 +34,24 @@ def get_key(provider: str):
         # Return masked key for UI security
         return {"provider": provider, "key_masked": f"{key[:4]}...{key[-4:]}"}
     return {"provider": provider, "key_masked": "NOT_FOUND"}
+
+
+@router.get("/resolved-models")
+def get_resolved_models():
+    """[DYNAMIC ROUTING]: Returns the actual models resolved for each role.
+    
+    When preferred_models is set to "auto", the backend queries the live API
+    portfolio and picks the best model per role. This endpoint shows the result.
+    """
+    roles = [
+        "TRANSCRIBER_LEAD", "NARRATIVE_ARCHITECT", "COPY_EDITOR",
+        "MARKETING_ANALYST", "SOVEREIGN_LIAISON"
+    ]
+    models = {}
+    for role in roles:
+        config = settings_service.get_model_for_role(role)
+        models[role] = {
+            "model": config.get("model", "unknown"),
+            "provider": config.get("provider", "unknown"),
+        }
+    return {"models": models}
