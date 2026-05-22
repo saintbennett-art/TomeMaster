@@ -541,7 +541,7 @@ def run_transcription_job(api_key: str, folder_path: str, provider: str = "opena
         
         if total_files == 0:
             TRANSCRIPTION_STATE["status"] = "error"
-            TRANSCRIPTION_STATE["error_message"] = "Directorial Rejection: No manuscript evidence (JPG, PNG, or PDF) identified."
+            TRANSCRIPTION_STATE["error_message"] = "Directorial Rejection: No manuscript evidence (JPG, PNG, PDF, DOCX) identified."
             return
 
         # [SOVEREIGN INGESTION]: Single-page processing for absolute transparency
@@ -637,81 +637,107 @@ def run_transcription_job(api_key: str, folder_path: str, provider: str = "opena
             while True:
                 job = await queue.get()
                 i, f_path = job
+                label = f_path  # default label for page extraction
                 
                 # Check if we should pause for user input in Live Mode
                 while TRANSCRIPTION_STATE.get("waiting_for_input"):
                     await asyncio.sleep(1)
                 
                 try:
-                    # [MODULAR VISION]: Delegate asset unpacking and telemetry generation to VisionProcessor
-                    images_to_process = vision_processor.process_asset(f_path, folder_path)
-                    
-                    if not images_to_process:
-                        continue
-                            
-                    for img, label in images_to_process:
-                        with TRANSCRIPTION_LOCK:
-                            TRANSCRIPTION_STATE["current_image_b64"] = vision_processor.generate_telemetry(img)
+                    # ─── SMART ROUTING: Parse vs OCR ─────────────────────────
+                    # [FIX]: Word files and digital PDFs (with selectable text)
+                    # should be TEXT-PARSED, not sent through OCR. OCR is only
+                    # for scanned images and image-only PDFs.
+                    # This saves API credits and produces zero-error output.
+                    _parsed_text_shortcut = False
+                    raw_text = ""
+                    if vision_processor.is_parseable_document(f_path):
+                        parsed = vision_processor.parse_document_text(f_path)
+                        if parsed:
+                            raw_text = parsed
+                            with TRANSCRIPTION_LOCK:
+                                _update_active_agent("TRANSCRIBER_LEAD", "text-parser", "local", "working")
+                                TRANSCRIPTION_STATE["current_extracted_text"] = raw_text.strip()
+                                TRANSCRIPTION_STATE["current_image_b64"] = None
+                                TRANSCRIPTION_STATE["is_new_chunk"] = True
+                            _log_api_usage("TextParser", "local", "native-extraction", {"total_tokens": 0}, folder_path, 0.01)
+                            print(f"[SMART ROUTE]: {os.path.basename(f_path)} → text parse (no OCR, no API credits)")
+                            _parsed_text_shortcut = True
+                        else:
+                            print(f"[SMART ROUTE]: Text parse empty for {os.path.basename(f_path)}, falling back to OCR")
+
+                    if not _parsed_text_shortcut:
+                        # ─── OCR PATH: Image/scanned assets ──────────────────
+                        # [MODULAR VISION]: Delegate asset unpacking and telemetry generation to VisionProcessor
+                        images_to_process = vision_processor.process_asset(f_path, folder_path)
                         
-                        batch_start_time = time.time()
-                        
-                        try:
-                            # [NERVE CENTER]: Announce the model before the call starts
-                            with TRANSCRIPTION_LOCK:
-                                _update_active_agent("TRANSCRIBER_LEAD", model_override or "resolving...", provider, "working")
-
-                            # Direct await instead of asyncio.run
-                            raw_text, used_prov, used_mod = await _call_ai_with_failover(
-                                img, provider, model_override, api_key,
-                                fallback_provider=fallback_provider,
-                                fallback_model=fallback_model
-                            )
-
-                            # [NERVE CENTER]: Update with the actual model used (may differ after failover)
-                            with TRANSCRIPTION_LOCK:
-                                _update_active_agent("TRANSCRIBER_LEAD", used_mod, used_prov, "working")
-                            
-                            metrics = {"total_tokens": 0}
-                            duration = round(time.time() - batch_start_time, 2)
-                            _log_api_usage("Transcriber", used_prov, used_mod, metrics, folder_path, duration)
-                        except Exception as failover_e:
-                            with TRANSCRIPTION_LOCK:
-                                TRANSCRIPTION_STATE["status"] = "error"
-                                TRANSCRIPTION_STATE["error_message"] = f"Spectrum Blackout: {str(failover_e)}"
-                                _update_active_agent("TRANSCRIBER_LEAD", model_override or "unknown", provider, "error")
-                            return
-
-                        with TRANSCRIPTION_LOCK:
-                            TRANSCRIPTION_STATE["current_extracted_text"] = raw_text.strip()
-                            TRANSCRIPTION_STATE["is_new_chunk"] = True
-                            
-                        pages = re.findall(r'<page>.*?</page>', raw_text, re.DOTALL)
-                        for p_idx, p in enumerate(pages):
-                            num_match = re.search(r'<number>(.*?)</number>', p, re.DOTALL)
-                            text_match = re.search(r'<text>(.*?)</text>', p, re.DOTALL)
-                            if num_match and text_match:
-                                t_text = text_match.group(1).strip()
-                                extracted_num = num_match.group(1).strip()
+                        if not images_to_process:
+                            continue
                                 
-                                 # [FIDELITY]: Use the filename's absolute sequence number for the artifact slot
-                                final_page_num = str(extract_sequence_number(label) or i)
-                                if extracted_num.isdigit() and not extract_sequence_number(label):
-                                    # Fallback to AI's guess only if filename is opaque
-                                    final_page_num = str(int(extracted_num) + TRANSCRIPTION_STATE["offset_delta"])
+                        for img, label in images_to_process:
+                            with TRANSCRIPTION_LOCK:
+                                TRANSCRIPTION_STATE["current_image_b64"] = vision_processor.generate_telemetry(img)
+                            
+                            batch_start_time = time.time()
+                            
+                            try:
+                                # [NERVE CENTER]: Announce the model before the call starts
+                                with TRANSCRIPTION_LOCK:
+                                    _update_active_agent("TRANSCRIBER_LEAD", model_override or "resolving...", provider, "working")
 
-                                if save_page_artifact(folder_path, final_page_num, t_text, label, int(final_page_num)):
-                                    page_data = {
-                                        "extracted_page_number": final_page_num,
-                                        "raw_extracted_number": extracted_num,
-                                        "text": t_text,
-                                        "preview": " ".join(t_text.split()[:10]) + "..." if t_text else "",
-                                        "source_file": os.path.basename(label),
-                                        "physical_index": int(final_page_num)
-                                    }
-                                    with TRANSCRIPTION_LOCK:
-                                        master_pages.append(page_data)
-                                else:
-                                    print(f"BOARDROOM WARNING: Physical Save Failed for page {final_page_num}.")
+                                # Direct await instead of asyncio.run
+                                raw_text, used_prov, used_mod = await _call_ai_with_failover(
+                                    img, provider, model_override, api_key,
+                                    fallback_provider=fallback_provider,
+                                    fallback_model=fallback_model
+                                )
+
+                                # [NERVE CENTER]: Update with the actual model used (may differ after failover)
+                                with TRANSCRIPTION_LOCK:
+                                    _update_active_agent("TRANSCRIBER_LEAD", used_mod, used_prov, "working")
+                                
+                                metrics = {"total_tokens": 0}
+                                duration = round(time.time() - batch_start_time, 2)
+                                _log_api_usage("Transcriber", used_prov, used_mod, metrics, folder_path, duration)
+                            except Exception as failover_e:
+                                with TRANSCRIPTION_LOCK:
+                                    TRANSCRIPTION_STATE["status"] = "error"
+                                    TRANSCRIPTION_STATE["error_message"] = f"Spectrum Blackout: {str(failover_e)}"
+                                    _update_active_agent("TRANSCRIBER_LEAD", model_override or "unknown", provider, "error")
+                                return
+
+                            with TRANSCRIPTION_LOCK:
+                                TRANSCRIPTION_STATE["current_extracted_text"] = raw_text.strip()
+                                TRANSCRIPTION_STATE["is_new_chunk"] = True
+
+                    # ─── PAGE EXTRACTION (shared by both paths) ──────────
+                    pages = re.findall(r'<page>.*?</page>', raw_text, re.DOTALL)
+                    for p_idx, p in enumerate(pages):
+                        num_match = re.search(r'<number>(.*?)</number>', p, re.DOTALL)
+                        text_match = re.search(r'<text>(.*?)</text>', p, re.DOTALL)
+                        if num_match and text_match:
+                            t_text = text_match.group(1).strip()
+                            extracted_num = num_match.group(1).strip()
+                            
+                            # [FIDELITY]: Use the filename's absolute sequence number for the artifact slot
+                            final_page_num = str(extract_sequence_number(label) or i)
+                            if extracted_num.isdigit() and not extract_sequence_number(label):
+                                # Fallback to AI's guess only if filename is opaque
+                                final_page_num = str(int(extracted_num) + TRANSCRIPTION_STATE["offset_delta"])
+
+                            if save_page_artifact(folder_path, final_page_num, t_text, label, int(final_page_num)):
+                                page_data = {
+                                    "extracted_page_number": final_page_num,
+                                    "raw_extracted_number": extracted_num,
+                                    "text": t_text,
+                                    "preview": " ".join(t_text.split()[:10]) + "..." if t_text else "",
+                                    "source_file": os.path.basename(label),
+                                    "physical_index": int(final_page_num)
+                                }
+                                with TRANSCRIPTION_LOCK:
+                                    master_pages.append(page_data)
+                            else:
+                                print(f"BOARDROOM WARNING: Physical Save Failed for page {final_page_num}.")
 
                     with TRANSCRIPTION_LOCK:
                         TRANSCRIPTION_STATE["processed_images"] += 1
