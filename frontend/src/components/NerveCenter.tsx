@@ -1,8 +1,24 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Cpu, Lock, LockOpen } from 'lucide-react';
+import { Cpu, Lock, LockOpen, Zap } from 'lucide-react';
 import { API_BASE_HOLDER } from '@/lib/apiClient';
 
 const MOVED_THRESHOLD = 20;
+
+interface ActiveAgent {
+    role: string;
+    model: string;
+    provider: string;
+    status: 'working' | 'complete' | 'error' | 'idle';
+}
+
+// Friendly display names for industrial roles
+const ROLE_LABELS: Record<string, string> = {
+    'TRANSCRIBER_LEAD': 'Transcriber',
+    'NARRATIVE_ARCHITECT': 'Architect',
+    'COPY_EDITOR': 'Editor',
+    'MARKETING_ANALYST': 'Marketing',
+    'SOVEREIGN_LIAISON': 'Liaison',
+};
 
 export default function NerveCenter({ isLeftSidebarOpen = true }: { isLeftSidebarOpen?: boolean }) {
     const [load, setLoad] = useState(0);
@@ -14,6 +30,7 @@ export default function NerveCenter({ isLeftSidebarOpen = true }: { isLeftSideba
     const [hasMoved, setHasMoved] = useState(false);
     const [isLocked, setIsLocked] = useState(false);
     const [rel, setRel] = useState({ x: 0, y: 0 });
+    const [activeAgents, setActiveAgents] = useState<ActiveAgent[]>([]);
 
     useEffect(() => {
         // Set startup position: far right, just below toolbar
@@ -65,6 +82,10 @@ export default function NerveCenter({ isLeftSidebarOpen = true }: { isLeftSideba
                 const newLoad = data.neural_load || 0;
                 setLoad(newLoad);
                 setHistory(prev => [...prev.slice(1), newLoad]);
+                // [NERVE CENTER]: Active agent/model telemetry
+                if (data.active_agents && Array.isArray(data.active_agents)) {
+                    setActiveAgents(data.active_agents.filter((a: ActiveAgent) => a.status === 'working'));
+                }
             }
         };
         eventSource.onerror = () => { setStatus('offline'); eventSource.close(); };
@@ -94,7 +115,7 @@ export default function NerveCenter({ isLeftSidebarOpen = true }: { isLeftSideba
             style={{ 
                 left: `${position.x}px`, 
                 top: `${position.y}px`,
-                width: message ? '380px' : '180px',
+                width: activeAgents.length > 0 ? '380px' : message ? '380px' : '180px',
                 cursor: isLocked ? 'default' : isDragging ? 'grabbing' : 'grab',
                 transition: isDragging ? 'none' : 'left 0.2s ease-out, top 0.2s ease-out, width 0.5s ease'
             }}
@@ -157,6 +178,26 @@ export default function NerveCenter({ isLeftSidebarOpen = true }: { isLeftSideba
                         </div>
                     )}
                 </div>
+
+                {/* Line 3: Active Agent/Model Display */}
+                {activeAgents.length > 0 && (
+                    <div className="border-t border-white/5 pt-1.5 mt-0.5 space-y-1 pointer-events-none animate-in fade-in duration-300">
+                        {activeAgents.map((agent, idx) => (
+                            <div key={`${agent.role}-${idx}`} className="flex items-center gap-2">
+                                <Zap className="w-2 h-2 text-amber-400 animate-pulse shrink-0" />
+                                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-wider w-16 shrink-0">
+                                    {ROLE_LABELS[agent.role] || agent.role}
+                                </span>
+                                <span className="text-[8px] font-mono text-indigo-300 truncate">
+                                    {agent.model}
+                                </span>
+                                <span className="text-[7px] text-zinc-600 uppercase shrink-0">
+                                    {agent.provider}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
         </div>
     );
