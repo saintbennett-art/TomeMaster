@@ -47,9 +47,12 @@ export const ProviderSettingsCard: React.FC<ProviderSettingsCardProps> = ({
     systemAudit
 }) => {
     const [showKey, setShowKey] = useState(false);
+    const isLocalProvider = provider.id === 'ollama' || provider.id === 'bitnet';
     const isOllama = provider.id === 'ollama';
-    const hasEnoughRam = systemAudit?.ram_total >= 15.5; // 16GB threshold
-    const isGated = isOllama && !hasEnoughRam;
+    const isBitnet = provider.id === 'bitnet';
+    const hasEnoughRam = systemAudit?.ram_total >= 15.5; // 16GB threshold for Ollama
+    const hasEnoughRamBitnet = systemAudit?.ram_total >= 1.5; // BitNet needs <1GB for 2B model
+    const isGated = isOllama ? !hasEnoughRam : isBitnet ? !hasEnoughRamBitnet : false;
     
     const status = valStatus[provider.id] || 'idle';
     const message = valMessages[provider.id] || '';
@@ -62,7 +65,7 @@ export const ProviderSettingsCard: React.FC<ProviderSettingsCardProps> = ({
                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/60 rounded-2xl backdrop-blur-sm p-4 text-center">
                     <AlertCircle className="w-8 h-8 text-rose-500 mb-2 animate-pulse" />
                     <p className="text-[10px] font-black uppercase text-white tracking-widest">Hardware Stewardship Active</p>
-                    <p className="text-[8px] text-zinc-400 uppercase font-bold mt-1">16GB RAM Required for Local Intelligence</p>
+                    <p className="text-[8px] text-zinc-400 uppercase font-bold mt-1">{isBitnet ? '2GB RAM Required for BitNet CPU Engine' : '16GB RAM Required for Local Intelligence'}</p>
                     <p className="text-[7px] text-zinc-600 mt-2 italic">Perform "System Audit" in Vault Usage to verify.</p>
                 </div>
             )}
@@ -74,7 +77,7 @@ export const ProviderSettingsCard: React.FC<ProviderSettingsCardProps> = ({
                     </div>
                     <div>
                         <h4 className="text-xs font-black text-foreground uppercase tracking-tight">{provider.name}</h4>
-                        <p className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest">{provider.id === 'ollama' ? 'Local Handshake' : 'Cloud Intelligence'}</p>
+                        <p className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest">{isLocalProvider ? (isBitnet ? '1-Bit CPU Engine' : 'Local Handshake') : 'Cloud Intelligence'}</p>
                     </div>
                 </div>
                 {status === 'success' && <Check className="w-3 h-3 text-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.4)]" />}
@@ -316,6 +319,7 @@ export const ProviderSettingsCard: React.FC<ProviderSettingsCardProps> = ({
                         {provider.id === 'groq' ? "Llama-3.2-11B Vision is the apex choice for 400-page manuscript resurrection due to its low-latency LPU architecture." :
                          provider.id === 'gemini' ? "Gemini 3.1 Pro is the mandatory logic foundation for boardroom audits and deep-context narrative analysis." :
                          provider.id === 'anthropic' ? "Claude 3.5 Sonnet provides the most symmetrical prose mirror for creative style audits." :
+                         provider.id === 'bitnet' ? "Microsoft BitNet 1.58-bit: Runs entirely on CPU using ternary weights (−1, 0, +1). No GPU, no cloud, no API key. Sovereign intelligence at maximum efficiency." :
                          "Select an engine to synchronize this provider with your active mission objectives."}
                     </p>
                 </div>
