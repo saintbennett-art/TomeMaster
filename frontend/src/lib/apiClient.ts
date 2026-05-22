@@ -539,6 +539,14 @@ export async function fetchOllamaStatus(apiKey?: string) {
     return res.json();
 }
 
+export async function fetchBitnetStatus() {
+    const url = `${API_BASE_HOLDER.current}/ai/bitnet-status`;
+    const res = await safeFetch(url);
+    if ('isNetworkError' in res) return { status: "not_found", models: [], error: "OFFLINE" };
+    if (!res.ok) throw new Error("Failed to check BitNet status");
+    return res.json();
+}
+
 export async function validateAiKey(provider: string, apiKey: string, options: { custom_url?: string; model?: string } = {}): Promise<{ success: boolean; message: string }> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s Dead-man switch
@@ -636,8 +644,8 @@ export async function fetchAvailableModels(provider: string): Promise<Discovered
     }
 }
 
-export async function checkSystemHealth(): Promise<{ backend: boolean; vault: boolean; ollama: boolean }> {
-    const health = { backend: false, vault: false, ollama: false };
+export async function checkSystemHealth(): Promise<{ backend: boolean; vault: boolean; ollama: boolean; bitnet: boolean }> {
+    const health = { backend: false, vault: false, ollama: false, bitnet: false };
 
     // 1. Backend Ping
     try {
@@ -653,6 +661,12 @@ export async function checkSystemHealth(): Promise<{ backend: boolean; vault: bo
     try {
         const res = await fetch('http://127.0.0.1:11434/api/tags', { method: 'GET' });
         if (res.ok) health.ollama = true;
+    } catch (e) { }
+
+    // 4. BitNet Status (local CPU inference on port 8080)
+    try {
+        const res = await fetch('http://127.0.0.1:8080/v1/models', { method: 'GET' });
+        if (res.ok) health.bitnet = true;
     } catch (e) { }
 
     return health;

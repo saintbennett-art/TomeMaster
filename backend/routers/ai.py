@@ -28,6 +28,37 @@ async def get_ollama_status(api_key: Optional[str] = Query(None)):
     except Exception:
         return {"status": "not_found", "models": []}
 
+
+@router.get("/bitnet-status")
+async def get_bitnet_status():
+    """[SOVEREIGN CPU]: Checks if a local BitNet (bitnet.cpp) inference server is reachable.
+    
+    BitNet runs 1.58-bit quantized LLMs entirely on CPU — no GPU, no cloud,
+    no API key needed. The server exposes an OpenAI-compatible REST API.
+    Default: http://localhost:8080
+    Override: BITNET_HOST environment variable
+    """
+    try:
+        host = os.getenv("BITNET_HOST", "http://localhost:8080")
+        async with httpx.AsyncClient() as client:
+            # BitNet's llama-server exposes OpenAI-compatible /v1/models
+            response = await client.get(f"{host}/v1/models", timeout=3.0)
+            if response.status_code == 200:
+                data = response.json()
+                models = [m["id"] for m in data.get("data", [])]
+                # Also grab server health info if available
+                health = {"status": "active", "models": models, "host": host, "engine": "bitnet.cpp"}
+                try:
+                    slots_resp = await client.get(f"{host}/health", timeout=2.0)
+                    if slots_resp.status_code == 200:
+                        health["server_health"] = slots_resp.json()
+                except Exception:
+                    pass  # /health is optional
+                return health
+            return {"status": "reachable", "models": [], "host": host}
+    except Exception:
+        return {"status": "not_found", "models": [], "host": os.getenv("BITNET_HOST", "http://localhost:8080")}
+
 class ModelsRequest(BaseModel):
     provider: str
     api_key: str

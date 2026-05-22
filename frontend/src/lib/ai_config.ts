@@ -79,6 +79,18 @@ export const MASTER_PROVIDER_LIBRARY: Provider[] = [
         description: 'Sovereign Offline Intelligence. Executes specialized audits on local hardware.',
         nomenclatureNote: 'Sovereign Link: Port 11434 mandatory for local logistical handshakes.',
         defaultModel: 'llama3'
+    },
+    {
+        id: 'bitnet',
+        name: 'BitNet CPU Engine',
+        model: 'ggml-model-i2_s',
+        color: 'text-cyan-400',
+        placeholder: 'http://localhost:8080',
+        link: 'https://github.com/microsoft/BitNet',
+        linkLabel: 'BitNet Setup',
+        description: 'Sovereign 1-Bit Intelligence. Microsoft BitNet 1.58-bit ternary LLMs — runs entirely on CPU, no GPU required. Ultra-low power, zero cloud dependency.',
+        nomenclatureNote: 'CPU Apex: 1.58-bit ternary weights bypass floating-point math entirely. Addition and subtraction only. Port 8080 default.',
+        defaultModel: 'ggml-model-i2_s'
     }
 ];
 

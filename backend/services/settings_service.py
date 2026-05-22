@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import threading
 
 # [SOVEREIGN SETTINGS]: All persistent configuration is now routed through
@@ -11,6 +12,7 @@ SETTINGS_LOCK = threading.Lock()
 DEFAULT_SETTINGS = {
     "api_keys": {
         "openai": "", "gemini": "", "groq": "", "anthropic": "",
+        "bitnet": "",
         "slot_primary": "", "slot_specialist": "", "slot_velocity": ""
     },
     "preferred_models": {
@@ -31,7 +33,7 @@ DEFAULT_SETTINGS = {
 
 
 _PERMITTED_TOP_KEYS = set(DEFAULT_SETTINGS.keys())
-_PERMITTED_API_KEYS = {"openai", "gemini", "groq", "anthropic", "slot_primary", "slot_specialist", "slot_velocity"}
+_PERMITTED_API_KEYS = {"openai", "gemini", "groq", "anthropic", "bitnet", "slot_primary", "slot_specialist", "slot_velocity"}
 _PERMITTED_MODEL_KEYS = {"vision", "logic", "analysis", "NARRATIVE_ARCHITECT", "COPY_EDITOR", "TRANSCRIBER_LEAD", "MARKETING_ANALYST", "SOVEREIGN_LIAISON"}
 _PERMITTED_PREF_KEYS = {"theme", "auto_stitch", "language", "pii_scrub"}
 
@@ -116,6 +118,11 @@ def get_api_key(provider):
         fallback_provider = slot_map.get(provider.lower())
         if fallback_provider:
             key = settings.get("api_keys", {}).get(fallback_provider)
+
+    # [BITNET]: No API key needed — local CPU inference. Return a sentinel
+    # so the gateway dispatch treats it as "established."
+    if provider.lower() == "bitnet":
+        return key or "local-bitnet-cpu"
 
     # Fallback to .env
     if not key:
@@ -217,6 +224,18 @@ def _fetch_model_list_sync(provider: str, api_key: str) -> list:
 
     try:
         import urllib.request, json as _json
+
+        # [BITNET]: Local CPU inference — no API key needed, just a running server
+        if provider == "bitnet":
+            bitnet_host = os.getenv("BITNET_HOST", "http://localhost:8080")
+            req = urllib.request.Request(f"{bitnet_host}/v1/models")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                data = _json.loads(resp.read())
+            models = [m["id"] for m in data.get("data", [])]
+            _MODEL_CACHE = {"models": models, "provider": provider, "timestamp": time.time()}
+            print(f"[MODEL DISCOVERY]: bitnet → {len(models)} model(s) available")
+            return models
+
         if provider == "gemini":
             url = urls["gemini"] + api_key
             req = urllib.request.Request(url)
@@ -267,7 +286,7 @@ def _resolve_auto_model(role_or_category: str, settings: dict = None) -> str:
 
     # Determine which providers have keys
     providers_with_keys = []
-    for prov in ["gemini", "openai", "anthropic", "groq"]:
+    for prov in ["gemini", "openai", "anthropic", "groq", "bitnet"]:
         key = api_keys.get(prov, "")
         if key and len(key) > 5:
             providers_with_keys.append((prov, key))
@@ -359,6 +378,9 @@ def _infer_provider_from_model(model: str) -> str:
     if not model:
         return "gemini"
     m = model.lower()
+    # [BITNET]: 1.58-bit local CPU models (BitNet b1.58, Falcon-E, etc.)
+    if "bitnet" in m or "1.58bit" in m or "1_58" in m:
+        return "bitnet"
     if "gpt" in m or m.startswith("o1") or m.startswith("o3"):
         return "openai"
     if "claude" in m:
@@ -411,11 +433,13 @@ def get_model_for_role(role: str) -> dict:
 
     # 4. Construct gateway config. URL is derived from the provider so the
     # dispatcher stays brand-agnostic.
+    bitnet_host = os.getenv("BITNET_HOST", "http://localhost:8080")
     urls = {
         "gemini":    "https://generativelanguage.googleapis.com/v1beta/openai/",
         "openai":    "https://api.openai.com/v1/",
         "anthropic": "https://api.anthropic.com/v1/",  # adapter switches to /messages
         "groq":      "https://api.groq.com/openai/v1/",
+        "bitnet":    f"{bitnet_host}/v1/",
     }
 
     return {
