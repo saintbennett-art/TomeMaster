@@ -5,7 +5,15 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
-from services import document_parser, exporter, transcriber_service
+from services import exporter, transcriber_service
+from services.parsers import (
+    parse_txt,
+    parse_docx,
+    parse_pdf_smart,
+    stream_pdf_smart,
+    parse_epub,
+    truncate_for_demo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +40,16 @@ async def upload_document(file: UploadFile = File(...), api_key: str = "", is_de
     
     filename_lower = file.filename.lower()
     if filename_lower.endswith(".txt"):
-        text = document_parser.parse_txt(content)
+        text = parse_txt(content)
         html = f"<p>{text.replace(chr(10), '<br>')}</p>"
     elif filename_lower.endswith(".docx"):
-        parsed = document_parser.parse_docx(content)
+        parsed = parse_docx(content)
         text = parsed["text"]
         html = parsed["html"]
         toc = parsed["toc"]
     elif filename_lower.endswith(".pdf"):
         # PDF Manuscripts are automatically routed through the fast Native OR slow OCR tracker
-        parsed = document_parser.parse_pdf_smart(content, api_key)
+        parsed = parse_pdf_smart(content, api_key)
         text = parsed["text"]
         html = parsed["html"]
         toc = parsed["toc"]
@@ -51,7 +59,7 @@ async def upload_document(file: UploadFile = File(...), api_key: str = "", is_de
                 status_code=403,
                 detail="Sovereign Protocol Violation: Private EPUB recovery is locked. Standard users cannot load external EPUB books into the program."
             )
-        parsed = document_parser.parse_epub(content)
+        parsed = parse_epub(content)
         text = parsed["text"]
         html = parsed["html"]
         toc = parsed["toc"]
@@ -62,7 +70,7 @@ async def upload_document(file: UploadFile = File(...), api_key: str = "", is_de
         )
         
     if is_demo:
-        truncated = document_parser.truncate_for_demo({"text": text, "html": html, "toc": toc})
+        truncated = truncate_for_demo({"text": text, "html": html, "toc": toc})
         text = truncated["text"]
         html = truncated["html"]
         toc = truncated["toc"]
@@ -91,17 +99,17 @@ async def upload_document_stream(file: UploadFile = File(...), api_key: str = ""
     if not file.filename.lower().endswith(".pdf"):
         # We invoke standard handling, then yield the final state!
         if file.filename.lower().endswith(".txt"):
-            text = document_parser.parse_txt(content)
+            text = parse_txt(content)
             html = f"<p>{text.replace(chr(10), '<br>')}</p>"
             toc = []
         elif file.filename.lower().endswith(".docx"):
-            parsed = document_parser.parse_docx(content)
+            parsed = parse_docx(content)
             text = parsed["text"]
             html = parsed["html"]
             toc = parsed["toc"]
         
         if is_demo:
-            truncated = document_parser.truncate_for_demo({"text": text, "html": html, "toc": toc})
+            truncated = truncate_for_demo({"text": text, "html": html, "toc": toc})
             text = truncated["text"]
             html = truncated["html"]
             toc = truncated["toc"]
@@ -119,7 +127,7 @@ async def upload_document_stream(file: UploadFile = File(...), api_key: str = ""
         return StreamingResponse(fake_stream(), media_type="application/x-ndjson")
         
     return StreamingResponse(
-        document_parser.stream_pdf_smart(content, api_key, is_demo=is_demo, folder_path=None), 
+        stream_pdf_smart(content, api_key, is_demo=is_demo, folder_path=None), 
         media_type="application/x-ndjson"
     )
 
