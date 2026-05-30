@@ -20,6 +20,16 @@ import os
 import shutil
 import time
 
+# ─── BoardroomCrew (CrewAI) ──────────────────────────────────────────────────
+# All specialist AI endpoints route through CrewAI agents instead of raw httpx.
+_crew_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src", "tomemaster"))
+if _crew_dir not in sys.path:
+    sys.path.insert(0, _crew_dir)
+
+from crews.boardroom_crew import BoardroomCrew
+
+_boardroom = BoardroomCrew()
+
 try:
     import psutil
 
@@ -237,25 +247,18 @@ class CreativeRequest(BaseModel):
 
 @router.post("/refine-prose")
 async def refine_prose_endpoint(req: TextRequest):
-    """[SUPER MUSE]: Smooths dictated prose into Ron's authorial style."""
+    """[SUPER MUSE]: Smooths dictated prose into the author's authorial style via CrewAI Copy Editor."""
     if not req.text:
         raise HTTPException(status_code=400, detail="Text is required")
     try:
-        # [SOVEREIGN INJECTION]: Force the Style Mirror DNA into the refinement prompt
-        prefix = MIRROR.get_muse_prompt_prefix()
-        prompt = f"{prefix}\n\nREWRITE THIS DICTATION FOR FLOW AND FIDELITY. MAINTAIN ALL CORE MEANING BUT SMOOTH THE TRANSCRIPTION ARTIFACTS:\n\n{req.text}"
-
-        # [MASTER DIRECTIVE]: Mandating GPT-4o for refinement
-        result = await ai_service.run_boardroom_parallel(
-            prompt,
-            ["Editor-in-Chief"],
-            req.provider or "openai",
-            req.api_key,
-            model="gpt-4o",
-            local_mode=False,
+        result = await _boardroom.refine_prose(
+            req.text,
+            provider=req.provider,
+            api_key=req.api_key,
+            model=req.model,
         )
-        # Extract refined text from the agent response
-        refined = result.get("Editor-in-Chief", {}).get("feedback", req.text)
+        # Normalize response shape — frontend expects {"refined": "..."}
+        refined = result.get("refined") or result.get("feedback", req.text)
         return {"refined": refined}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -269,19 +272,21 @@ class BriefingRequest(BaseModel):
 
 @router.post("/briefing")
 async def get_briefing_endpoint(req: BriefingRequest):
-    """[DIRECTORIAL BRIEFING]: Generates a session summary and priority audit."""
+    """[DIRECTORIAL BRIEFING]: Generates a session summary and priority audit via CrewAI."""
     try:
         from services import ledger
 
         stats = ledger.get_stats(req.folder_path)
-        prompt = f"AUDIT THIS PROJECT DATA AND PROVIDE A 3-SENTENCE DIRECTORIAL BRIEFING FOR THE ARCHITECT. FOCUS ON RECENT PROGRESS AND THE TOP 2 NARRATIVE GAPS. DATA: {json.dumps(stats)}"
-        result = await ai_service.run_boardroom_parallel(
+        prompt = (
+            "AUDIT THIS PROJECT DATA AND PROVIDE A 3-SENTENCE DIRECTORIAL BRIEFING "
+            "FOR THE ARCHITECT. FOCUS ON RECENT PROGRESS AND THE TOP 2 NARRATIVE GAPS. "
+            f"DATA: {json.dumps(stats)}"
+        )
+        result = await _boardroom.convene(
             prompt,
-            ["Sovereign Liaison"],
-            req.provider,
-            req.api_key,
-            model="gpt-4o",
-            local_mode=False,
+            personas=["Sovereign Liaison"],
+            provider=req.provider,
+            api_key=req.api_key,
         )
         briefing = result.get("Sovereign Liaison", {}).get(
             "feedback", "Operational link established. The boardroom is standing by."
@@ -362,18 +367,16 @@ async def save_snapshot_endpoint(req: SnapshotRequest):
 
 @router.post("/emotional-arc")
 async def analyze_emotional_arc(req: TextRequest):
-    """Analyzes the emotional arc of a manuscript chunk/full text."""
+    """Analyzes the emotional arc of a manuscript chunk/full text via CrewAI Narrative Architect."""
     if not req.text:
         raise HTTPException(status_code=400, detail="Text is required")
     try:
-        result = await ai_service.analyze_emotional_arc_async(
+        return await _boardroom.emotional_arc(
             req.text,
-            req.provider,
-            req.api_key,
+            provider=req.provider,
+            api_key=req.api_key,
             model=req.model,
-            local_mode=req.local_mode,
         )
-        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -388,22 +391,16 @@ class StructuralRequest(BaseModel):
 
 @router.post("/structural-analysis")
 async def perform_structural_analysis(req: StructuralRequest):
-    """
-    [THE ARCHITECT]: Scans the unified manuscript to suggest chapter breaks
-    and calculate chapter-by-chapter emotional arcs.
-    """
+    """[THE ARCHITECT]: Chapter breaks and emotional arcs via CrewAI Narrative Architect."""
     if not req.content:
         raise HTTPException(status_code=400, detail="Content is required")
     try:
-        # [SOVEREIGN DISPATCH]: Using Gemini 3.1 Pro as the primary structural engine
-        result = await ai_service.run_structural_analysis_async(
+        return await _boardroom.structural_analysis(
             req.content,
-            req.provider,
-            req.api_key,
-            model=req.model or "gemini-3.1-pro-preview",
-            local_mode=req.local_mode,
+            provider=req.provider,
+            api_key=req.api_key,
+            model=req.model,
         )
-        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -417,14 +414,16 @@ class MoodboardRequest(BaseModel):
 
 @router.post("/moodboard")
 async def generate_moodboard(req: MoodboardRequest):
-    """Generates an atmospheric visual and auditory moodboard for a scene."""
+    """Generates an atmospheric moodboard for a scene via CrewAI Marketing Analyst."""
     if not req.text:
         raise HTTPException(status_code=400, detail="Scene text is required")
     try:
-        result = await ai_service.generate_moodboard_async(
-            req.text, req.provider, req.api_key, req.model
+        return await _boardroom.moodboard(
+            req.text,
+            provider=req.provider,
+            api_key=req.api_key,
+            model=req.model,
         )
-        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -438,10 +437,13 @@ class EnhancementRequest(BaseModel):
 
 @router.post("/sentinel")
 async def run_continuity_sentinel(req: EnhancementRequest):
-    """Audits manuscript for logical inconsistencies and character drift."""
+    """Audits manuscript for inconsistencies via CrewAI Copy Editor (Continuity Sentinel)."""
     try:
-        return await ai_service.run_sentinel_async(
-            req.content, req.provider, req.api_key, req.model
+        return await _boardroom.continuity_sentinel(
+            req.content,
+            provider=req.provider,
+            api_key=req.api_key,
+            model=req.model,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -449,10 +451,13 @@ async def run_continuity_sentinel(req: EnhancementRequest):
 
 @router.post("/heatmap")
 async def run_pacing_heatmap(req: EnhancementRequest):
-    """Calculates real-time pacing density and narrative tension heatmap."""
+    """Pacing density and tension heatmap via CrewAI Narrative Architect."""
     try:
-        return await ai_service.run_heatmap_async(
-            req.content, req.provider, req.api_key, req.model
+        return await _boardroom.pacing_heatmap(
+            req.content,
+            provider=req.provider,
+            api_key=req.api_key,
+            model=req.model,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -460,10 +465,13 @@ async def run_pacing_heatmap(req: EnhancementRequest):
 
 @router.post("/dynamic-arc")
 async def run_dynamic_arc(req: EnhancementRequest):
-    """Interactive emotional arc adjustment with plot-point recommendations."""
+    """Interactive emotional arc adjustment via CrewAI Narrative Architect."""
     try:
-        return await ai_service.run_dynamic_arc_async(
-            req.content, req.provider, req.api_key, req.model
+        return await _boardroom.dynamic_arc(
+            req.content,
+            provider=req.provider,
+            api_key=req.api_key,
+            model=req.model,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -478,46 +486,25 @@ class DraftExpertRequest(BaseModel):
 
 @router.post("/convene")
 async def convene_boardroom(req: MultiAgentRequest):
-    """Dispatches manuscript to requested AI specialists simultaneously."""
+    """Dispatches manuscript to requested CrewAI specialists simultaneously."""
     if not req.content or not req.requested_personas:
         raise HTTPException(
             status_code=400, detail="Content and requested_personas are required"
         )
     try:
-        # COLLECT ALL ESTABLISHED BRAINS FOR BEST-USE ORCHESTRATION
-        all_keys = {
-            "gemini": req.api_key
-            if req.provider == "gemini"
-            else os.environ.get("GEMINI_API_KEY"),
-            "anthropic": req.api_key
-            if req.provider == "anthropic"
-            else os.environ.get("ANTHROPIC_API_KEY"),
-            "openai": req.api_key
-            if req.provider == "openai"
-            else os.environ.get("OPENAI_API_KEY"),
-            "emergent": req.api_key
-            if req.provider == "emergent"
-            else os.environ.get("EMERGENT_API_KEY"),
-        }
-        payload = await ai_service.run_boardroom_parallel(
+        payload = await _boardroom.convene(
             req.content,
-            req.requested_personas,
-            req.provider or "gemini",
-            req.api_key,
+            personas=req.requested_personas,
+            provider=req.provider or "gemini",
+            api_key=req.api_key,
             model=req.model,
             user_chapters=req.user_chapters,
-            key_bundle=req.key_bundle,
-            ledger=req.ledger,
-            force_primary=req.force_primary,
-            local_mode=req.local_mode,
-            synthesis_mode=req.synthesis_mode,
-            all_keys=all_keys,
             custom_prompt=req.custom_prompt,
-            project_folder=req.project_folder,
         )
         if not payload:
             raise ValueError(
-                "All requested Board Members failed to respond. Please check your credentials and model availability."
+                "All requested Board Members failed to respond. "
+                "Please check your credentials and model availability."
             )
         return payload
     except Exception as e:
@@ -625,14 +612,13 @@ async def export_analysis_docx_endpoint(req: ExportMarkdownRequest):
 
 @router.post("/world-bible")
 async def get_world_bible(req: CreativeRequest):
-    """Extracts characters and locations (World-Building Wiki)."""
+    """Extracts characters and locations via CrewAI Sovereign Liaison."""
     try:
-        return await ai_service.analyze_world_bible_async(
+        return await _boardroom.world_bible(
             req.text,
-            req.provider,
-            req.api_key,
+            provider=req.provider,
+            api_key=req.api_key,
             model=req.model,
-            local_mode=req.local_mode,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

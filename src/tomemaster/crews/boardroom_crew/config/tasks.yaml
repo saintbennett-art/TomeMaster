@@ -1,0 +1,132 @@
+# ─── BoardroomCrew Task Definitions ───────────────────────────────────────────
+# Tasks are instantiated dynamically by BoardroomCrew based on the endpoint.
+# The {text} placeholder is filled at kickoff time.
+#
+# NOTE: These are the DEFAULT task configs. BoardroomCrew._dispatch() overrides
+# the description and expected_output per-endpoint to match the original
+# analysis.py behavior exactly.
+
+structural_analysis:
+  description: >
+    Analyze the following manuscript text and identify natural chapter breaks.
+    For each chapter provide: chapter_number, suggested_title, emotional_intensity
+    (1-10), reasoning, and starting_words (10-15 consecutive words where the
+    chapter begins).
+
+    CRITICAL: Use standard straight apostrophes (') and straight double quotes (").
+
+    {branch_instruction}
+
+    Manuscript Text:
+    {text}
+  expected_output: >
+    A strict JSON object with a "chapters" array. Each entry has chapter_number,
+    suggested_title, emotional_intensity, reasoning, and starting_words.
+
+emotional_arc:
+  description: >
+    Analyze the emotional arc of the following manuscript text. Map emotional
+    intensity across the narrative, identifying peaks, valleys, turning points,
+    and the overall emotional trajectory.
+
+    Text:
+    {text}
+  expected_output: >
+    A JSON object with emotional arc data including intensity_curve, turning_points,
+    overall_trajectory, and narrative_beats.
+
+pacing_heatmap:
+  description: >
+    Calculate a real-time pacing density and narrative tension heatmap for the
+    following text. Identify sections of high tension, lulls, action sequences,
+    and reflective passages. Rate each section's pacing velocity.
+
+    Text:
+    {text}
+  expected_output: >
+    A JSON heatmap object with sections, each containing position, pacing_score,
+    tension_level, and classification (action/reflection/dialogue/transition).
+
+dynamic_arc:
+  description: >
+    Perform an interactive emotional arc adjustment with plot-point recommendations
+    for the following text. Identify key plot points and suggest arc modifications
+    for stronger narrative impact.
+
+    Text:
+    {text}
+  expected_output: >
+    A JSON object with plot_points array and arc_curve array showing the adjusted
+    emotional trajectory.
+
+copy_edit:
+  description: >
+    Audit the following prose for grammar, style, and narrative flow. Focus on
+    the author's specific authorial DNA: rhythmic sentence length, vocabulary
+    complexity, and sensory immersion.
+
+    Text:
+    {text}
+  expected_output: >
+    A JSON object with "feedback" (markdown report) and "edits" array, each with
+    original, suggestion, and reason.
+
+continuity_sentinel:
+  description: >
+    Perform a continuity audit on the following manuscript text. Check for logical
+    inconsistencies, character drift, timeline contradictions, factual errors,
+    and any details that contradict earlier sections.
+
+    Text:
+    {text}
+  expected_output: >
+    A JSON object with continuity findings including inconsistencies array,
+    character_drift_warnings, and timeline_issues.
+
+refine_prose:
+  description: >
+    Rewrite the following dictated text for flow and fidelity. Maintain ALL core
+    meaning but smooth transcription artifacts. Preserve the author's voice DNA.
+
+    {style_prefix}
+
+    Dictated text:
+    {text}
+  expected_output: >
+    A JSON object with "refined" containing the smoothed prose text.
+
+moodboard:
+  description: >
+    Generate an atmospheric visual and auditory moodboard for the following scene.
+    Include color palette, lighting mood, ambient sounds, musical references,
+    and visual composition suggestions.
+
+    Scene text:
+    {text}
+  expected_output: >
+    A JSON moodboard object with visual_palette, lighting, ambient_sounds,
+    music_references, and composition_notes.
+
+world_bible:
+  description: >
+    Extract all characters, locations, timeline events, and relationships from
+    the following text. Build a comprehensive World Bible entry.
+
+    Text:
+    {text}
+  expected_output: >
+    A JSON World Bible object with characters array, locations array,
+    timeline_events, and relationships map.
+
+convene:
+  description: >
+    As a {persona} specialist, analyze the following manuscript text and provide
+    your expert feedback.
+
+    {custom_prompt}
+
+    Text:
+    {text}
+  expected_output: >
+    A JSON object with "feedback" (markdown report) and optional "suggestions"
+    array with actionable recommendations.
