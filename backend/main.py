@@ -22,7 +22,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
-from routers import analysis, document, license, ai, transcribe, settings
+from routers import boardroom, vault, system, document, license, ai, transcribe, settings
 
 app = FastAPI(
     title="tome_master API",
@@ -40,7 +40,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(analysis.router, prefix="/api/v1/analysis", tags=["Analysis"])
+app.include_router(boardroom.router, prefix="/api/v1/analysis", tags=["AI Boardroom"])
+app.include_router(vault.router, prefix="/api/v1/analysis", tags=["Vault & Settings"])
+app.include_router(system.router, prefix="/api/v1/analysis", tags=["System & Telemetry"])
 app.include_router(document.router, prefix="/api/v1/document", tags=["Document Processing"])
 app.include_router(license.router, prefix="/api/v1/license", tags=["License"])
 app.include_router(ai.router, prefix="/api/v1/ai", tags=["AI Status"])
