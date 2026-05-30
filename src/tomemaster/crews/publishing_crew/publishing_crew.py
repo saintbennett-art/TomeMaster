@@ -1,6 +1,39 @@
+"""
+[PUBLISHING CREW]: CrewAI crew for post-transcription analysis.
+
+Model selection is dynamic via settings_service.get_model_for_role() —
+no hardcoded model names. Falls back to env vars, then safe defaults.
+"""
 import os
+import sys
 from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
+
+# Ensure backend is importable
+_backend_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "backend"))
+if _backend_path not in sys.path:
+    sys.path.insert(0, _backend_path)
+
+
+def _resolve_model(role: str, env_var: str, default: str) -> str:
+    """Resolves model dynamically from settings → env var → default.
+
+    Never hardcoded to a single provider. Honors user's Settings page choices.
+    """
+    try:
+        from services.settings_service import get_model_for_role
+        config = get_model_for_role(role)
+        model = config.get("model") if config else None
+        if model and model != "auto":
+            provider = config.get("provider", "gemini")
+            if "/" not in model:
+                return f"{provider}/{model}"
+            return model
+    except Exception as e:
+        print(f"[CREW]: Could not resolve dynamic model for {role}: {e}")
+
+    return os.environ.get(env_var, default)
+
 
 @CrewBase
 class PublishingCrew:
@@ -9,15 +42,21 @@ class PublishingCrew:
 
     @agent
     def editor(self) -> Agent:
-        return Agent(config=self.agents_config['editor'], llm=os.environ.get('EDITOR_MODEL', 'gemini/gemini-3.1-pro'), verbose=True)
+        model = _resolve_model("NARRATIVE_ARCHITECT", "EDITOR_MODEL", "gemini/gemini-2.5-flash")
+        print(f"[CREW]: Editor agent using model: {model}")
+        return Agent(config=self.agents_config['editor'], llm=model, verbose=True)
 
     @agent
     def director(self) -> Agent:
-        return Agent(config=self.agents_config['director'], llm=os.environ.get('DIRECTOR_MODEL', 'anthropic/claude-3-5-sonnet-20241022'), verbose=True)
+        model = _resolve_model("MARKETING_ANALYST", "DIRECTOR_MODEL", "gemini/gemini-2.5-flash")
+        print(f"[CREW]: Director agent using model: {model}")
+        return Agent(config=self.agents_config['director'], llm=model, verbose=True)
 
     @agent
     def analyst(self) -> Agent:
-        return Agent(config=self.agents_config['analyst'], llm=os.environ.get('ANALYST_MODEL', 'openai/gpt-4o'), verbose=True)
+        model = _resolve_model("COPY_EDITOR", "ANALYST_MODEL", "gemini/gemini-2.5-flash")
+        print(f"[CREW]: Analyst agent using model: {model}")
+        return Agent(config=self.agents_config['analyst'], llm=model, verbose=True)
 
     @task
     def chapterize_manuscript(self) -> Task:
@@ -45,15 +84,6 @@ class PublishingCrew:
 
     @crew
     def crew(self) -> Crew:
-        # We process the editor first, then fan out marketing and pacing in parallel
-        # CrewAI supports hierarchical or sequential.
-        # However, the blueprint specified the parallel fanout happens using CrewAI *Flows*
-        # "@listen(compile_book) - Parallel Fan-Out".
-        # If we use a single crew for publishing, we'd need them as separate Crews if we want Flow fan-out.
-        # But wait, in the Flow blueprint we saw:
-        # PublishingCrew().crew().kickoff(inputs={"text": self.state.raw_manuscript})
-        # If we do it inside a single Crew, we can just run them synchronously, or set Process.hierarchical.
-        # Let's run them sequentially here for simplicity, or we can just use Process.sequential.
         return Crew(
             agents=self.agents,
             tasks=self.tasks,
