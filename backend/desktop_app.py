@@ -63,7 +63,7 @@ if __name__ == '__main__':
     
     # [SOVEREIGN BRIDGE]: Link the window to the services for native dialog support
     import services.transcriber_service as ts
-    ts.UI_WINDOW = window
+    ts._set_ui_window(window)
     
     def on_closing():
         """[SAFETY GUARD]: Prevents accidental shutdowns on touch devices."""
