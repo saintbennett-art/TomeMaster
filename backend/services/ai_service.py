@@ -306,21 +306,95 @@ def _build_prompt(content: str, persona: str, user_chapters: list = None, synthe
 KILL_LOCAL_MODE = False
 
 # ─── Industrial Pipeline Specialists ──────────────────────────────────────────
-# [PR #15 RETIRED]: The 7 specialist wrapper functions below have been replaced
-# by BoardroomCrew (CrewAI agents). All analysis.py endpoints now route through
-# crews/boardroom_crew/ instead of these httpx facades.
-#
-# Removed functions:
-#   - run_boardroom_parallel()
-#   - run_structural_analysis_async()
-#   - run_sentinel_async()
-#   - run_heatmap_async()
-#   - run_dynamic_arc_async()
-#   - analyze_emotional_arc_async()
-#   - generate_moodboard_async()
-#   - analyze_world_bible_async()
-#   - _build_override()
-#
-# The gateway infrastructure (_call_standard_gateway, _call_anthropic_gateway,
-# _resolve_gateway_config) is retained — it's still used by the TranscriptionCrew
-# and any future crews that need direct gateway access.
+# [P0 RESTORED]: The CrewAI BoardroomCrew migration (PR #15) shipped without its
+# dependency — `crewai` was never added to requirements.txt or the venv, leaving
+# the backend unbootable. These direct-gateway specialist functions are restored
+# from the pre-PR#15 tree and are the canonical dispatch path. CrewAI remains
+# available only behind the optional /transcribe/start-pipeline experiment.
+
+def _build_override(provider: str = None, api_key: str = None, model: str = None) -> dict:
+    """Collects per-request overrides into the dict shape _call_standard_gateway expects."""
+    o = {}
+    if provider: o["provider"] = provider
+    if api_key:  o["api_key"]  = api_key
+    if model:    o["model"]    = model
+    return o or None
+
+
+async def run_boardroom_parallel(
+    text: str,
+    personas: list,
+    provider: str = None,
+    api_key: str = None,
+    *,
+    model: str = None,
+    user_chapters: list = None,
+    **kwargs,
+):
+    """
+    [HIGH VELOCITY]: Dispatches manuscript to multiple specialist roles simultaneously.
+    Uses true concurrency to ensure minimal directorial latency.
+
+    Per-request `provider`/`api_key`/`model` override the role-based gateway
+    resolved from the encrypted vault, so the UI's slot and key choices take effect.
+    """
+    override = _build_override(provider, api_key, model)
+
+    async def _execute_expert(persona: str):
+        try:
+            # [MODULAR ORCHESTRATION]: Delegate prompt building to the orchestrator
+            prompt, is_json, role = prompt_orchestrator.build_industrial_prompt(
+                text, persona, user_chapters
+            )
+            response = await _call_standard_gateway(role, prompt, is_json, override=override)
+            return persona, response
+        except Exception as e:
+            return persona, {"feedback": f"Expert {persona} Offline: {str(e)}"}
+
+    # DISPATCH ALL SPECIALISTS CONCURRENTLY
+    tasks = [_execute_expert(p) for p in personas]
+    completed = await asyncio.gather(*tasks)
+
+    return {persona: response for persona, response in completed}
+
+
+async def run_structural_analysis_async(text: str, provider: str = None, api_key: str = None, *, model: str = None, local_mode: bool = False):
+    """Routes the 'Architect' audit to the NARRATIVE_ARCHITECT slot."""
+    prompt, _is_json = _build_prompt(text, "Developmental Editor")
+    return await _call_standard_gateway("NARRATIVE_ARCHITECT", prompt, is_json=True,
+                                        override=_build_override(provider, api_key, model))
+
+
+async def run_sentinel_async(content: str, provider: str = None, api_key: str = None, model: str = None):
+    return await _call_standard_gateway("SOVEREIGN_LIAISON", f"CONTINUITY AUDIT: {content[:10000]}", is_json=True,
+                                        override=_build_override(provider, api_key, model))
+
+
+async def run_heatmap_async(content: str, provider: str = None, api_key: str = None, model: str = None):
+    return await _call_standard_gateway("NARRATIVE_ARCHITECT", f"PACING HEATMAP: {content[:10000]}", is_json=True,
+                                        override=_build_override(provider, api_key, model))
+
+
+async def run_dynamic_arc_async(content: str, provider: str = None, api_key: str = None, model: str = None):
+    """[DYNAMIC ARC]: Interactive emotional arc adjustment with plot recommendations."""
+    return await _call_standard_gateway(
+        "NARRATIVE_ARCHITECT",
+        f"DYNAMIC EMOTIONAL ARC ADJUSTMENT — return JSON with plot_points[] and arc_curve[]:\n{content[:10000]}",
+        is_json=True,
+        override=_build_override(provider, api_key, model),
+    )
+
+
+async def analyze_emotional_arc_async(text: str, provider: str = None, api_key: str = None, *, model: str = None, local_mode: bool = False):
+    return await _call_standard_gateway("NARRATIVE_ARCHITECT", f"EMOTIONAL ARC: {text[:10000]}", is_json=True,
+                                        override=_build_override(provider, api_key, model))
+
+
+async def generate_moodboard_async(text: str, provider: str = None, api_key: str = None, model: str = None):
+    return await _call_standard_gateway("MARKETING_ANALYST", f"MOODBOARD SYNTHESIS: {text[:5000]}", is_json=True,
+                                        override=_build_override(provider, api_key, model))
+
+
+async def analyze_world_bible_async(text: str, provider: str = None, api_key: str = None, *, model: str = None, local_mode: bool = False):
+    return await _call_standard_gateway("SOVEREIGN_LIAISON", f"WORLD BIBLE EXTRACTION: {text[:10000]}", is_json=True,
+                                        override=_build_override(provider, api_key, model))

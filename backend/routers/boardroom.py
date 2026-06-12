@@ -1,8 +1,14 @@
 """
-[AI BOARDROOM]: CrewAI specialist endpoints.
+[AI BOARDROOM]: Direct-gateway specialist endpoints.
 
 All narrative analysis, prose refinement, and multi-agent dispatch routes.
 Extracted from analysis.py in PR #16.
+
+[P0 DIRECT GATEWAY]: The CrewAI BoardroomCrew path (PR #15) shipped without
+its `crewai` dependency and made the backend unbootable at import time.
+All endpoints now dispatch through ai_service's brand-agnostic gateway
+(_call_standard_gateway), which resolves models dynamically from the vault
+and honors per-request provider/api_key/model overrides.
 """
 
 from fastapi import APIRouter, HTTPException
@@ -13,19 +19,7 @@ from services.style_mirror import MIRROR
 from fastapi.responses import StreamingResponse
 import json
 import asyncio
-import sys
 import os
-
-# ─── BoardroomCrew (CrewAI) ──────────────────────────────────────────────────
-_crew_dir = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "src", "tomemaster")
-)
-if _crew_dir not in sys.path:
-    sys.path.insert(0, _crew_dir)
-
-from crews.boardroom_crew import BoardroomCrew
-
-_boardroom = BoardroomCrew()
 
 router = APIRouter()
 
@@ -111,17 +105,26 @@ class DraftExpertRequest(BaseModel):
 
 @router.post("/refine-prose")
 async def refine_prose_endpoint(req: TextRequest):
-    """[SUPER MUSE]: Smooths dictated prose into the author's authorial style via CrewAI Copy Editor."""
+    """[SUPER MUSE]: Smooths dictated prose into the author's authorial style."""
     if not req.text:
         raise HTTPException(status_code=400, detail="Text is required")
     try:
-        result = await _boardroom.refine_prose(
-            req.text,
-            provider=req.provider,
-            api_key=req.api_key,
+        # [SOVEREIGN INJECTION]: Force the Style Mirror DNA into the refinement prompt
+        prefix = MIRROR.get_muse_prompt_prefix()
+        prompt = (
+            f"{prefix}\n\nREWRITE THIS DICTATION FOR FLOW AND FIDELITY. MAINTAIN ALL "
+            f"CORE MEANING BUT SMOOTH THE TRANSCRIPTION ARTIFACTS:\n\n{req.text}"
+        )
+        result = await ai_service.run_boardroom_parallel(
+            prompt,
+            ["Editor-in-Chief"],
+            req.provider,
+            req.api_key,
             model=req.model,
         )
-        refined = result.get("refined") or result.get("feedback", req.text)
+        refined = result.get("Editor-in-Chief", {}).get("feedback")
+        if not refined:
+            raise ValueError("Refinement engine returned an empty response.")
         return {"refined": refined}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -129,11 +132,11 @@ async def refine_prose_endpoint(req: TextRequest):
 
 @router.post("/emotional-arc")
 async def analyze_emotional_arc(req: TextRequest):
-    """Analyzes the emotional arc of a manuscript chunk/full text via CrewAI Narrative Architect."""
+    """Analyzes the emotional arc of a manuscript chunk/full text via the Narrative Architect role."""
     if not req.text:
         raise HTTPException(status_code=400, detail="Text is required")
     try:
-        return await _boardroom.emotional_arc(
+        return await ai_service.analyze_emotional_arc_async(
             req.text,
             provider=req.provider,
             api_key=req.api_key,
@@ -145,11 +148,11 @@ async def analyze_emotional_arc(req: TextRequest):
 
 @router.post("/structural-analysis")
 async def perform_structural_analysis(req: StructuralRequest):
-    """[THE ARCHITECT]: Chapter breaks and emotional arcs via CrewAI Narrative Architect."""
+    """[THE ARCHITECT]: Chapter breaks and emotional arcs via the Narrative Architect role."""
     if not req.content:
         raise HTTPException(status_code=400, detail="Content is required")
     try:
-        return await _boardroom.structural_analysis(
+        return await ai_service.run_structural_analysis_async(
             req.content,
             provider=req.provider,
             api_key=req.api_key,
@@ -161,11 +164,11 @@ async def perform_structural_analysis(req: StructuralRequest):
 
 @router.post("/moodboard")
 async def generate_moodboard(req: MoodboardRequest):
-    """Generates an atmospheric moodboard for a scene via CrewAI Marketing Analyst."""
+    """Generates an atmospheric moodboard for a scene via the Marketing Analyst role."""
     if not req.text:
         raise HTTPException(status_code=400, detail="Scene text is required")
     try:
-        return await _boardroom.moodboard(
+        return await ai_service.generate_moodboard_async(
             req.text,
             provider=req.provider,
             api_key=req.api_key,
@@ -177,9 +180,9 @@ async def generate_moodboard(req: MoodboardRequest):
 
 @router.post("/sentinel")
 async def run_continuity_sentinel(req: EnhancementRequest):
-    """Audits manuscript for inconsistencies via CrewAI Copy Editor (Continuity Sentinel)."""
+    """Audits manuscript for inconsistencies via the Continuity Sentinel role."""
     try:
-        return await _boardroom.continuity_sentinel(
+        return await ai_service.run_sentinel_async(
             req.content,
             provider=req.provider,
             api_key=req.api_key,
@@ -191,9 +194,9 @@ async def run_continuity_sentinel(req: EnhancementRequest):
 
 @router.post("/heatmap")
 async def run_pacing_heatmap(req: EnhancementRequest):
-    """Pacing density and tension heatmap via CrewAI Narrative Architect."""
+    """Pacing density and tension heatmap via the Narrative Architect role."""
     try:
-        return await _boardroom.pacing_heatmap(
+        return await ai_service.run_heatmap_async(
             req.content,
             provider=req.provider,
             api_key=req.api_key,
@@ -205,9 +208,9 @@ async def run_pacing_heatmap(req: EnhancementRequest):
 
 @router.post("/dynamic-arc")
 async def run_dynamic_arc(req: EnhancementRequest):
-    """Interactive emotional arc adjustment via CrewAI Narrative Architect."""
+    """Interactive emotional arc adjustment via the Narrative Architect role."""
     try:
-        return await _boardroom.dynamic_arc(
+        return await ai_service.run_dynamic_arc_async(
             req.content,
             provider=req.provider,
             api_key=req.api_key,
@@ -219,20 +222,22 @@ async def run_dynamic_arc(req: EnhancementRequest):
 
 @router.post("/convene")
 async def convene_boardroom(req: MultiAgentRequest):
-    """Dispatches manuscript to requested CrewAI specialists simultaneously."""
+    """Dispatches manuscript to all requested specialist roles simultaneously."""
     if not req.content or not req.requested_personas:
         raise HTTPException(
             status_code=400, detail="Content and requested_personas are required"
         )
     try:
-        payload = await _boardroom.convene(
-            req.content,
-            personas=req.requested_personas,
-            provider=req.provider or "gemini",
-            api_key=req.api_key,
+        # [DIRECTORIAL OVERRIDE]: A reviewed/edited custom prompt replaces the
+        # orchestrator template for this dispatch.
+        content = req.custom_prompt or req.content
+        payload = await ai_service.run_boardroom_parallel(
+            content,
+            req.requested_personas,
+            req.provider or "gemini",
+            req.api_key,
             model=req.model,
             user_chapters=req.user_chapters,
-            custom_prompt=req.custom_prompt,
         )
         if not payload:
             raise ValueError(
@@ -246,9 +251,9 @@ async def convene_boardroom(req: MultiAgentRequest):
 
 @router.post("/world-bible")
 async def get_world_bible(req: CreativeRequest):
-    """Extracts characters and locations via CrewAI Sovereign Liaison."""
+    """Extracts characters and locations via the Sovereign Liaison role."""
     try:
-        return await _boardroom.world_bible(
+        return await ai_service.analyze_world_bible_async(
             req.text,
             provider=req.provider,
             api_key=req.api_key,
@@ -260,30 +265,45 @@ async def get_world_bible(req: CreativeRequest):
 
 @router.post("/briefing")
 async def get_briefing_endpoint(req: BriefingRequest):
-    """[DIRECTORIAL BRIEFING]: Generates a session summary and priority audit via CrewAI."""
+    """[DIRECTORIAL BRIEFING]: Generates a session summary and priority audit."""
     try:
-        from services import ledger
-
-        stats = ledger.get_stats(req.folder_path)
+        # [LEDGER STATS]: Summarize the project's ai_usage_ledger.jsonl directly.
+        # (The former `services.ledger` module never existed — this endpoint
+        # silently returned the fallback string for its entire life.)
+        ledger_path = os.path.join(req.folder_path, "ai_usage_ledger.jsonl")
+        entries = []
+        if os.path.isfile(ledger_path):
+            with open(ledger_path, "r", encoding="utf-8") as f:
+                entries = [json.loads(line) for line in f if line.strip()]
+        if not entries:
+            return {
+                "briefing": "No project activity ledger found yet. "
+                "The boardroom is standing by for your first session."
+            }
+        stats = {
+            "total_calls": len(entries),
+            "recent_activity": entries[-10:],
+        }
         prompt = (
             "AUDIT THIS PROJECT DATA AND PROVIDE A 3-SENTENCE DIRECTORIAL BRIEFING "
             "FOR THE ARCHITECT. FOCUS ON RECENT PROGRESS AND THE TOP 2 NARRATIVE GAPS. "
             f"DATA: {json.dumps(stats)}"
         )
-        result = await _boardroom.convene(
+        result = await ai_service.run_boardroom_parallel(
             prompt,
-            personas=["Sovereign Liaison"],
-            provider=req.provider,
-            api_key=req.api_key,
+            ["Sovereign Liaison"],
+            req.provider,
+            req.api_key,
         )
         briefing = result.get("Sovereign Liaison", {}).get(
             "feedback", "Operational link established. The boardroom is standing by."
         )
         return {"briefing": briefing}
-    except Exception:
-        return {
-            "briefing": "Directorial link established. Standing by for manuscript resurrection."
-        }
+    except Exception as e:
+        # [ZERO-FLUFF]: Surface the real failure instead of a canned success line.
+        import traceback
+        traceback.print_exc()
+        return {"briefing": f"Briefing unavailable: {str(e)}"}
 
 
 @router.post("/expert-stream")

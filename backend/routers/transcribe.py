@@ -134,7 +134,19 @@ def _run_pipeline_thread(folder_path: str):
         if src_path not in sys.path:
             sys.path.insert(0, src_path)
 
-        from tomemaster.main import TomeMasterPipeline, TomeMasterState
+        try:
+            from tomemaster.main import TomeMasterPipeline, TomeMasterState
+        except ImportError as ie:
+            # [HONEST FAILURE]: The CrewAI pipeline is an optional dependency.
+            # Surface a clear, actionable message instead of a raw module error.
+            with TRANSCRIPTION_LOCK:
+                TRANSCRIPTION_STATE["status"] = "error"
+                TRANSCRIPTION_STATE["error_message"] = (
+                    "Transcription engine unavailable: the CrewAI pipeline "
+                    f"dependency is not installed ({ie}). "
+                    "Run: backend\\venv\\Scripts\\pip install \"crewai[tools]\""
+                )
+            return
 
         # Override the default folder_path with the user's request
         pipeline = TomeMasterPipeline()
