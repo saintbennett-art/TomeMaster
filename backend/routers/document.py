@@ -201,84 +201,15 @@ async def export_epub(req: ExportRequest):
         logger.error("EPUB export error:\n%s", traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
-class TranscriptionRequest(BaseModel):
-    api_key: str = ""
-    provider: str = "gemini"
-    folder_path: Optional[str] = None
-    reset_cache: bool = False
-    mode: str = "batch"
-    model: Optional[str] = None
-    fallback_provider: Optional[str] = None
-    fallback_model: Optional[str] = None
-
-class AuditResolutionRequest(BaseModel):
-    page_number: str
-    apply_offset: bool = False
-
-class OffsetRequest(BaseModel):
-    delta: int
-
-@router.post("/transcribe/start")
-def start_transcription(req: TranscriptionRequest):
-    """Drops a native folder picker over the browser and triggers the OCR background thread."""
-    # Pass the AI key and provider explicitly provided by the React Settings modal
-    success, used_folder = transcriber_service.start_transcription_background(
-        req.api_key, req.provider, req.folder_path, req.reset_cache, req.mode, req.model,
-        fallback_provider=req.fallback_provider, fallback_model=req.fallback_model
-    )
-    if not success:
-        return {"status": "cancelled"}
-    return {"status": "started", "folder_path": used_folder}
-
-@router.post("/transcribe/clear")
-def clear_transcription():
-    """Wipes the current transcription state for a fresh project start."""
-    transcriber_service.clear_transcription_state()
-    return {"status": "cleared"}
-
-@router.post("/transcribe/resolve")
-def resolve_audit(req: AuditResolutionRequest):
-    """Resumes a paused transcription after user input."""
-    success = transcriber_service.resolve_audit_input(req.page_number, req.apply_offset)
-    return {"status": "success" if success else "failed"}
-
-@router.post("/transcribe/offset")
-def set_offset(req: OffsetRequest):
-    """Adjusts the global page numbering offset."""
-    transcriber_service.set_transcription_offset(req.delta)
-    return {"status": "offset_applied"}
-
-@router.get("/transcribe/status")
-async def get_transcription_status(summary: bool = False):
-    """
-    Polls the global state. 
-    'summary=True' strips the massive 'text' and 'pages' fields for HUD performance,
-    but includes 'new_pages' from the stream buffer for the editor.
-    """
-    with transcriber_service.TRANSCRIPTION_LOCK:
-        state = dict(transcriber_service.TRANSCRIPTION_STATE)
-        
-        # [SMART STREAM]: Destructive fetch of the buffer
-        buffer = state.get("stream_buffer", [])
-        transcriber_service.TRANSCRIPTION_STATE["stream_buffer"] = []
-        
-        if summary:
-            # Drop heavy data for lightweight polling
-            state.pop("text", None)
-            state.pop("pages", None)
-            # Add the incremental updates
-            state["new_pages"] = buffer
-            
-        return state
-
-@router.post("/transcribe/resort")
-async def resort_manuscript_post(req: TranscriptionRequest):
-    """Triggers a physical re-sort of the manuscript from the cache."""
-    safe_path = _safe_folder(req.folder_path) if req.folder_path else None
-    success = transcriber_service.resort_from_cache(safe_path)
-    if success:
-        return {"status": "success"}
-    return {"status": "failed", "message": "Cache not found or corrupt."}
+# ─────────────────────────────────────────────────────────────────────────────
+# [CONSOLIDATED]: The /transcribe/* endpoints that used to live here (start,
+# clear, resolve, offset, status, resort, ingest) were duplicates of
+# routers/transcribe.py with drifted behavior — notably, two status endpoints
+# destructively drained the same stream_buffer, losing pages for whichever
+# poller arrived second. The canonical surface is /api/v1/transcribe/*.
+# This router keeps document concerns only: upload, export, target, load,
+# read, photo.
+# ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/target")
 async def target_project_folder():
@@ -335,38 +266,6 @@ async def read_local_file(path: str):
         return {"content": content}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/transcribe/ingest")
-async def ingest_project_baseline(folder_path: str):
-    """Ingests the project baseline."""
-    safe_path = _safe_folder(folder_path)
-    success = transcriber_service.ingest_project_baseline(safe_path)
-    return {"status": "success" if success else "failed"}
-
-@router.get("/transcribe/resort")
-async def resort_manuscript_get(folder_path: str):
-    """Triggers manuscript unification via GET (background thread)."""
-    import glob
-    import threading
-    from services.transcriber_service import TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK
-
-    safe_path = _safe_folder(folder_path)
-
-    rtfs = glob.glob(os.path.join(safe_path, "*.rtf"))
-    src_subdir = os.path.join(safe_path, "_manuscript_source")
-    if os.path.exists(src_subdir):
-        rtfs.extend(glob.glob(os.path.join(src_subdir, "*.rtf")))
-    count = len(rtfs)
-
-    with TRANSCRIPTION_LOCK:
-        TRANSCRIPTION_STATE["status"] = "stitching"
-        TRANSCRIPTION_STATE["error_message"] = f"Assembling manuscript: {count} pages ready for unification..."
-
-    if not transcriber_service._stitching_active.is_set():
-        thread = threading.Thread(target=transcriber_service.resort_from_cache, args=(safe_path,))
-        thread.daemon = True
-        thread.start()
-    return {"status": "stitching"}
 
 @router.get("/photo")
 async def get_project_photo(folder_path: str, filename: str):

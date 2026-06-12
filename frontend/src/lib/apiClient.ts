@@ -305,7 +305,7 @@ export const checkBackendHealth = async (retries = 3): Promise<boolean> => {
 
 export async function clearTranscription(): Promise<boolean> {
     try {
-        const res = await fetch(`${API_BASE_HOLDER.current}/document/transcribe/clear`, { method: 'POST' });
+        const res = await fetch(`${API_BASE_HOLDER.current}/transcribe/clear`, { method: 'POST' });
         return res.ok;
     } catch (e) {
         return false;
@@ -314,7 +314,7 @@ export async function clearTranscription(): Promise<boolean> {
 
 export async function resortTranscription(folderPath: string): Promise<boolean> {
     try {
-        const res = await fetch(`${API_BASE_HOLDER.current}/document/transcribe/resort?folder_path=${encodeURIComponent(folderPath)}`, {
+        const res = await fetch(`${API_BASE_HOLDER.current}/transcribe/resort?folder_path=${encodeURIComponent(folderPath)}`, {
             method: 'GET'
         });
         return res.ok;
@@ -325,7 +325,7 @@ export async function resortTranscription(folderPath: string): Promise<boolean> 
 
 export async function resolveAudit(pageNumber: string, applyOffset: boolean = false): Promise<boolean> {
     try {
-        const res = await fetch(`${API_BASE_HOLDER.current}/document/transcribe/resolve`, {
+        const res = await fetch(`${API_BASE_HOLDER.current}/transcribe/resolve`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ page_number: pageNumber, apply_offset: applyOffset })
@@ -338,7 +338,7 @@ export async function resolveAudit(pageNumber: string, applyOffset: boolean = fa
 
 export async function setTranscriptionOffset(delta: number): Promise<boolean> {
     try {
-        const res = await fetch(`${API_BASE_HOLDER.current}/document/transcribe/offset`, {
+        const res = await fetch(`${API_BASE_HOLDER.current}/transcribe/offset`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ delta })
@@ -394,7 +394,7 @@ export async function readLocalFile(path: string): Promise<{ content: string, ht
 
 export async function checkTranscriptionStatus(summary: boolean = true): Promise<TranscriptionStatus> {
     try {
-        const res = await safeFetch(`${API_BASE_HOLDER.current}/document/transcribe/status?summary=${summary}`);
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/transcribe/status?summary=${summary}`);
         if ('isNetworkError' in res) {
             return { status: 'standby', error_message: "Re-establishing High-Velocity Link..." };
         }

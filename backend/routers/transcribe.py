@@ -14,6 +14,9 @@ class AuditResolutionRequest(BaseModel):
     page_number: str
     apply_offset: bool = False
 
+class OffsetRequest(BaseModel):
+    delta: int
+
 class PipelineRequest(BaseModel):
     """Request body for the CrewAI pipeline endpoint."""
     folder_path: str = "./test_batch"
@@ -130,17 +133,31 @@ def resolve_audit(req: AuditResolutionRequest):
     success = transcriber_service.resolve_audit_input(req.page_number, req.apply_offset)
     return {"status": "success" if success else "failed"}
 
+@router.post("/offset")
+def set_offset(req: OffsetRequest):
+    """Adjusts the global page numbering offset."""
+    transcriber_service.set_transcription_offset(req.delta)
+    return {"status": "offset_applied"}
+
 @router.get("/resort")
 async def resort_manuscript_get(folder_path: str):
-    """Triggers manuscript unification."""
+    """Triggers manuscript unification (background thread)."""
+    import glob
     import threading
     from services.transcriber_service import TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK
-    folder_path = validate_project_path(folder_path)
+    safe_path = validate_project_path(folder_path)
+
+    rtfs = glob.glob(os.path.join(safe_path, "*.rtf"))
+    src_subdir = os.path.join(safe_path, "_manuscript_source")
+    if os.path.exists(src_subdir):
+        rtfs.extend(glob.glob(os.path.join(src_subdir, "*.rtf")))
+
     with TRANSCRIPTION_LOCK:
         TRANSCRIPTION_STATE["status"] = "stitching"
-        TRANSCRIPTION_STATE["error_message"] = "Assembling manuscript from root artifacts..."
+        TRANSCRIPTION_STATE["error_message"] = f"Assembling manuscript: {len(rtfs)} pages ready for unification..."
+
     if not transcriber_service._stitching_active.is_set():
-        thread = threading.Thread(target=transcriber_service.resort_from_cache, args=(folder_path,))
+        thread = threading.Thread(target=transcriber_service.resort_from_cache, args=(safe_path,))
         thread.daemon = True
         thread.start()
     return {"status": "stitching"}
