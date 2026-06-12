@@ -84,6 +84,38 @@ def clear_transcription():
     transcriber_service.clear_transcription_state()
     return {"status": "cleared"}
 
+@router.post("/abort")
+def abort_transcription(mode: str = "current"):
+    """[DIRECTORIAL HALT]: Signals the running job to stop at the next safe point.
+
+    mode='current' — stop the active job, keep project state on disk.
+    mode='all'     — stop the job AND wipe in-memory + disk state for a fresh start.
+
+    The abort event is checked by worker threads between pages/phases; a phase
+    already in flight (e.g. a single model call) finishes before the stop takes
+    effect.
+    """
+    from services.transcriber_service import (
+        TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK, TRANSCRIPTION_ABORT,
+    )
+
+    TRANSCRIPTION_ABORT.set()
+
+    with TRANSCRIPTION_LOCK:
+        was_active = TRANSCRIPTION_STATE.get("status") in (
+            "running", "indexing", "processing", "stitching"
+        )
+        TRANSCRIPTION_STATE["status"] = "idle"
+        TRANSCRIPTION_STATE["error_message"] = (
+            "Transcription aborted by user." if was_active
+            else "No transcription was running; state reset."
+        )
+
+    if mode == "all":
+        transcriber_service.clear_transcription_state()
+
+    return {"status": "aborted", "mode": mode, "was_active": was_active}
+
 @router.post("/resolve")
 def resolve_audit(req: AuditResolutionRequest):
     """Resumes a paused transcription after user input."""
@@ -116,7 +148,9 @@ async def resort_manuscript_get(folder_path: str):
 
 def _run_pipeline_thread(folder_path: str):
     """Background thread: runs the full CrewAI TomeMasterPipeline."""
-    from services.transcriber_service import TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK
+    from services.transcriber_service import (
+        TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK, TRANSCRIPTION_ABORT,
+    )
 
     # Set initial state so the frontend shows progress
     with TRANSCRIPTION_LOCK:
@@ -153,6 +187,12 @@ def _run_pipeline_thread(folder_path: str):
         pipeline.state = TomeMasterState(folder_path=folder_path)
         pipeline.kickoff()
 
+        # [ABORT CHECK]: If the user aborted while the pipeline was in flight,
+        # honor it — leave the state as the abort endpoint set it.
+        if TRANSCRIPTION_ABORT.is_set():
+            print("PIPELINE: Abort honored — discarding in-flight results.")
+            return
+
         # Pipeline complete — update state with final results
         with TRANSCRIPTION_LOCK:
             TRANSCRIPTION_STATE["status"] = "complete"
@@ -169,6 +209,11 @@ def _run_pipeline_thread(folder_path: str):
 
     except Exception as e:
         import traceback
+        # An abort can surface as an exception mid-pipeline — the user's stop
+        # request wins over the error report.
+        if TRANSCRIPTION_ABORT.is_set():
+            print("PIPELINE: Abort honored during failure unwind.")
+            return
         with TRANSCRIPTION_LOCK:
             TRANSCRIPTION_STATE["status"] = "error"
             TRANSCRIPTION_STATE["error_message"] = f"Pipeline error: {str(e)}"

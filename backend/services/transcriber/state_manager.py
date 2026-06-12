@@ -44,6 +44,11 @@ TRANSCRIPTION_STATE_FILE = "project_ledger.json"
 # False at boot — prevents stale "stitching" ledger entries from blocking re-runs.
 _stitching_active = threading.Event()
 
+# [ABORT SIGNAL]: Set by POST /transcribe/abort; worker loops must check it
+# between pages/phases and stop at the next safe point. Cleared when a new
+# job starts.
+TRANSCRIPTION_ABORT = threading.Event()
+
 
 # ─── ACTIVE AGENT TRACKING (NERVE CENTER) ─────────────────────────
 

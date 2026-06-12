@@ -26,6 +26,7 @@ Sub-module map:
 from .transcriber.state_manager import (  # noqa: F401
     TRANSCRIPTION_LOCK,
     TRANSCRIPTION_STATE,
+    TRANSCRIPTION_ABORT,
     TRANSCRIPTION_ARTIFACTS_DIR,
     TRANSCRIPTION_STATE_FILE,
     _stitching_active,
@@ -156,6 +157,9 @@ def start_transcription_background(
             "current_batch": 0,
             "text": None,
         })
+
+    # [ABORT RESET]: A new job invalidates any prior abort request
+    TRANSCRIPTION_ABORT.clear()
 
     # [CREWAI PIPELINE]: Launch via the pipeline thread
     from routers.transcribe import _run_pipeline_thread

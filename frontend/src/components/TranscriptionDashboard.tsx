@@ -10,6 +10,7 @@ interface TranscriptionDashboardProps {
     totalPageGoal: number;
     isTranscribing: boolean;
     onStart: () => void;
+    onAbort?: () => void;
     errorMessage?: string;
     providerName?: string;
     modelName?: string;
@@ -45,6 +46,7 @@ export function TranscriptionDashboard({
     totalPageGoal,
     isTranscribing,
     onStart,
+    onAbort,
     errorMessage,
     providerName,
     modelName,
@@ -191,6 +193,17 @@ export function TranscriptionDashboard({
                             Start Industrial Transcription
                         </>
                     )}
+                </button>
+            )}
+
+            {/* Halt — only meaningful while a job is in flight */}
+            {isTranscribing && onAbort && (
+                <button
+                    onClick={onAbort}
+                    className="w-full py-2.5 rounded-2xl font-black text-[9px] uppercase tracking-[0.25em] bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-all flex items-center justify-center gap-2"
+                >
+                    <AlertCircle className="w-3 h-3" />
+                    Halt Transcription
                 </button>
             )}
         </div>

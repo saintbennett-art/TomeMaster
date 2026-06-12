@@ -36,8 +36,8 @@ export default function MainEditor({
     isActivated, processedPageCount, bookTitle, authorName, coverImage
   } = useWorkstationState();
 
-  const { 
-    notify, setIsTranscribing, setTranscriptionStatus, setProcessedPageCount, invokeTranscription
+  const {
+    notify, setIsTranscribing, setTranscriptionStatus, setProcessedPageCount, invokeTranscription, abortTranscription
   } = useWorkstationActions();
 
   const {
@@ -274,6 +274,7 @@ export default function MainEditor({
               errorMessage={transcriptionStatus?.error_message}
               isTranscribing={isTranscribing}
               onStart={handleStartTranscribe}
+              onAbort={() => abortTranscription('current')}
               providerName="Sovereign Gateway"
               modelName="Apex Vision"
               currentImageB64={transcriptionStatus?.current_image_b64}
