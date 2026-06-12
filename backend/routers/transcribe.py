@@ -25,10 +25,13 @@ class PipelineRequest(BaseModel):
 # so the frontend can poll /status regardless of which was used.
 # ─────────────────────────────────────────────────────────
 
+from services.security import validate_project_path
+
 @router.get("/ingest")
 async def ingest_project_baseline(folder_path: str):
     """[LEDGER]: Ingests the project baseline and hydrates the UI."""
-    success = transcriber_service.ingest_project_baseline(folder_path)
+    safe_path = validate_project_path(folder_path)
+    success = transcriber_service.ingest_project_baseline(safe_path)
     return {"status": "success" if success else "failed"}
 
 @router.get("/status")
@@ -54,6 +57,11 @@ async def get_transcription_status(summary: bool = False):
 def start_transcription(req: TranscribeRequestSchema):
     """Triggers the OCR background thread. All provider/model/key config resolved from Settings vault."""
     from services import settings_service
+
+    # [GUARDRAIL]: A caller-supplied folder must live under the user's home tree.
+    # (Empty/None falls through to the native folder picker.)
+    if req.folder_path:
+        req.folder_path = validate_project_path(req.folder_path)
 
     # [SOVEREIGN DISCOVERY]: Resolve vision engine from the user's configured vault
     # The API key in settings determines the provider and model — nothing is hardcoded.
@@ -127,6 +135,7 @@ async def resort_manuscript_get(folder_path: str):
     """Triggers manuscript unification."""
     import threading
     from services.transcriber_service import TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK
+    folder_path = validate_project_path(folder_path)
     with TRANSCRIPTION_LOCK:
         TRANSCRIPTION_STATE["status"] = "stitching"
         TRANSCRIPTION_STATE["error_message"] = "Assembling manuscript from root artifacts..."
@@ -236,6 +245,8 @@ def start_pipeline(req: PipelineRequest):
     ui_sync_callback writes progress to the shared TRANSCRIPTION_STATE.
     """
     from services.transcriber_service import TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK
+
+    req.folder_path = validate_project_path(req.folder_path)
 
     with TRANSCRIPTION_LOCK:
         if TRANSCRIPTION_STATE.get("status") == "running":

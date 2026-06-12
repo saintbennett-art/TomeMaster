@@ -51,13 +51,8 @@ class ForecastRequest(BaseModel):
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 
-def _validate_project_path(folder_path: str) -> str:
-    """Resolves and validates that a path stays within the user's home directory tree."""
-    resolved = os.path.realpath(os.path.abspath(folder_path))
-    home = os.path.realpath(os.path.expanduser("~"))
-    if not resolved.startswith(home + os.sep) and resolved != home:
-        raise HTTPException(status_code=403, detail="Path outside permitted directory.")
-    return resolved
+# [SHARED GUARDRAIL]: One canonical path validator for every router.
+from services.security import validate_project_path as _validate_project_path
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
@@ -189,10 +184,13 @@ async def get_total_expenditure():
 @router.get("/ledger")
 async def get_project_ledger(folder_path: str):
     """Returns the line-by-line transaction ledger for a specific project folder."""
-    if not folder_path or not os.path.isdir(folder_path):
+    if not folder_path:
+        return {"ledger": []}
+    safe_path = _validate_project_path(folder_path)
+    if not os.path.isdir(safe_path):
         return {"ledger": []}
 
-    ledger_path = os.path.join(folder_path, "ai_usage_ledger.jsonl")
+    ledger_path = os.path.join(safe_path, "ai_usage_ledger.jsonl")
     if not os.path.exists(ledger_path):
         return {"ledger": []}
 

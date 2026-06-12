@@ -17,13 +17,8 @@ from services.parsers import (
 
 logger = logging.getLogger(__name__)
 
-def _safe_folder(folder_path: str) -> str:
-    """Validates that folder_path resolves inside the user's home directory."""
-    resolved = os.path.realpath(os.path.abspath(folder_path))
-    home = os.path.realpath(os.path.expanduser("~"))
-    if not resolved.startswith(home + os.sep) and resolved != home:
-        raise HTTPException(status_code=403, detail="Path outside permitted directory.")
-    return resolved
+# [SHARED GUARDRAIL]: One canonical path validator for every router.
+from services.security import validate_project_path as _safe_folder
 
 router = APIRouter()
 
@@ -94,7 +89,7 @@ async def upload_document_stream(file: UploadFile = File(...), api_key: str = ""
         raise HTTPException(status_code=400, detail="No file uploaded")
     
     content = await file.read()
-    
+
     # If it's a Txt or Docx we just return it immediately as a single 'done' packet because they resolve in milliseconds anyway!
     if not file.filename.lower().endswith(".pdf"):
         # We invoke standard handling, then yield the final state!
@@ -107,7 +102,16 @@ async def upload_document_stream(file: UploadFile = File(...), api_key: str = ""
             text = parsed["text"]
             html = parsed["html"]
             toc = parsed["toc"]
-        
+        else:
+            # [FIX]: Anything else previously fell through with text/html/toc
+            # unassigned -> UnboundLocalError -> raw 500. Mirror /upload's
+            # friendly rejection instead.
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported format: '{file.filename}'. Streaming upload supports .txt, .docx, and .pdf. "
+                       "If you are using an older Word 97 (.doc) file, please 'Save As' .docx and try again."
+            )
+
         if is_demo:
             truncated = truncate_for_demo({"text": text, "html": html, "toc": toc})
             text = truncated["text"]
