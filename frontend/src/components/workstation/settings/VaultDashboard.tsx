@@ -130,13 +130,13 @@ export const VaultDashboard: React.FC<VaultDashboardProps> = ({
                                     <tr key={idx} className="hover:bg-white/5 transition-colors">
                                         <td className="p-3">
                                             <p className="text-[9px] text-zinc-300 font-bold uppercase truncate max-w-[120px]">{entry.action || 'Analysis'}</p>
-                                            <p className="text-[7px] text-zinc-600 font-mono mt-0.5">{new Date(entry.timestamp * 1000).toLocaleTimeString()}</p>
+                                            <p className="text-[7px] text-zinc-600 font-mono mt-0.5">{new Date((entry.timestamp ?? 0) * 1000).toLocaleTimeString()}</p>
                                         </td>
                                         <td className="p-3">
                                             <span className="text-[8px] font-black text-indigo-400 uppercase tracking-tighter bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">{entry.provider}</span>
                                         </td>
                                         <td className="p-3">
-                                            <span className="text-[10px] text-zinc-400 font-mono">{(entry.metrics?.total_tokens / 1000).toFixed(1)}k</span>
+                                            <span className="text-[10px] text-zinc-400 font-mono">{((entry.metrics?.total_tokens ?? 0) / 1000).toFixed(1)}k</span>
                                         </td>
                                     </tr>
                                 ))}

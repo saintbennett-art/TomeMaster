@@ -1,15 +1,9 @@
 import { saveBlobWithSovereignty } from './file_system_utils';
-import { Chapter } from '@/types/industrial';
+import { Chapter, TranscriptionStatus } from '@/types/industrial';
 import { secureVault } from '@/lib/vault';
 
-export interface TranscriptionStatus {
-    status: string;
-    progress?: number;
-    current_page?: string;
-    error_message?: string;
-    total_pages?: number;
-    processed_pages?: number;
-}
+// Single source of truth lives in types/industrial.ts
+export type { TranscriptionStatus };
 
 // [HANDSHAKE FOUNDATION]: Dynamic Resolution (Zero Hardcoding)
 export async function getLiveApiBase(): Promise<string> {
@@ -374,7 +368,7 @@ export async function targetFolder(): Promise<{ status: string, folder_path: str
     throw lastError;
 }
 
-export async function pickManuscript(): Promise<{ status: string, file_path: string | null, folder_path: string | null, filename: string | null }> {
+export async function pickManuscript(): Promise<{ status: string, file_path: string | null, folder_path: string | null, filename: string | null, is_parseable?: boolean }> {
     let lastError = null;
     for (let i = 0; i < 3; i++) {
         try {

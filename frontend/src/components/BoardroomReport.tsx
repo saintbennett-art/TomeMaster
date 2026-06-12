@@ -6,12 +6,12 @@ import ReactMarkdown from 'react-markdown';
 import { useTextToSpeech } from '@/hooks/useTextToSpeech';
 import { exportDocx } from '@/lib/apiClient';
 
-import { Chapter, AgentReport, Suggestion } from "@/types/industrial";
+import { Chapter, AgentReport, Suggestion, ArcPoint } from "@/types/industrial";
 
 interface BoardroomReportProps {
     isOpen: boolean;
     onClose: () => void;
-    arcData: unknown[]; 
+    arcData: ArcPoint[];
     chapters: Chapter[];
     agentReports: Record<string, AgentReport>;
     onApplySuggestion: (suggestion: Suggestion) => void;

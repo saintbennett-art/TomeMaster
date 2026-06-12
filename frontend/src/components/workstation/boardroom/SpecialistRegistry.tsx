@@ -56,7 +56,7 @@ interface SpecialistRegistryProps {
 
 export const SpecialistRegistry: React.FC<SpecialistRegistryProps> = ({ selectedAgents, setSelectedAgents, customAgents, setCustomAgents }) => {
     const [newAgent, setNewAgent] = React.useState("");
-    const toggleAgent = (id) => {
+    const toggleAgent = (id: string) => {
         if (selectedAgents.includes(id)) setSelectedAgents(selectedAgents.filter(a => a !== id));
         else setSelectedAgents([...selectedAgents, id]);
     };

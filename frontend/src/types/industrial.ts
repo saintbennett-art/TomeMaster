@@ -2,10 +2,10 @@
 
 export interface Chapter {
     id: string;
-    title: string;
+    title?: string;
     suggested_title?: string;
     original_heading?: string;
-    chapter_word_count: number;
+    chapter_word_count?: number;
     reading_time_mins?: number;
     startingWords?: string;
     content?: string;
@@ -15,6 +15,11 @@ export interface Chapter {
     summary?: string;
     content_warnings?: string[];
     starting_words?: string;
+    // AI structural-analysis responses attach the cleaned source segment
+    cleaned_segment?: string;
+    // TOC generation (RichTextEditor.generateTOC) page estimates
+    page_number?: number;
+    display_page?: number;
 }
 
 export interface TranscriptionPage {
@@ -24,16 +29,23 @@ export interface TranscriptionPage {
 }
 
 export interface TranscriptionStatus {
-    status: 'idle' | 'transcribing' | 'complete' | 'error' | 'audit' | 'awaiting_direction' | 'reviewing_injection';
-    processed_images: number;
-    total_images: number;
+    // The backend emits free-form phase strings ("indexing", "stitching",
+    // "running", "standby", "complete", "error", ...) — do not narrow.
+    status: string;
+    processed_images?: number;
+    total_images?: number;
     current_image_b64?: string;
     current_extracted_text?: string;
-    new_pages: TranscriptionPage[];
-    missing_pages_count: number;
+    new_pages?: TranscriptionPage[];
+    missing_pages_count?: number;
     error_message?: string;
     current_injection_page?: number;
     current_injection_text?: string;
+    // Summary-poll fields (GET /transcribe/status?summary=true)
+    progress?: number;
+    current_page?: string;
+    total_pages?: number;
+    processed_pages?: number;
 }
 
 export interface Suggestion {
@@ -88,9 +100,14 @@ export interface ContinuityBibleData {
 }
 
 export interface ArcPoint {
-    segment: string;
-    score: number;
-    chapter_word_count: number;
+    segment?: string;
+    score?: number;
+    chapter_word_count?: number;
+    // Fields attached by structural analysis / report rendering
+    name?: string;
+    cleaned_segment?: string;
+    warnings?: (string | { label: string })[];
+    reading_time?: number;
 }
 
 export interface SystemAudit {
@@ -102,9 +119,9 @@ export interface SystemAudit {
 
 export interface LedgerEntry {
     action?: string;
-    timestamp: number;
-    provider: string;
+    timestamp?: number;
+    provider?: string;
     metrics?: {
-        total_tokens: number;
+        total_tokens?: number;
     };
 }

@@ -3,7 +3,8 @@
 import React from "react";
 import { useWorkstationState, useWorkstationActions } from "@/context/WorkstationContext";
 import { useEditorState, useEditorActions } from "@/context/EditorContext";
-import ResurrectionDashboard from "@/components/ResurrectionDashboard";
+// [REMOVED]: ResurrectionDashboard import — the component file no longer exists
+// and this sidebar renders an empty shell ("Nerve Center Evacuated").
 
 
 interface ResurrectionSidebarProps {

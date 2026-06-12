@@ -1,10 +1,11 @@
 import React, { useEffect, useRef } from 'react';
 import { Book, Zap, Search, Loader2, CheckCircle2, AlertCircle, Layers, GitMerge } from 'lucide-react';
 
-type TranscriptionStatus = 'idle' | 'running' | 'indexing' | 'sewing' | 'stitching' | 'complete' | 'error' | 'audit';
+type TranscriptionPhase = 'idle' | 'running' | 'indexing' | 'sewing' | 'stitching' | 'complete' | 'error' | 'audit';
 
 interface TranscriptionDashboardProps {
-    status: TranscriptionStatus;
+    // The backend emits free-form phase strings; unknown phases fall back to idle styling.
+    status: string;
     processedPages: number;
     totalPageGoal: number;
     isTranscribing: boolean;
@@ -16,7 +17,7 @@ interface TranscriptionDashboardProps {
     missingPagesCount?: number;
 }
 
-const STATUS_CONFIG: Record<TranscriptionStatus, { label: string; color: string; icon: React.ReactNode; pulse: boolean }> = {
+const STATUS_CONFIG: Record<TranscriptionPhase, { label: string; color: string; icon: React.ReactNode; pulse: boolean }> = {
     idle:     { label: 'Awaiting Launch',   color: 'zinc',    icon: <Zap className="w-3 h-3" />,       pulse: false },
     indexing: { label: 'Scanning Artifacts', color: 'amber',  icon: <Search className="w-3 h-3" />,     pulse: true  },
     running:  { label: 'Digitizing',         color: 'indigo', icon: <Loader2 className="w-3 h-3" />,    pulse: true  },
@@ -50,7 +51,7 @@ export function TranscriptionDashboard({
     currentImageB64,
     missingPagesCount = 0,
 }: TranscriptionDashboardProps) {
-    const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.idle;
+    const cfg = STATUS_CONFIG[status as TranscriptionPhase] ?? STATUS_CONFIG.idle;
     const colors = COLOR_MAP[cfg.color];
     const percentage = totalPageGoal > 0 ? Math.round((processedPages / totalPageGoal) * 100) : 0;
     const remaining = Math.max(0, (totalPageGoal || 0) - (processedPages || 0));

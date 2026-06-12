@@ -28,6 +28,7 @@ export interface WorkstationState {
     isReportOpen: boolean;
     isStructuralModalOpen: boolean;
     isFocusMode: boolean;
+    isOfflineMode: boolean;
     activeEnhancements: string[];
 }
 
@@ -50,6 +51,7 @@ export interface WorkstationActions {
     setIsReportOpen: (val: boolean) => void;
     setIsStructuralModalOpen: (val: boolean) => void;
     setIsFocusMode: (val: boolean) => void;
+    setIsOfflineMode: (val: boolean) => void;
     loadManuscript: () => Promise<void>;
     loadSealedManuscript: () => Promise<void>;
     establishProject: () => Promise<void>;
@@ -86,6 +88,7 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [isReportOpen, setIsReportOpen] = useState(false);
     const [isStructuralModalOpen, setIsStructuralModalOpen] = useState(false);
     const [isFocusMode, setIsFocusMode] = useState(false);
+    const [isOfflineMode, setIsOfflineMode] = useState(false);
     const [activeEnhancements, setActiveEnhancements] = useState<string[]>([]);
 
     const notify = useCallback((message: string) => {
@@ -285,7 +288,7 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
         isTranscribing, transcriptionStatus, processedPageCount, transcriptionMode,
         isActivated, language, isSettingsOpen, isHelpOpen, isEnhancementHubOpen,
         isAuditOpen, isLedgerOpen, isReportOpen, isStructuralModalOpen, isFocusMode,
-        activeEnhancements
+        isOfflineMode, activeEnhancements
     };
 
     const workstationActions: WorkstationActions = {
@@ -293,6 +296,7 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setIsTranscribing, setTranscriptionStatus, setProcessedPageCount, setTranscriptionMode,
         setIsActivated, setLanguage, setIsSettingsOpen, setIsHelpOpen, setIsEnhancementHubOpen,
         setIsAuditOpen, setIsLedgerOpen, setIsReportOpen, setIsStructuralModalOpen, setIsFocusMode,
+        setIsOfflineMode,
         loadManuscript, loadSealedManuscript, establishProject, invokeTranscription, confirmInjection, cancelInjection, abortTranscription,
         resolveAuditInput, resolveInjection, notify, hydrate,
         toggleEnhancement

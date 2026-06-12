@@ -51,8 +51,8 @@ export default function MainEditor({
   } = useEditorActions();
 
   const [activeTab, setActiveTab] = useState("Developmental Editor");
-  const [selectedAgents, setSelectedAgents] = useState([]);
-  const [customAgents, setCustomAgents] = useState([]);
+  const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
+  const [customAgents, setCustomAgents] = useState<string[]>([]);
   const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(false);
   const [isSuperMuseMode, setIsSuperMuseMode] = useState(true);
   const [localAnalysisTrigger, setLocalAnalysisTrigger] = useState(0);
@@ -60,7 +60,7 @@ export default function MainEditor({
   const [isLiaisonSpeaking, setIsLiaisonSpeaking] = useState(false);
   const [lastActionTime, setLastActionTime] = useState(0);
 
-  const editorRef = useRef(null);
+  const editorRef = useRef<RichTextEditorRef | null>(null);
 
   const { speak, stop, isPlaying } = useTextToSpeech();
 
@@ -90,7 +90,8 @@ export default function MainEditor({
                       c.title?.toLowerCase().includes(searchTerm) ||
                       c.startingWords?.toLowerCase().includes(searchTerm)
                   );
-                  if (match && onPreviewChapter) onPreviewChapter(match.startingWords || match.title);
+                  const target = match && (match.startingWords || match.title);
+                  if (target && onPreviewChapter) onPreviewChapter(target);
               }
           }
       },
@@ -111,17 +112,18 @@ export default function MainEditor({
         }
 
         setTranscriptionStatus({...state}); // Force reactivity
-        if (state.new_pages && state.new_pages.length > 0) {
+        const newPages = state.new_pages;
+        if (newPages && newPages.length > 0) {
           let accText = "";
           let accHtml = "";
-          state.new_pages.forEach((p) => {
+          newPages.forEach((p) => {
              accText += "\n\n" + p.text;
              accHtml += `<div class="transcription-batch"><p>${p.text.replace(/\n\n/g, "</p><p>")}</p></div>`;
           });
           setContent(prev => prev + accText);
           setHtmlContent(prev => prev + accHtml);
           editorRef.current?.insertChunk(accHtml);
-          setProcessedPageCount(prev => prev + state.new_pages.length);
+          setProcessedPageCount(prev => prev + newPages.length);
         }
         if (state.status === "complete") {
           setIsTranscribing(false);
@@ -148,8 +150,14 @@ export default function MainEditor({
     return () => clearInterval(poll);
   }, [isTranscribing, lastActionTime]);
 
-  const handleApplySuggestion = useCallback((suggestion) => {
-    editorRef.current?.insertChunk(`<div class="ai-suggestion">${suggestion}</div>`);
+  const handleApplySuggestion = useCallback((suggestion: string | { suggestion?: string; content?: string }) => {
+    // Suggestion objects carry the replacement text in .suggestion/.content;
+    // plain strings are inserted as-is.
+    const text = typeof suggestion === 'string'
+        ? suggestion
+        : (suggestion.suggestion ?? suggestion.content ?? '');
+    if (!text) return;
+    editorRef.current?.insertChunk(`<div class="ai-suggestion">${text}</div>`);
   }, []);
 
   const handleExportDocx = async () => {
@@ -291,9 +299,10 @@ export default function MainEditor({
           setSelectedAgents={setSelectedAgents}
           customAgents={customAgents} 
           setCustomAgents={setCustomAgents}
-          isAnalyzing={isAnalyzing} 
+          isAnalyzing={isAnalyzing}
           setIsAnalyzing={setIsAnalyzing}
           analysisTrigger={localAnalysisTrigger}
+          projectFolder={activeFolderPath}
           onCompletion={() => notify("Boardroom Consensus Established.")}
           notify={notify}
         />
