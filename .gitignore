@@ -49,3 +49,7 @@ Gemini_history.txt
 
 # Windows artifacts
 *.lnk
+
+# Runtime port-handshake signals (written/deleted by the launcher + run.py)
+.sovereign_port
+.frontend_port

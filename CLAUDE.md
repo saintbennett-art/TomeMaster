@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Tome-Master** is a local-first manuscript editor with AI-powered literary analysis. It runs as a desktop app (PyWebView wrapper) or in the browser: a FastAPI backend (dynamic port) and a Next.js frontend (port **3333**). This project is for Bennett Consulting. The priority is **100% literal accuracy and reliability over cleverness**.
+**Tome-Master** is a local-first manuscript editor with AI-powered literary analysis. It runs as a desktop app (PyWebView wrapper) or in the browser: a FastAPI backend and a Next.js frontend, both on **dynamically-claimed free ports** (no hardcoded ports — `Start_TomeMaster.bat` claims a frontend port, `run.py` claims the backend port and broadcasts it via `.sovereign_port`, and the browser is opened with `?api_port=<backend>` so the UI finds the API). This project is for Bennett Consulting. The priority is **100% literal accuracy and reliability over cleverness**.
 
 ## Running the App
 
@@ -22,7 +22,7 @@ cd backend
 python run.py
 ```
 
-**Frontend only** (dev server on 3333):
+**Frontend only** (manual dev server — uses Next's default port 3000, auto-incrementing if taken; the launcher overrides this with a claimed free port via `npm run dev -- -p <port>`):
 
 ```powershell
 cd frontend
