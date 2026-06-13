@@ -143,78 +143,10 @@ async def _call_standard_gateway(role: str, prompt: str, is_json: bool = True, o
         except httpx.ConnectError:
             raise Exception(f"Gateway Unreachable: {target_url}. Ensure your local server or VPN is active.")
 
-def rank_models_for_role(models: list[str], role: str) -> str:
-    """
-    [APEX DISCOVERY]: Ranks models based on role-specific narrative intelligence.
-    """
-    if not models: return None
-    m_list = [m.lower() for m in models]
-    
-    if role == "TRANSCRIBER_LEAD":
-        # Prioritize Vision Apex (Llama 3.2 90B > 11B > Gemini Flash)
-        for target in ["90b-vision", "11b-vision", "vision", "flash"]:
-            match = next((m for m in m_list if target in m), None)
-            if match: return models[m_list.index(match)]
-            
-    if role == "NARRATIVE_ARCHITECT":
-        # Prioritize Context/Reasoning Apex (3.1 Pro > 4o > 1.5 Pro)
-        for target in ["3.1-pro", "gpt-4o", "1.5-pro", "pro"]:
-            match = next((m for m in m_list if target in m), None)
-            if match: return models[m_list.index(match)]
-
-    if role == "COPY_EDITOR":
-        # Prioritize Linguistic Fidelity (Sonnet > Opus > GPT-4o)
-        for target in ["sonnet", "opus", "4o", "latest"]:
-            match = next((m for m in m_list if target in m), None)
-            if match: return models[m_list.index(match)]
-
-    # Default to the first model if no apex match found
-    return models[0]
-
-async def auto_configure_gateway_async(api_key: str):
-    """
-    [SELF-HEALING HANDSHAKE]: 
-    1. Detects Gateway via Heuristic Signature.
-    2. Handshakes to retrieve live Portfolio.
-    3. Auto-assigns Apex models to Industrial Roles.
-    """
-    from .settings_service import detect_gateway_from_key, save_settings, load_settings
-    
-    discovery = detect_gateway_from_key(api_key)
-    if not discovery:
-        return {"success": False, "message": "Signature Mismatch: Key format unknown."}
-    
-    # 1. Register the Gateway
-    settings = load_settings()
-    gw_name = discovery["name"]
-    settings["gateways"][gw_name] = {
-        "url": discovery["url"],
-        "key": api_key,
-        "provider_type": discovery["provider_type"]
-    }
-    
-    # 2. Discovery Pulse (Retrieve Portfolio)
-    try:
-        portfolio = await list_models_async(discovery["provider_type"], api_key, discovery["url"])
-        if not portfolio.get("success"):
-            raise Exception(portfolio.get("message", "Discovery Pulse failed."))
-            
-        models = portfolio["models"]
-        settings["gateways"][gw_name]["default_model"] = rank_models_for_role(models, "NARRATIVE_ARCHITECT")
-        
-        # 3. Auto-Assign Apex Models to Roles
-        roles = ["TRANSCRIBER_LEAD", "NARRATIVE_ARCHITECT", "COPY_EDITOR", "MARKETING_ANALYST", "SOVEREIGN_LIAISON"]
-        for role in roles:
-            # If this gateway has an "Apex" for this role, promote it
-            apex = rank_models_for_role(models, role)
-            if apex:
-                settings["role_mappings"][role] = gw_name
-                
-        save_settings(settings)
-        return {"success": True, "message": f"Gateway '{gw_name}' Established. Portfolio Auto-Assigned.", "portfolio": models}
-        
-    except Exception as e:
-        return {"success": False, "message": f"Handshake Failure: {str(e)}"}
+# [REMOVED]: rank_models_for_role() + auto_configure_gateway_async() were dead and
+# broken — no callers in the app, and auto_configure imported the nonexistent
+# settings_service.detect_gateway_from_key (instant ImportError if ever invoked).
+# Live model ranking is settings_service._resolve_auto_model + _ROLE_RANKING.
 
 # [ROUTING TABLE]: Default discovery endpoints per provider. Used when callers
 # don't pass an explicit gateway URL.
