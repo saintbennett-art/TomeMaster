@@ -29,3 +29,5 @@ redis
 python-json-logger
 PyJWT
 cryptography
+# --- DEV/TEST ---
+pytest
