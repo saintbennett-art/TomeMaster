@@ -5,6 +5,7 @@ import httpx
 from .settings_service import get_model_for_role
 from .pii_scrubber import pii_scrubber
 from .ai import json_steward, specialist_registry, prompt_orchestrator
+from .logger_service import log_api_usage
 
 # [CERTIFICATION GRADE]: Standardized Gateway-Agnostic Dispatcher
 # This service no longer "knows" about specific brands like Gemini or OpenAI.
@@ -80,6 +81,10 @@ async def _call_anthropic_gateway(model: str, key: str, prompt: str, is_json: bo
             data = response.json()
             blocks = data.get("content") or []
             raw_content = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+            # [LEDGER]: Anthropic usage is input_tokens + output_tokens.
+            usage = data.get("usage") or {}
+            total_tokens = (usage.get("input_tokens", 0) or 0) + (usage.get("output_tokens", 0) or 0)
+            log_api_usage("Boardroom", "anthropic", model, {"total_tokens": total_tokens})
             if is_json:
                 return _robust_parse_json(raw_content)
             return {"feedback": raw_content}
@@ -136,85 +141,23 @@ async def _call_standard_gateway(role: str, prompt: str, is_json: bool = True, o
                 
             data = response.json()
             raw_content = data["choices"][0]["message"]["content"]
-            
+            # [LEDGER]: OpenAI-compatible gateways (incl. Gemini-compat, Groq)
+            # return token usage here — log it so the boardroom shows up in the
+            # cost ledger, not just PDF OCR.
+            usage = data.get("usage") or {}
+            log_api_usage(role, provider or "unknown", model,
+                          {"total_tokens": usage.get("total_tokens", 0) or 0})
+
             if is_json:
                 return _robust_parse_json(raw_content)
             return {"feedback": raw_content}
         except httpx.ConnectError:
             raise Exception(f"Gateway Unreachable: {target_url}. Ensure your local server or VPN is active.")
 
-def rank_models_for_role(models: list[str], role: str) -> str:
-    """
-    [APEX DISCOVERY]: Ranks models based on role-specific narrative intelligence.
-    """
-    if not models: return None
-    m_list = [m.lower() for m in models]
-    
-    if role == "TRANSCRIBER_LEAD":
-        # Prioritize Vision Apex (Llama 3.2 90B > 11B > Gemini Flash)
-        for target in ["90b-vision", "11b-vision", "vision", "flash"]:
-            match = next((m for m in m_list if target in m), None)
-            if match: return models[m_list.index(match)]
-            
-    if role == "NARRATIVE_ARCHITECT":
-        # Prioritize Context/Reasoning Apex (3.1 Pro > 4o > 1.5 Pro)
-        for target in ["3.1-pro", "gpt-4o", "1.5-pro", "pro"]:
-            match = next((m for m in m_list if target in m), None)
-            if match: return models[m_list.index(match)]
-
-    if role == "COPY_EDITOR":
-        # Prioritize Linguistic Fidelity (Sonnet > Opus > GPT-4o)
-        for target in ["sonnet", "opus", "4o", "latest"]:
-            match = next((m for m in m_list if target in m), None)
-            if match: return models[m_list.index(match)]
-
-    # Default to the first model if no apex match found
-    return models[0]
-
-async def auto_configure_gateway_async(api_key: str):
-    """
-    [SELF-HEALING HANDSHAKE]: 
-    1. Detects Gateway via Heuristic Signature.
-    2. Handshakes to retrieve live Portfolio.
-    3. Auto-assigns Apex models to Industrial Roles.
-    """
-    from .settings_service import detect_gateway_from_key, save_settings, load_settings
-    
-    discovery = detect_gateway_from_key(api_key)
-    if not discovery:
-        return {"success": False, "message": "Signature Mismatch: Key format unknown."}
-    
-    # 1. Register the Gateway
-    settings = load_settings()
-    gw_name = discovery["name"]
-    settings["gateways"][gw_name] = {
-        "url": discovery["url"],
-        "key": api_key,
-        "provider_type": discovery["provider_type"]
-    }
-    
-    # 2. Discovery Pulse (Retrieve Portfolio)
-    try:
-        portfolio = await list_models_async(discovery["provider_type"], api_key, discovery["url"])
-        if not portfolio.get("success"):
-            raise Exception(portfolio.get("message", "Discovery Pulse failed."))
-            
-        models = portfolio["models"]
-        settings["gateways"][gw_name]["default_model"] = rank_models_for_role(models, "NARRATIVE_ARCHITECT")
-        
-        # 3. Auto-Assign Apex Models to Roles
-        roles = ["TRANSCRIBER_LEAD", "NARRATIVE_ARCHITECT", "COPY_EDITOR", "MARKETING_ANALYST", "SOVEREIGN_LIAISON"]
-        for role in roles:
-            # If this gateway has an "Apex" for this role, promote it
-            apex = rank_models_for_role(models, role)
-            if apex:
-                settings["role_mappings"][role] = gw_name
-                
-        save_settings(settings)
-        return {"success": True, "message": f"Gateway '{gw_name}' Established. Portfolio Auto-Assigned.", "portfolio": models}
-        
-    except Exception as e:
-        return {"success": False, "message": f"Handshake Failure: {str(e)}"}
+# [REMOVED]: rank_models_for_role() + auto_configure_gateway_async() were dead and
+# broken — no callers in the app, and auto_configure imported the nonexistent
+# settings_service.detect_gateway_from_key (instant ImportError if ever invoked).
+# Live model ranking is settings_service._resolve_auto_model + _ROLE_RANKING.
 
 # [ROUTING TABLE]: Default discovery endpoints per provider. Used when callers
 # don't pass an explicit gateway URL.
@@ -306,21 +249,95 @@ def _build_prompt(content: str, persona: str, user_chapters: list = None, synthe
 KILL_LOCAL_MODE = False
 
 # ─── Industrial Pipeline Specialists ──────────────────────────────────────────
-# [PR #15 RETIRED]: The 7 specialist wrapper functions below have been replaced
-# by BoardroomCrew (CrewAI agents). All analysis.py endpoints now route through
-# crews/boardroom_crew/ instead of these httpx facades.
-#
-# Removed functions:
-#   - run_boardroom_parallel()
-#   - run_structural_analysis_async()
-#   - run_sentinel_async()
-#   - run_heatmap_async()
-#   - run_dynamic_arc_async()
-#   - analyze_emotional_arc_async()
-#   - generate_moodboard_async()
-#   - analyze_world_bible_async()
-#   - _build_override()
-#
-# The gateway infrastructure (_call_standard_gateway, _call_anthropic_gateway,
-# _resolve_gateway_config) is retained — it's still used by the TranscriptionCrew
-# and any future crews that need direct gateway access.
+# [P0 RESTORED]: The CrewAI BoardroomCrew migration (PR #15) shipped without its
+# dependency — `crewai` was never added to requirements.txt or the venv, leaving
+# the backend unbootable. These direct-gateway specialist functions are restored
+# from the pre-PR#15 tree and are the canonical dispatch path. CrewAI remains
+# available only behind the optional /transcribe/start-pipeline experiment.
+
+def _build_override(provider: str = None, api_key: str = None, model: str = None) -> dict:
+    """Collects per-request overrides into the dict shape _call_standard_gateway expects."""
+    o = {}
+    if provider: o["provider"] = provider
+    if api_key:  o["api_key"]  = api_key
+    if model:    o["model"]    = model
+    return o or None
+
+
+async def run_boardroom_parallel(
+    text: str,
+    personas: list,
+    provider: str = None,
+    api_key: str = None,
+    *,
+    model: str = None,
+    user_chapters: list = None,
+    **kwargs,
+):
+    """
+    [HIGH VELOCITY]: Dispatches manuscript to multiple specialist roles simultaneously.
+    Uses true concurrency to ensure minimal directorial latency.
+
+    Per-request `provider`/`api_key`/`model` override the role-based gateway
+    resolved from the encrypted vault, so the UI's slot and key choices take effect.
+    """
+    override = _build_override(provider, api_key, model)
+
+    async def _execute_expert(persona: str):
+        try:
+            # [MODULAR ORCHESTRATION]: Delegate prompt building to the orchestrator
+            prompt, is_json, role = prompt_orchestrator.build_industrial_prompt(
+                text, persona, user_chapters
+            )
+            response = await _call_standard_gateway(role, prompt, is_json, override=override)
+            return persona, response
+        except Exception as e:
+            return persona, {"feedback": f"Expert {persona} Offline: {str(e)}"}
+
+    # DISPATCH ALL SPECIALISTS CONCURRENTLY
+    tasks = [_execute_expert(p) for p in personas]
+    completed = await asyncio.gather(*tasks)
+
+    return {persona: response for persona, response in completed}
+
+
+async def run_structural_analysis_async(text: str, provider: str = None, api_key: str = None, *, model: str = None, local_mode: bool = False):
+    """Routes the 'Architect' audit to the NARRATIVE_ARCHITECT slot."""
+    prompt, _is_json = _build_prompt(text, "Developmental Editor")
+    return await _call_standard_gateway("NARRATIVE_ARCHITECT", prompt, is_json=True,
+                                        override=_build_override(provider, api_key, model))
+
+
+async def run_sentinel_async(content: str, provider: str = None, api_key: str = None, model: str = None):
+    return await _call_standard_gateway("SOVEREIGN_LIAISON", f"CONTINUITY AUDIT: {content[:10000]}", is_json=True,
+                                        override=_build_override(provider, api_key, model))
+
+
+async def run_heatmap_async(content: str, provider: str = None, api_key: str = None, model: str = None):
+    return await _call_standard_gateway("NARRATIVE_ARCHITECT", f"PACING HEATMAP: {content[:10000]}", is_json=True,
+                                        override=_build_override(provider, api_key, model))
+
+
+async def run_dynamic_arc_async(content: str, provider: str = None, api_key: str = None, model: str = None):
+    """[DYNAMIC ARC]: Interactive emotional arc adjustment with plot recommendations."""
+    return await _call_standard_gateway(
+        "NARRATIVE_ARCHITECT",
+        f"DYNAMIC EMOTIONAL ARC ADJUSTMENT — return JSON with plot_points[] and arc_curve[]:\n{content[:10000]}",
+        is_json=True,
+        override=_build_override(provider, api_key, model),
+    )
+
+
+async def analyze_emotional_arc_async(text: str, provider: str = None, api_key: str = None, *, model: str = None, local_mode: bool = False):
+    return await _call_standard_gateway("NARRATIVE_ARCHITECT", f"EMOTIONAL ARC: {text[:10000]}", is_json=True,
+                                        override=_build_override(provider, api_key, model))
+
+
+async def generate_moodboard_async(text: str, provider: str = None, api_key: str = None, model: str = None):
+    return await _call_standard_gateway("MARKETING_ANALYST", f"MOODBOARD SYNTHESIS: {text[:5000]}", is_json=True,
+                                        override=_build_override(provider, api_key, model))
+
+
+async def analyze_world_bible_async(text: str, provider: str = None, api_key: str = None, *, model: str = None, local_mode: bool = False):
+    return await _call_standard_gateway("SOVEREIGN_LIAISON", f"WORLD BIBLE EXTRACTION: {text[:10000]}", is_json=True,
+                                        override=_build_override(provider, api_key, model))

@@ -34,13 +34,13 @@ export const GrammarCheck = Extension.create({
   addCommands() {
     return {
       setGrammarEdits: (edits: {original: string, suggestion: string, reason: string}[]) => ({ editor }) => {
-        const storage = (editor.storage as Record<string, GrammarStorage>).grammarCheck;
+        const storage = (editor.storage as unknown as Record<string, GrammarStorage>).grammarCheck;
         storage.edits = edits.map(e => ({ ...e, id: Math.random().toString(36).substring(7) }));
         editor.view.dispatch(editor.state.tr.setMeta('grammar_refresh', true));
         return true;
       },
       removeGrammarEdit: (id: string) => ({ editor }) => {
-        const storage = (editor.storage as Record<string, GrammarStorage>).grammarCheck;
+        const storage = (editor.storage as unknown as Record<string, GrammarStorage>).grammarCheck;
         storage.edits = storage.edits.filter((e: GrammarEdit) => e.id !== id);
         editor.view.dispatch(editor.state.tr.setMeta('grammar_refresh', true));
         return true;
@@ -60,7 +60,7 @@ export const GrammarCheck = Extension.create({
               return set.map(tr.mapping, tr.doc);
             }
 
-            const storage = (this.editor.storage as Record<string, GrammarStorage>).grammarCheck;
+            const storage = (this.editor.storage as unknown as Record<string, GrammarStorage>).grammarCheck;
             const edits = storage.edits;
             
             const decorations: Decoration[] = [];

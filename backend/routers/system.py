@@ -51,13 +51,8 @@ class ForecastRequest(BaseModel):
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 
-def _validate_project_path(folder_path: str) -> str:
-    """Resolves and validates that a path stays within the user's home directory tree."""
-    resolved = os.path.realpath(os.path.abspath(folder_path))
-    home = os.path.realpath(os.path.expanduser("~"))
-    if not resolved.startswith(home + os.sep) and resolved != home:
-        raise HTTPException(status_code=403, detail="Path outside permitted directory.")
-    return resolved
+# [SHARED GUARDRAIL]: One canonical path validator for every router.
+from services.security import validate_project_path as _validate_project_path
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
@@ -168,12 +163,17 @@ async def get_api_usage():
 
 @router.get("/expenditure")
 async def get_total_expenditure():
-    """Returns the estimated total financial expenditure per provider calculated locally."""
+    """Returns total TOKEN consumption per provider from the local ledger.
+
+    These are token counts, not currency — the app does not have per-model
+    pricing, so it cannot compute a dollar figure. The `unit` field makes that
+    explicit for any UI rendering the values.
+    """
     try:
         USAGE_LOG_PATH = "api_usage_log.jsonl"
         if not os.path.exists(USAGE_LOG_PATH):
-            return {"totals": {}}
-        totals: Dict[str, float] = {}
+            return {"totals": {}, "unit": "tokens"}
+        totals: Dict[str, int] = {}
         with open(USAGE_LOG_PATH, "r", encoding="utf-8") as f:
             for line in f:
                 if line.strip():
@@ -181,7 +181,7 @@ async def get_total_expenditure():
                     provider = entry.get("provider", "unknown")
                     tokens = entry.get("metrics", {}).get("total_tokens", 0)
                     totals[provider] = totals.get(provider, 0) + tokens
-        return {"totals": totals}
+        return {"totals": totals, "unit": "tokens"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -189,10 +189,13 @@ async def get_total_expenditure():
 @router.get("/ledger")
 async def get_project_ledger(folder_path: str):
     """Returns the line-by-line transaction ledger for a specific project folder."""
-    if not folder_path or not os.path.isdir(folder_path):
+    if not folder_path:
+        return {"ledger": []}
+    safe_path = _validate_project_path(folder_path)
+    if not os.path.isdir(safe_path):
         return {"ledger": []}
 
-    ledger_path = os.path.join(folder_path, "ai_usage_ledger.jsonl")
+    ledger_path = os.path.join(safe_path, "ai_usage_ledger.jsonl")
     if not os.path.exists(ledger_path):
         return {"ledger": []}
 

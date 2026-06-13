@@ -1,15 +1,9 @@
 import { saveBlobWithSovereignty } from './file_system_utils';
-import { Chapter } from '@/types/industrial';
+import { Chapter, TranscriptionStatus } from '@/types/industrial';
 import { secureVault } from '@/lib/vault';
 
-export interface TranscriptionStatus {
-    status: string;
-    progress?: number;
-    current_page?: string;
-    error_message?: string;
-    total_pages?: number;
-    processed_pages?: number;
-}
+// Single source of truth lives in types/industrial.ts
+export type { TranscriptionStatus };
 
 // [HANDSHAKE FOUNDATION]: Dynamic Resolution (Zero Hardcoding)
 export async function getLiveApiBase(): Promise<string> {
@@ -311,7 +305,7 @@ export const checkBackendHealth = async (retries = 3): Promise<boolean> => {
 
 export async function clearTranscription(): Promise<boolean> {
     try {
-        const res = await fetch(`${API_BASE_HOLDER.current}/document/transcribe/clear`, { method: 'POST' });
+        const res = await fetch(`${API_BASE_HOLDER.current}/transcribe/clear`, { method: 'POST' });
         return res.ok;
     } catch (e) {
         return false;
@@ -320,7 +314,7 @@ export async function clearTranscription(): Promise<boolean> {
 
 export async function resortTranscription(folderPath: string): Promise<boolean> {
     try {
-        const res = await fetch(`${API_BASE_HOLDER.current}/document/transcribe/resort?folder_path=${encodeURIComponent(folderPath)}`, {
+        const res = await fetch(`${API_BASE_HOLDER.current}/transcribe/resort?folder_path=${encodeURIComponent(folderPath)}`, {
             method: 'GET'
         });
         return res.ok;
@@ -331,7 +325,7 @@ export async function resortTranscription(folderPath: string): Promise<boolean> 
 
 export async function resolveAudit(pageNumber: string, applyOffset: boolean = false): Promise<boolean> {
     try {
-        const res = await fetch(`${API_BASE_HOLDER.current}/document/transcribe/resolve`, {
+        const res = await fetch(`${API_BASE_HOLDER.current}/transcribe/resolve`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ page_number: pageNumber, apply_offset: applyOffset })
@@ -344,7 +338,7 @@ export async function resolveAudit(pageNumber: string, applyOffset: boolean = fa
 
 export async function setTranscriptionOffset(delta: number): Promise<boolean> {
     try {
-        const res = await fetch(`${API_BASE_HOLDER.current}/document/transcribe/offset`, {
+        const res = await fetch(`${API_BASE_HOLDER.current}/transcribe/offset`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ delta })
@@ -374,7 +368,7 @@ export async function targetFolder(): Promise<{ status: string, folder_path: str
     throw lastError;
 }
 
-export async function pickManuscript(): Promise<{ status: string, file_path: string | null, folder_path: string | null, filename: string | null }> {
+export async function pickManuscript(): Promise<{ status: string, file_path: string | null, folder_path: string | null, filename: string | null, is_parseable?: boolean }> {
     let lastError = null;
     for (let i = 0; i < 3; i++) {
         try {
@@ -400,7 +394,7 @@ export async function readLocalFile(path: string): Promise<{ content: string, ht
 
 export async function checkTranscriptionStatus(summary: boolean = true): Promise<TranscriptionStatus> {
     try {
-        const res = await safeFetch(`${API_BASE_HOLDER.current}/document/transcribe/status?summary=${summary}`);
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/transcribe/status?summary=${summary}`);
         if ('isNetworkError' in res) {
             return { status: 'standby', error_message: "Re-establishing High-Velocity Link..." };
         }
@@ -653,9 +647,13 @@ export async function checkSystemHealth(): Promise<{ backend: boolean; vault: bo
         if (res.ok) health.backend = true;
     } catch (e) { }
 
-    // 2. Vault Check
-    const keys = secureVault.load();
-    if (keys && Object.keys(keys).length > 0) health.vault = true;
+    // 2. Vault Check — keys live backend-side now, so ask the backend for
+    // presence booleans. (secureVault is a deprecated stub returning {}, which
+    // left this light permanently red.)
+    try {
+        const presence = await fetchVaultSync();
+        if (presence && Object.values(presence).some(Boolean)) health.vault = true;
+    } catch (e) { }
 
     // 3. Ollama Check (Optional/Local)
     try {

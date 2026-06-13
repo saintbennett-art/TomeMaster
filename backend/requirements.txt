@@ -15,6 +15,11 @@ pytesseract
 python-dotenv
 pymupdf
 httpx
+psutil
+# --- OPTIONAL: CrewAI experimental pipeline (/transcribe/start-pipeline) ---
+# The boardroom endpoints use the direct gateway dispatcher and do NOT need
+# crewai. Install only if you want the experimental pipeline:
+#   pip install "crewai[tools]"
 # --- GOVERNMENT CERTIFICATION STACK ---
 presidio-analyzer
 presidio-anonymizer
@@ -24,3 +29,5 @@ redis
 python-json-logger
 PyJWT
 cryptography
+# --- DEV/TEST ---
+pytest

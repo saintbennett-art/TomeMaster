@@ -10,10 +10,28 @@ class SettingsUpdateRequest(BaseModel):
     preferred_models: Optional[Dict[str, str]] = None
     preferences: Optional[Dict[str, Any]] = None
 
+def _mask_key(value: str) -> str:
+    """Last-4 mask — enough for the UI to show presence, useless to an attacker."""
+    if not value:
+        return ""
+    return f"****{value[-4:]}" if len(value) > 8 else "****"
+
+
 @router.get("/")
 def get_all_settings():
-    """[VAULT]: Delivers all persistent settings to the UI."""
-    return settings_service.load_settings()
+    """[VAULT]: Delivers persistent settings to the UI with API keys masked.
+
+    Raw key values never cross the wire — CORS allows any localhost origin,
+    so any local web page could read this endpoint. Use /analysis/vault-sync
+    for presence booleans; keys live only in the encrypted vault and env.
+    """
+    settings = settings_service.load_settings()
+    masked = dict(settings)
+    masked["api_keys"] = {
+        provider: _mask_key(value)
+        for provider, value in settings.get("api_keys", {}).items()
+    }
+    return masked
 
 @router.post("/update")
 def update_settings(req: SettingsUpdateRequest):

@@ -2,7 +2,13 @@
 import React from "react";
 import { Activity, Clock } from "lucide-react";
 
-export const IntelligencePulse = ({ isAnalyzing, elapsedSeconds, pulseData }) => {
+interface IntelligencePulseProps {
+    isAnalyzing: boolean;
+    elapsedSeconds: number;
+    pulseData: Record<string, { status?: string }>;
+}
+
+export const IntelligencePulse = ({ isAnalyzing, elapsedSeconds, pulseData }: IntelligencePulseProps) => {
     if (!isAnalyzing) return null;
     return (
         <div className="p-4 bg-black/40 border border-indigo-500/20 rounded-2xl space-y-3 animate-in fade-in duration-500">

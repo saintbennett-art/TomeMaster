@@ -4,7 +4,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { get, set } from "idb-keyval";
 import {
     checkTranscriptionStatus, targetFolder, pickManuscript, readLocalFile,
-    API_BASE_HOLDER, startTranscription
+    API_BASE_HOLDER, startTranscription, resolveAudit
 } from "@/lib/apiClient";
 import { TranscriptionStatus } from "@/types/industrial";
 
@@ -28,6 +28,7 @@ export interface WorkstationState {
     isReportOpen: boolean;
     isStructuralModalOpen: boolean;
     isFocusMode: boolean;
+    isOfflineMode: boolean;
     activeEnhancements: string[];
 }
 
@@ -50,15 +51,13 @@ export interface WorkstationActions {
     setIsReportOpen: (val: boolean) => void;
     setIsStructuralModalOpen: (val: boolean) => void;
     setIsFocusMode: (val: boolean) => void;
+    setIsOfflineMode: (val: boolean) => void;
     loadManuscript: () => Promise<void>;
     loadSealedManuscript: () => Promise<void>;
     establishProject: () => Promise<void>;
     invokeTranscription: () => Promise<void>;
-    confirmInjection: () => Promise<void>;
-    cancelInjection: () => Promise<void>;
     abortTranscription: (mode: 'current' | 'all') => Promise<void>;
     resolveAuditInput: (val: string) => Promise<void>;
-    resolveInjection: (decision: 'accept' | 'reject' | 'quit') => Promise<void>;
     notify: (message: string) => void;
     hydrate: () => Promise<void>;
     toggleEnhancement: (id: string) => void;
@@ -86,6 +85,7 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [isReportOpen, setIsReportOpen] = useState(false);
     const [isStructuralModalOpen, setIsStructuralModalOpen] = useState(false);
     const [isFocusMode, setIsFocusMode] = useState(false);
+    const [isOfflineMode, setIsOfflineMode] = useState(false);
     const [activeEnhancements, setActiveEnhancements] = useState<string[]>([]);
 
     const notify = useCallback((message: string) => {
@@ -201,28 +201,31 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
     };
 
-    const confirmInjection = async () => {
-        try { await fetch(`${API_BASE_HOLDER.current}/transcribe/confirm`, { method: 'POST' }); notify("Injected."); } catch (err) {}
-    };
-
-    const cancelInjection = async () => {
-        try { await fetch(`${API_BASE_HOLDER.current}/transcribe/cancel`, { method: 'POST' }); notify("Aborted."); } catch (err) {}
-    };
+    // [REMOVED]: confirmInjection / cancelInjection / resolveInjection — they
+    // posted to endpoints that never existed and were wired to no UI element.
 
     const abortTranscription = async (mode: 'current' | 'all') => {
         try {
-            await fetch(`${API_BASE_HOLDER.current}/transcribe/abort?mode=${mode}`, { method: 'POST' });
+            const res = await fetch(`${API_BASE_HOLDER.current}/transcribe/abort?mode=${mode}`, { method: 'POST' });
+            if (!res.ok) {
+                notify(`Abort request refused by engine (HTTP ${res.status}).`);
+                return;
+            }
+            const data = await res.json();
             setIsTranscribing(false);
-            notify(`Abort Sequence Initiated: ${mode}`);
-        } catch (err) {}
+            notify(data.was_active
+                ? "Transcription halted. In-flight work stops at the next safe point."
+                : "No transcription was running — state reset.");
+        } catch (err) {
+            notify("Abort failed: engine unreachable.");
+        }
     };
 
     const resolveAuditInput = async (val: string) => {
-        try { await fetch(`${API_BASE_HOLDER.current}/transcribe/resolve_audit?value=${encodeURIComponent(val)}`, { method: 'POST' }); } catch (err) {}
-    };
-
-    const resolveInjection = async (decision: 'accept' | 'reject' | 'quit') => {
-        try { await fetch(`${API_BASE_HOLDER.current}/transcribe/resolve_injection?decision=${decision}`, { method: 'POST' }); } catch (err) {}
+        const ok = await resolveAudit(val, false);
+        notify(ok
+            ? `Audit resolved: page ${val} committed.`
+            : "Audit resolution refused — no audit is awaiting input.");
     };
 
     const toggleEnhancement = (id: string) => {
@@ -285,7 +288,7 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
         isTranscribing, transcriptionStatus, processedPageCount, transcriptionMode,
         isActivated, language, isSettingsOpen, isHelpOpen, isEnhancementHubOpen,
         isAuditOpen, isLedgerOpen, isReportOpen, isStructuralModalOpen, isFocusMode,
-        activeEnhancements
+        isOfflineMode, activeEnhancements
     };
 
     const workstationActions: WorkstationActions = {
@@ -293,8 +296,9 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setIsTranscribing, setTranscriptionStatus, setProcessedPageCount, setTranscriptionMode,
         setIsActivated, setLanguage, setIsSettingsOpen, setIsHelpOpen, setIsEnhancementHubOpen,
         setIsAuditOpen, setIsLedgerOpen, setIsReportOpen, setIsStructuralModalOpen, setIsFocusMode,
-        loadManuscript, loadSealedManuscript, establishProject, invokeTranscription, confirmInjection, cancelInjection, abortTranscription,
-        resolveAuditInput, resolveInjection, notify, hydrate,
+        setIsOfflineMode,
+        loadManuscript, loadSealedManuscript, establishProject, invokeTranscription, abortTranscription,
+        resolveAuditInput, notify, hydrate,
         toggleEnhancement
     };
 

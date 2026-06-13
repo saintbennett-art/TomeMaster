@@ -2,30 +2,52 @@
 
 import React, { useState, useEffect } from "react";
 import { X, Sparkles, Activity, ShieldCheck, Cpu, Database, Zap, Lock, Settings, FileText, Key, Info, Check, Loader2, ChevronDown } from "lucide-react";
-import { autoConfigureGateway, API_BASE_HOLDER, fetchAvailableModels, saveVaultToEnv, type DiscoveredModel } from "../lib/apiClient";
+import { API_BASE_HOLDER, fetchAvailableModels, saveVaultToEnv, type DiscoveredModel } from "../lib/apiClient";
 import { VaultDashboard } from "./workstation/settings/VaultDashboard";
-import { secureVault } from "../lib/vault";
 import { MASTER_PROVIDER_LIBRARY } from "../lib/ai_config";
 
 import { useShadowSave } from "../hooks/useShadowSave";
 
 const PROVIDERS = MASTER_PROVIDER_LIBRARY;
 
-const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, activeFolderPath, keys, setKeys }) => {
+interface SettingsModalProps {
+    isOpen: boolean;
+    onClose: () => void;
+    activeProvider: string;
+    setActiveProvider: (provider: string) => void;
+    activeFolderPath: string | null;
+    keys: Record<string, string>;
+    setKeys: (keys: Record<string, string>) => void;
+}
+
+interface UsageEntry {
+    timestamp?: number;
+    provider?: string;
+    metrics?: { total_tokens?: number };
+    [key: string]: unknown;
+}
+
+// Shape rendered by the gateway/role panels. /ai/status doesn't currently
+// return gateways/role_mappings, so those panels stay hidden until the
+// backend grows that endpoint.
+interface SovereignSettings {
+    gateways?: Record<string, { url?: string; provider_type?: string }>;
+    role_mappings?: Record<string, string>;
+    [key: string]: unknown;
+}
+
+const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, activeFolderPath, keys, setKeys }: SettingsModalProps) => {
     const [activeTab, setActiveTab] = useState("keys");
     const [saved, setSaved] = useState(false);
     const [valStatus, setValStatus] = useState({});
     const [valMessages, setValMessages] = useState({});
-    const [ledgerEntries, setLedgerEntries] = useState([]);
+    const [ledgerEntries, setLedgerEntries] = useState<UsageEntry[]>([]);
     const [totalTokens, setTotalTokens] = useState(0);
-    
+
     // [SOVEREIGN RESILIENCE]: Shadow-Save for volatile Vault inputs
-    const [localKeys, setLocalKeys, clearShadow] = useShadowSave("vault_entry", keys);
-    
-    const [discoveryStatus, setDiscoveryStatus] = useState("idle");
-    const [discoveryMessage, setDiscoveryMessage] = useState("");
-    const [discoveredPortfolio, setDiscoveredPortfolio] = useState([]);
-    const [sovereignSettings, setSovereignSettings] = useState(null);
+    const [localKeys, setLocalKeys, clearShadow] = useShadowSave<Record<string, string>>("vault_entry", keys);
+
+    const [sovereignSettings, setSovereignSettings] = useState<SovereignSettings | null>(null);
     // [SOVEREIGN DISCOVERY]: Live models fetched from the provider using the saved key
     const [discoveredModels, setDiscoveredModels] = useState<Record<string, DiscoveredModel[]>>({});
     const [selectedModels, setSelectedModels] = useState<Record<string, string>>({});
@@ -53,45 +75,15 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
             const data = await res.json();
             if (data.history) {
                 setLedgerEntries(data.history);
-                setTotalTokens(data.history.reduce((acc, curr) => acc + (curr.metrics?.total_tokens || 0), 0));
+                setTotalTokens(data.history.reduce(
+                    (acc: number, curr: UsageEntry) => acc + (curr.metrics?.total_tokens || 0), 0
+                ));
             }
         } catch (e) { /* Silent */ }
     };
 
-    const handleGatewayDiscovery = async (key) => {
-        if (!key || key.length < 10) return;
-        
-        setDiscoveryStatus("detecting");
-        setDiscoveryMessage("Analyzing Signature...");
-        
-        try {
-            const res = await fetch(`${API_BASE_HOLDER.current}/analysis/auto-configure`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ keys: { "discovery": key } })
-            });
-            const data = await res.json();
-            
-            if (data.success) {
-                setDiscoveryStatus("success");
-                const details = data.details[0]?.status;
-                if (details?.success) {
-                    setDiscoveryMessage(`Gateway Established: ${details.message}`);
-                    setDiscoveredPortfolio(details.portfolio || []);
-                    fetchSovereignSettingsLocal();
-                } else {
-                    setDiscoveryStatus("error");
-                    setDiscoveryMessage(details?.message || "Discovery Failed");
-                }
-            } else {
-                setDiscoveryStatus("error");
-                setDiscoveryMessage("Handshake Refused");
-            }
-        } catch (e) {
-            setDiscoveryStatus("error");
-            setDiscoveryMessage("Connection Interrupted");
-        }
-    };
+    // [REMOVED]: handleGatewayDiscovery — it posted to /analysis/auto-configure,
+    // an endpoint that never existed, and was never wired into the UI.
 
     const saveAll = async () => {
         // [MASK GUARD]: Strip display placeholders — never write '***SEALED***' to the vault

@@ -1,12 +1,26 @@
 "use client";
 import React from "react";
 import { BookOpen, Layers } from "lucide-react";
+import { Chapter } from "@/types/industrial";
 
-export const NarrativeRangePicker = ({ 
-    analyticScope, setAnalyticScope, userChapters, 
-    rangeStartIdx, setRangeStartIdx, rangeEndIdx, setRangeEndIdx, 
-    visibilityMap, displacement, tacticalSummary 
-}) => {
+interface NarrativeRangePickerProps {
+    analyticScope: string;
+    setAnalyticScope: (scope: string) => void;
+    userChapters: Chapter[];
+    rangeStartIdx: number;
+    setRangeStartIdx: (idx: number) => void;
+    rangeEndIdx: number;
+    setRangeEndIdx: (idx: number) => void;
+    visibilityMap: Map<string, boolean>;
+    displacement: number;
+    tacticalSummary: string;
+}
+
+export const NarrativeRangePicker = ({
+    analyticScope, setAnalyticScope, userChapters,
+    rangeStartIdx, setRangeStartIdx, rangeEndIdx, setRangeEndIdx,
+    visibilityMap, displacement, tacticalSummary
+}: NarrativeRangePickerProps) => {
     return (
         <div className="space-y-4">
             <div className="flex items-center justify-between px-1">

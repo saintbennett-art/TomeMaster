@@ -239,7 +239,7 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
                                                                 }}
                                                                 className="w-full flex items-center gap-3 px-4 py-2 hover:bg-amber-500/10 text-zinc-400 hover:text-amber-500 text-[10px] font-black uppercase tracking-tighter transition-all"
                                                             >
-                                                                <item.icon className="w-3 h-3 opacity-50 text-amber-500" />
+                                                                {item.icon && <item.icon className="w-3 h-3 opacity-50 text-amber-500" />}
                                                                 <span>{item.label}</span>
                                                             </button>
                                                         )

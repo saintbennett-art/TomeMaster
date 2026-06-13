@@ -26,6 +26,7 @@ Sub-module map:
 from .transcriber.state_manager import (  # noqa: F401
     TRANSCRIPTION_LOCK,
     TRANSCRIPTION_STATE,
+    TRANSCRIPTION_ABORT,
     TRANSCRIPTION_ARTIFACTS_DIR,
     TRANSCRIPTION_STATE_FILE,
     _stitching_active,
@@ -102,11 +103,12 @@ def start_transcription_background(
     fallback_provider: str = None,
     fallback_model: str = None,
 ):
-    """Dispatcher: Spawns the folder picker and launches the CrewAI pipeline.
+    """Dispatcher: Spawns the folder picker and launches the direct OCR job.
 
-    The legacy run_transcription_job() has been removed. This function now wires
-    directly to the CrewAI TomeMasterPipeline via _run_pipeline_thread in
-    routers/transcribe.py.
+    [P1 RESTORED]: Wires to transcriber/ocr_job.run_transcription_job — the
+    direct OCR loop restored from the pre-PR#13 tree. All provider/model/key
+    arguments are honored (resolved from the vault by routers/transcribe.py).
+    The CrewAI pipeline remains available only via POST /transcribe/start-pipeline.
     """
     import os
     import threading as _threading
@@ -157,12 +159,19 @@ def start_transcription_background(
             "text": None,
         })
 
-    # [CREWAI PIPELINE]: Launch via the pipeline thread
-    from routers.transcribe import _run_pipeline_thread
+    # [ABORT RESET]: A new job invalidates any prior abort request
+    TRANSCRIPTION_ABORT.clear()
+
+    # [DIRECT OCR]: Launch the restored transcription loop
+    from .transcriber.ocr_job import run_transcription_job
 
     job_thread = _threading.Thread(
-        target=_run_pipeline_thread,
-        args=(folder,),
+        target=run_transcription_job,
+        args=(api_key, folder, provider, reset_cache, mode, model),
+        kwargs={
+            "fallback_provider": fallback_provider,
+            "fallback_model": fallback_model,
+        },
         daemon=True,
     )
     job_thread.start()

@@ -47,12 +47,12 @@ export const VaultDashboard: React.FC<VaultDashboardProps> = ({
                     </div>
                 </div>
                 <div className="bg-black/40 border border-white/5 rounded-2xl p-4">
-                    <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest mb-1">Sovereign Credit Burn</p>
+                    <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest mb-1">Logged AI Calls</p>
                     <div className="flex items-end gap-2">
                         <span className="text-xl font-black text-emerald-400">
-                            {Object.values(expenditure).reduce((a, b) => a + b, 0).toFixed(2)}
+                            {ledgerEntries.length}
                         </span>
-                        <span className="text-[10px] text-zinc-600 font-bold uppercase mb-1">Credits</span>
+                        <span className="text-[10px] text-zinc-600 font-bold uppercase mb-1">Calls</span>
                     </div>
                 </div>
                 <div className="bg-black/40 border border-white/5 rounded-2xl p-4">
@@ -130,13 +130,13 @@ export const VaultDashboard: React.FC<VaultDashboardProps> = ({
                                     <tr key={idx} className="hover:bg-white/5 transition-colors">
                                         <td className="p-3">
                                             <p className="text-[9px] text-zinc-300 font-bold uppercase truncate max-w-[120px]">{entry.action || 'Analysis'}</p>
-                                            <p className="text-[7px] text-zinc-600 font-mono mt-0.5">{new Date(entry.timestamp * 1000).toLocaleTimeString()}</p>
+                                            <p className="text-[7px] text-zinc-600 font-mono mt-0.5">{new Date((entry.timestamp ?? 0) * 1000).toLocaleTimeString()}</p>
                                         </td>
                                         <td className="p-3">
                                             <span className="text-[8px] font-black text-indigo-400 uppercase tracking-tighter bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">{entry.provider}</span>
                                         </td>
                                         <td className="p-3">
-                                            <span className="text-[10px] text-zinc-400 font-mono">{(entry.metrics?.total_tokens / 1000).toFixed(1)}k</span>
+                                            <span className="text-[10px] text-zinc-400 font-mono">{((entry.metrics?.total_tokens ?? 0) / 1000).toFixed(1)}k</span>
                                         </td>
                                     </tr>
                                 ))}

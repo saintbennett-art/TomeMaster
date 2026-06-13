@@ -11,6 +11,7 @@ import { Spellcheck } from '../extensions/Spellcheck';
 import { GrammarCheck } from '../extensions/GrammarCheck';
 import BulkDictionaryModal from './BulkDictionaryModal';
 import { useWorkstationState, useWorkstationActions } from "@/context/WorkstationContext";
+import { Chapter } from "@/types/industrial";
 
 const SELECTION_NOTIF_DEBOUNCE = 10000; // 10 seconds
 let lastSelectionNotif = 0;
@@ -311,6 +312,7 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
           // Start a new chapter
           const title = node.textContent;
           currentChapter = {
+            id: `toc-${toc.length + 1}`,
             chapter_number: toc.length + 1,
             suggested_title: title.replace(/^Chapter\s*\d+\s*[:\-]?\s*/i, '').trim() || `Chapter ${toc.length + 1}`,
             starting_words: "", // Will be populated by the next node
@@ -331,11 +333,13 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
         return true;
       });
 
-      // Finalize the last chapter in the book
-      if (currentChapter) {
-        currentChapter.content = chapterText.join('\n\n');
-        currentChapter.chapter_word_count = chapterText.join(' ').split(/\s+/).filter(w => w.length > 0).length;
-        toc.push(currentChapter);
+      // Finalize the last chapter in the book.
+      // (Cast needed: TS doesn't track assignments made inside doc.descendants.)
+      const lastChapter = currentChapter as Chapter | null;
+      if (lastChapter) {
+        lastChapter.content = chapterText.join('\n\n');
+        lastChapter.chapter_word_count = chapterText.join(' ').split(/\s+/).filter(w => w.length > 0).length;
+        toc.push(lastChapter);
       }
       
       return toc;
@@ -450,16 +454,17 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
 
   // [SOVEREIGN SENTINEL]: Synchronize local state with Tiptap storage
   useEffect(() => {
-    if (editor && editor.storage.spellcheck) {
-        ((editor.storage as Record<string, unknown>).spellcheck as { language: string }).language = language;
+    const editorStorage = editor ? (editor.storage as unknown as Record<string, unknown>) : null;
+    if (editorStorage?.spellcheck) {
+        (editorStorage.spellcheck as { language: string }).language = language;
     }
   }, [language, editor]);
 
   useEffect(() => {
     if (editor) {
         editor.view.dispatch(editor.state.tr.setMeta('spellcheck_refresh', true));
-        const currentLang = ((editor.storage as Record<string, unknown>).spellcheck as { language?: string })?.language;
-        if (currentLang) setLanguage(currentLang);
+        const currentLang = ((editor.storage as unknown as Record<string, unknown>).spellcheck as { language?: string })?.language;
+        if (currentLang) setLanguage(currentLang as 'en-US' | 'en-GB' | 'en-CA');
     }
   }, [editor]);
 
@@ -932,7 +937,7 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
                   key={lang.id}
                   onClick={() => {
                     (editor.commands as Record<string, Function>).setLanguage(lang.id);
-                    setLanguage(lang.id);
+                    setLanguage(lang.id as 'en-US' | 'en-GB' | 'en-CA');
                     setIsLangMenuOpen(false);
                   }}
                   className={`w-full flex items-center justify-between px-3 py-1.5 text-[10px] font-black uppercase tracking-widest hover:bg-surface-hover transition-colors ${language === lang.id ? 'text-accent' : 'text-muted'}`}
@@ -1289,7 +1294,7 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
                 } catch (err) { return; }
 
                 if (!spellBubble || spellBubble.word !== word) {
-                  const storage = (editor.storage as Record<string, unknown>).spellcheck as { customWords: Set<string>, ignoredWords: Set<string> };
+                  const storage = (editor.storage as unknown as Record<string, unknown>).spellcheck as { customWords: Set<string>, ignoredWords: Set<string>, getSuggestions?: (word: string) => string[] };
                   const suggestions = storage?.getSuggestions ? storage.getSuggestions(word) : [];
                   
                   const rect = misspelledSpan.getBoundingClientRect();

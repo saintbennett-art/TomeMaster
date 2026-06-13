@@ -3,7 +3,21 @@ import { ShieldCheck, Sparkles } from 'lucide-react';
 import { useShadowSave } from '@/hooks/useShadowSave';
 import { STANDARD_AGENTS } from "./SpecialistRegistry";
 
-export const ExpertAuthorizationPanel = ({ authModal, dynamicModels, getFidelityPortfolioForExpert }) => {
+interface ExpertAuthorizationPanelProps {
+    authModal: {
+        isOpen?: boolean;
+        persona?: string;
+        model?: string;
+        prompt?: string;
+        onAuthorize?: (prompt?: string, model?: string) => void;
+        onTerminate?: () => void;
+        [key: string]: unknown;
+    };
+    dynamicModels: string[] | Record<string, string[]>;
+    getFidelityPortfolioForExpert: (persona?: string, models?: string[] | Record<string, string[]>) => string[];
+}
+
+export const ExpertAuthorizationPanel = ({ authModal, dynamicModels, getFidelityPortfolioForExpert }: ExpertAuthorizationPanelProps) => {
     const [selectedModel, setSelectedModel] = React.useState(authModal.model);
     const [customPrompt, setCustomPrompt] = useShadowSave("boardroom_directive", authModal.prompt);
     const [handshakeStatus, setHandshakeStatus] = React.useState("idle"); // idle, checking, success, fail
@@ -88,7 +102,7 @@ export const ExpertAuthorizationPanel = ({ authModal, dynamicModels, getFidelity
                     <div>
                         <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest block mb-3">Industrial Gateway Selection</label>
                         <div className="grid grid-cols-1 gap-2 max-h-[150px] overflow-y-auto pr-2">
-                            {portfolio.map(m => (
+                            {portfolio.map((m: string) => (
                                 <button key={m} onClick={() => { setSelectedModel(m); setHandshakeStatus("idle"); }} className={`px-4 py-3 rounded-xl border text-[10px] font-black uppercase text-left transition-all ${selectedModel === m ? "bg-indigo-500 border-indigo-400 text-white shadow-lg" : "bg-black/40 border-white/5 text-zinc-500 hover:border-white/10"}`}>
                                     {m.includes("/") ? m.split("/").pop() : m}
                                 </button>
@@ -98,7 +112,7 @@ export const ExpertAuthorizationPanel = ({ authModal, dynamicModels, getFidelity
                 </div>
                 <div className="flex gap-4 mt-10">
                     <button onClick={authModal.onTerminate} className="flex-1 py-4 bg-zinc-900 text-zinc-500 rounded-2xl font-black uppercase text-[11px]">Veto</button>
-                    <button onClick={() => authModal.onAuthorize(customPrompt, selectedModel)} className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black uppercase text-[11px] shadow-lg shadow-indigo-600/20">Authorize Dispatch</button>
+                    <button onClick={() => authModal.onAuthorize?.(customPrompt, selectedModel)} className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black uppercase text-[11px] shadow-lg shadow-indigo-600/20">Authorize Dispatch</button>
                 </div>
             </div>
         </div>

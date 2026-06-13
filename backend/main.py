@@ -3,6 +3,16 @@ import os
 import subprocess
 import threading
 
+# [WINDOWS CONSOLE GUARD]: cp1252 consoles crash print() on em-dashes/arrows in
+# log lines, and those UnicodeEncodeErrors have aborted worker pipelines
+# (e.g. post-stitch cleanup Phase 2). Make stdout/stderr tolerant once, here,
+# so no print anywhere can kill a job.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 
 # [SOVEREIGN ENGINE]: Standard initialization sequence
 # [KEY PERSISTENCE]: Hydrate env vars from encrypted vault at startup.
