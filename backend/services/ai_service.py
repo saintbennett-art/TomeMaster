@@ -5,6 +5,7 @@ import httpx
 from .settings_service import get_model_for_role
 from .pii_scrubber import pii_scrubber
 from .ai import json_steward, specialist_registry, prompt_orchestrator
+from .logger_service import log_api_usage
 
 # [CERTIFICATION GRADE]: Standardized Gateway-Agnostic Dispatcher
 # This service no longer "knows" about specific brands like Gemini or OpenAI.
@@ -80,6 +81,10 @@ async def _call_anthropic_gateway(model: str, key: str, prompt: str, is_json: bo
             data = response.json()
             blocks = data.get("content") or []
             raw_content = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+            # [LEDGER]: Anthropic usage is input_tokens + output_tokens.
+            usage = data.get("usage") or {}
+            total_tokens = (usage.get("input_tokens", 0) or 0) + (usage.get("output_tokens", 0) or 0)
+            log_api_usage("Boardroom", "anthropic", model, {"total_tokens": total_tokens})
             if is_json:
                 return _robust_parse_json(raw_content)
             return {"feedback": raw_content}
@@ -136,7 +141,13 @@ async def _call_standard_gateway(role: str, prompt: str, is_json: bool = True, o
                 
             data = response.json()
             raw_content = data["choices"][0]["message"]["content"]
-            
+            # [LEDGER]: OpenAI-compatible gateways (incl. Gemini-compat, Groq)
+            # return token usage here — log it so the boardroom shows up in the
+            # cost ledger, not just PDF OCR.
+            usage = data.get("usage") or {}
+            log_api_usage(role, provider or "unknown", model,
+                          {"total_tokens": usage.get("total_tokens", 0) or 0})
+
             if is_json:
                 return _robust_parse_json(raw_content)
             return {"feedback": raw_content}

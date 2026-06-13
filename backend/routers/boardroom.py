@@ -16,9 +16,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 from services import ai_service
 from services.style_mirror import MIRROR
-from fastapi.responses import StreamingResponse
 import json
-import asyncio
 import os
 
 router = APIRouter()
@@ -306,20 +304,8 @@ async def get_briefing_endpoint(req: BriefingRequest):
         return {"briefing": f"Briefing unavailable: {str(e)}"}
 
 
-@router.post("/expert-stream")
-async def expert_stream(req: MultiAgentRequest):
-    """Specialist Handshake: Streams the expert's thought process directly into the UI."""
-
-    async def expert_generator():
-        agent = req.requested_personas[0]
-        yield f"data: {json.dumps({'agent': agent, 'thought': 'Calibrating Style Mirror...', 'type': 'neural'})}\n\n"
-        await asyncio.sleep(1)
-        complexity = MIRROR.dna["vocabulary_complexity"]
-        yield f"data: {json.dumps({'agent': agent, 'thought': f'DNA Analysis: {complexity} complexity detected.', 'type': 'neural'})}\n\n"
-        yield f"data: {json.dumps({'agent': agent, 'thought': 'Auditing narrative rhythms...', 'type': 'neural'})}\n\n"
-        await asyncio.sleep(1)
-
-    return StreamingResponse(expert_generator(), media_type="text/event-stream")
+# [REMOVED]: /expert-stream streamed hardcoded fake "thoughts" on asyncio.sleep
+# timers — pure theater, no real telemetry, and no frontend caller. Dropped.
 
 
 @router.post("/update-dna")

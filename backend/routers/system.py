@@ -163,12 +163,17 @@ async def get_api_usage():
 
 @router.get("/expenditure")
 async def get_total_expenditure():
-    """Returns the estimated total financial expenditure per provider calculated locally."""
+    """Returns total TOKEN consumption per provider from the local ledger.
+
+    These are token counts, not currency — the app does not have per-model
+    pricing, so it cannot compute a dollar figure. The `unit` field makes that
+    explicit for any UI rendering the values.
+    """
     try:
         USAGE_LOG_PATH = "api_usage_log.jsonl"
         if not os.path.exists(USAGE_LOG_PATH):
-            return {"totals": {}}
-        totals: Dict[str, float] = {}
+            return {"totals": {}, "unit": "tokens"}
+        totals: Dict[str, int] = {}
         with open(USAGE_LOG_PATH, "r", encoding="utf-8") as f:
             for line in f:
                 if line.strip():
@@ -176,7 +181,7 @@ async def get_total_expenditure():
                     provider = entry.get("provider", "unknown")
                     tokens = entry.get("metrics", {}).get("total_tokens", 0)
                     totals[provider] = totals.get(provider, 0) + tokens
-        return {"totals": totals}
+        return {"totals": totals, "unit": "tokens"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -47,12 +47,12 @@ export const VaultDashboard: React.FC<VaultDashboardProps> = ({
                     </div>
                 </div>
                 <div className="bg-black/40 border border-white/5 rounded-2xl p-4">
-                    <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest mb-1">Sovereign Credit Burn</p>
+                    <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest mb-1">Logged AI Calls</p>
                     <div className="flex items-end gap-2">
                         <span className="text-xl font-black text-emerald-400">
-                            {Object.values(expenditure).reduce((a, b) => a + b, 0).toFixed(2)}
+                            {ledgerEntries.length}
                         </span>
-                        <span className="text-[10px] text-zinc-600 font-bold uppercase mb-1">Credits</span>
+                        <span className="text-[10px] text-zinc-600 font-bold uppercase mb-1">Calls</span>
                     </div>
                 </div>
                 <div className="bg-black/40 border border-white/5 rounded-2xl p-4">

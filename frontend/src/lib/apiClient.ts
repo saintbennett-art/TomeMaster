@@ -647,9 +647,13 @@ export async function checkSystemHealth(): Promise<{ backend: boolean; vault: bo
         if (res.ok) health.backend = true;
     } catch (e) { }
 
-    // 2. Vault Check
-    const keys = secureVault.load();
-    if (keys && Object.keys(keys).length > 0) health.vault = true;
+    // 2. Vault Check — keys live backend-side now, so ask the backend for
+    // presence booleans. (secureVault is a deprecated stub returning {}, which
+    // left this light permanently red.)
+    try {
+        const presence = await fetchVaultSync();
+        if (presence && Object.values(presence).some(Boolean)) health.vault = true;
+    } catch (e) { }
 
     // 3. Ollama Check (Optional/Local)
     try {
