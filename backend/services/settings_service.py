@@ -365,6 +365,15 @@ def _resolve_auto_model(role_or_category: str, settings: dict = None) -> str:
     if not all_available:
         return None
 
+    # [MODALITY GATE]: Hard-filter to models that support the modality this role
+    # requires (e.g. an OCR role keeps only vision-capable models). Capability,
+    # not a name list, decides eligibility. Cloud models infer modality by rule.
+    req_mod = providers.required_modality(role_or_category)
+    eligible = {m for m in all_available if providers.model_supports(m, req_mod)}
+    if not eligible:
+        return None
+    all_available = eligible
+
     # [PRIORITY MATCH]: Walk the ranking list; first hit wins
     for candidate in ranking:
         if candidate in all_available:
@@ -417,20 +426,22 @@ def _fetch_models_for_url(base_url: str, api_key: str = "") -> list:
         return []
 
 
-def _resolve_local_or_custom_endpoint(settings: dict):
+def _resolve_local_or_custom_endpoint(settings: dict, required_modality: str = "text"):
     """[SOVEREIGN-LOCAL]: When no cloud key is present, route a role to a user
-    custom endpoint or a running local engine (e.g. BitNet/Ollama) so analysis
-    still works fully offline. Returns a gateway config or None.
+    custom endpoint or a running local engine (Ollama/BitNet/…) so analysis works
+    fully offline. The model is chosen by MODALITY — a vision role (OCR) will skip
+    text-only local models and pick one that can actually see. Returns a gateway
+    config or None when no local model satisfies the required modality.
     """
     # 1. user-defined custom endpoints (explicit > implicit)
     for cp in settings.get("custom_providers", []) or []:
         base = (cp.get("base_url") or "").strip()
         if not base:
             continue
-        models = _fetch_models_for_url(base, cp.get("key", ""))
-        if models:
-            return {"url": providers._norm(base), "key": cp.get("key", ""),
-                    "model": models[0], "provider": "custom"}
+        for mdl in _fetch_models_for_url(base, cp.get("key", "")):
+            if providers.model_supports(mdl, required_modality, base):
+                return {"url": providers._norm(base), "key": cp.get("key", ""),
+                        "model": mdl, "provider": "custom"}
 
     # 2. auto-detected local engines (cached probe)
     global _LOCAL_PROBE_CACHE
@@ -438,9 +449,10 @@ def _resolve_local_or_custom_endpoint(settings: dict):
     if _LOCAL_PROBE_CACHE["engines"] is None or now - _LOCAL_PROBE_CACHE["timestamp"] > _MODEL_CACHE_TTL:
         _LOCAL_PROBE_CACHE = {"engines": providers.probe_local_engines(), "timestamp": now}
     for eng in _LOCAL_PROBE_CACHE["engines"]:
-        if eng.get("models"):
-            return {"url": providers._norm(eng["base"]), "key": "",
-                    "model": eng["models"][0], "provider": "local"}
+        for mdl in eng.get("models", []):
+            if providers.model_supports(mdl, required_modality, eng["base"]):
+                return {"url": providers._norm(eng["base"]), "key": "",
+                        "model": mdl, "provider": "local"}
     return None
 
 
@@ -543,7 +555,7 @@ def get_model_for_role(role: str) -> dict:
     # route to a user custom endpoint or a running local engine if one exists,
     # so a keyless local model can drive analysis instead of guaranteeing a 401.
     if not key and provider != "bitnet":
-        local = _resolve_local_or_custom_endpoint(settings)
+        local = _resolve_local_or_custom_endpoint(settings, providers.required_modality(role))
         if local:
             return local
 

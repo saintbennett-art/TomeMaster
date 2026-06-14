@@ -13,7 +13,7 @@ Legend: ⬜ not started · 🟡 in progress · ✅ locked (gated closed) · ⚠�
 | # | Module | State | Notes |
 |---|--------|-------|-------|
 | 0 | **Key/Model substrate** (keys, secure storage, dynamic model discovery, gateway) | 🟡 | Wave 1 fixes done + 33 tests green. Wave 2 (universal endpoint ladder, zero-maintenance) planned below. Awaiting live-key handshake before gate. |
-| 1 | OCR/PDF transcription engine | ⬜ | "Tested multiple times"; logging gap suspected. Needs live key to re-verify vision-OCR. |
+| 1 | OCR/PDF transcription engine | 🟡 | Discerned 2026-06-14 (read-only). Well-built; found a Wave 2 regression (G1) + packaging/honesty gaps. Plan below. |
 | 2 | Chapter structure build + TOC + heading↔TOC-sidebar linkage | ⬜ | |
 | 3 | Spellchecker + persistent local dictionary (user-flagged words) | ⬜ | |
 | 4 | Grammar analysis + accept/reject change verification | ⬜ | |
@@ -129,6 +129,60 @@ assert no hardcoded model id is ever returned without discovery.
 - **Portability:** `providers.py` is dependency-free (only `os`) → drop-in reusable in any future project.
 
 ---
+
+## Module 1 — OCR/PDF transcription engine (discerned 2026-06-14, read-only)
+
+**Files:** `routers/transcribe.py` (HTTP surface), `services/transcriber_service.py` (facade),
+`services/transcriber/ocr_job.py` (the loop), `…/vision_processor.py` (parse-vs-rasterize),
+`…/ai_engine.py` (vision model calls + spectrum failover), `…/asset_scanner.py`,
+`…/artifact_steward.py`, `…/industrial_stitcher.py`.
+
+**Flow (verified):** `/transcribe/start` → `get_model_for_role("TRANSCRIBER_LEAD")` (+ groq fallback)
+→ daemon thread → `run_transcription_job`. Per asset: scan → **smart routing** (`is_parseable_document`:
+.docx/legacy/text-layer-PDF → free `parse_document_text`; else rasterize) → vision OCR via
+`_call_ai_with_failover` (primary → groq fallback, 3 retries + backoff) → parse `<page><number><text>`
+→ save RTF artifact → atomic fsync cache commit → archive source → final `resort_from_cache` stitch.
+Up to 3 async workers; abort checked between assets/pages; SDKs: gemini `google.genai` v2 ✓, openai/groq
+openai SDK, anthropic SDK.
+
+**Verdict:** genuinely well-built — smart routing saves credits, failover+backoff, atomic writes,
+honest error states, filename-sequence-wins fidelity, corrupt-asset isolation. This is tightening, not repair.
+
+### Findings
+| # | Sev | Finding |
+|---|-----|---------|
+| **G1** | **High** | ✅ **FIXED (2026-06-14) via modality-driven selection.** Was a Wave 2 regression: local fallback picked `models[0]` with no capability check, so OCR could land on a text model. Now selection is **modality-driven** — `providers.required_modality(role)` (OCR→image) is matched against the model's modalities (`providers.model_modalities`: Ollama-reported via `/api/show`, else inferred by general rule). Vision roles skip text-only models, cloud + local alike. **`_ROLE_RANKING` is now subordinate to a modality hard-gate** (no longer the gate). Proven by `test_local_ocr_picks_vision_skips_text`. |
+| **G1b** | High | **Remaining for full-local OCR to *execute*:** `ai_engine._get_ai_client` only knows providers by name (gemini/openai/groq/anthropic) — it has **no `local`/`custom` branch**, so even after selecting `gemma4:e2b` the OCR call returns `client=None`. Needs: route `local`/`custom` (and any OpenAI-compatible base_url) through the OpenAI SDK with `base_url=`, and thread the resolved `url` from the router → `start_transcription_background` → `run_transcription_job` → `_call_ai_with_failover`. Invasive (touches the live OCR loop) — deferred to do carefully, not under time pressure. |
+| G2 | Med | `anthropic` is imported by `ai_engine` (Claude vision path) but **not in `requirements.txt`** (present on this machine by luck). Clean install → ImportError if user picks Claude for OCR. Add it, or guard the import with an honest message. |
+| G3 | Med | Router hardcodes the spectrum fallback as `groq` + `get_preferred_model("logic")` — a *logic* model id (often a gemini-flash id) handed to the **groq** provider. Fallback should resolve an actual groq **vision** model (or use the role ranking's own failover). |
+| G6 | Low | OCR calls log `{"total_tokens": 0}` always — ledger undercounts OCR cost (latency only). Vision responses do carry usage (`usage_metadata` / `res.usage`); capture it (the 0425830 telemetry-honesty work fixed boardroom, not OCR). |
+| G4 | Low | `ai_engine` prints "BOARDROOM PULSE / Spectrum…" inside the OCR engine — copy-paste from boardroom; misleading logs. |
+| G5 | Info | `pytesseract` in requirements but unused in the loop — possibly dead/legacy, or an un-wired offline-OCR option. Confirm + drop or wire. |
+| G7 | Info | Vision path never run against a real API (standing blocker). The **smart-text-parse path is offline-testable now** (sample .docx/text-PDF, no key) — free coverage. |
+
+### Implementation plan
+1. **G1 ✅ DONE** — modality-driven selection (`providers.required_modality` / `model_modalities` / modality gate in `_resolve_auto_model` + `_resolve_local_or_custom_endpoint`). Docs: `LOCAL_SOVEREIGNTY.md` (hardware tiers + how selection works); CLAUDE.md links it.
+2. **G1b (next):** thread `base_url` so `ai_engine` can actually *call* a local/custom OpenAI-compatible vision model — without this, full-local OCR selects but can't execute.
+3. **Cloud `_ROLE_RANKING` retirement (agreed):** modality is now the gate; ranking is a subordinate tiebreak. End state = user-pin-or-first-modality-capable (no name list at all). Sequenced after G1b; ideally verified with a cloud key since it changes tested cloud-pick behavior.
+4. G2: add `anthropic` to requirements (or guard import).
+5. G3: resolve a real groq vision model for the fallback (or drop the hardcoded groq path).
+6. G6: capture real vision token usage into the ledger.
+7. G4/G5: fix misleading logs; confirm/remove `pytesseract`.
+
+**Modality work tests (offline):** `test_required_modality_map`, `test_infer_modalities`,
+`test_local_ocr_picks_vision_skips_text`, `test_local_text_role_takes_first_text`,
+`test_cloud_auto_excludes_non_vision_for_ocr`, `test_cloud_auto_keeps_vision_for_ocr`. Suite: **63 green.**
+
+### Testing plan
+- **Now (offline, no key):** `is_parseable_document` classification (.docx→True, scanned-PDF→False via text-layer threshold, image→False); `parse_text_docx`/`parse_text_pdf` emit `<page>` tags from a sample file; the `<page><number><text>` extraction regex; vision guard skips non-vision models; **G1 guard** (OCR never selects a non-vision engine).
+- **Later (live key):** one scanned page → vision OCR → RTF + stitched manuscript; failover (kill primary) → groq vision; abort mid-job.
+
+---
+
+## Licensing / activation (fixed 2026-06-14)
+- **Root cause of "reverted to new install":** `LICENSE_FILE` was a **relative path**, so `is_activated()` read `tome_master.lic` from whatever dir the app launched from. A stale `.lic` (old machine_id `de16c29f…`) sat at the project root while the correct one (`4d04765d…`) was in `backend/` → root launches looked unactivated.
+- **Fix:** `license_service._resolve_license_path()` — absolute anchor (frozen → next to the .exe; source → project root). Stale root `.lic` re-synced to the current machine_id; orphan `backend/tome_master.lic` removed. `is_activated() → True`.
+- **Activation paths:** (1) machine key from `get_key.py` (`TOME-XXXX-…`, this machine = `TOME-FFF3-A7A4-A980`); (2) **universal master code** = the `TOME_MASTER_KEY` env var (no hardcoded value by design). Set to `BENNETT-TOME-MASTER-2026` (User scope) — change to a private secret; takes effect on app restart.
 
 ## Standing security / hygiene state (verified 2026-06-14)
 - Git history, dangling blobs, current tree: **clean of provider key patterns**. Prior scrub held; flagged keys since expired. No live exposure.

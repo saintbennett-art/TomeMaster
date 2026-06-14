@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Tome-Master** is a local-first manuscript editor with AI-powered literary analysis. It runs as a desktop app (PyWebView wrapper) or in the browser: a FastAPI backend and a Next.js frontend, both on **dynamically-claimed free ports** (no hardcoded ports — `Start_TomeMaster.bat` claims a frontend port, `run.py` claims the backend port and broadcasts it via `.sovereign_port`, and the browser is opened with `?api_port=<backend>` so the UI finds the API). This project is for Bennett Consulting. The priority is **100% literal accuracy and reliability over cleverness**.
 
+It can run **fully offline (sovereign mode)** on local engines (Ollama/LM Studio/vLLM/BitNet) with no cloud keys — model selection is **modality-driven** (a role's required modality, e.g. OCR→vision, is matched against the model's reported capabilities; no hardcoded model-name lists). See **`LOCAL_SOVEREIGNTY.md`** for how selection works and the explicit **hardware requirements** per tier.
+
 ## Running the App
 
 **Full launch (both servers + port handshake)**:

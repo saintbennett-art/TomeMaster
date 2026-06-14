@@ -241,6 +241,7 @@ def test_role_falls_back_to_custom_endpoint(mem_vault, monkeypatch):
 
 def test_role_falls_back_to_local_engine(mem_vault, monkeypatch):
     monkeypatch.setattr(ss, "get_api_key", lambda p: "")
+    monkeypatch.setattr(ss.providers, "ollama_capabilities", lambda b, m, timeout=2.0: None)
     monkeypatch.setattr(ss.providers, "probe_local_engines",
                         lambda timeout=0.4: [{"name": "ollama",
                                               "base": "http://localhost:11434/v1/",
@@ -250,6 +251,70 @@ def test_role_falls_back_to_local_engine(mem_vault, monkeypatch):
     assert cfg["provider"] == "local"
     assert cfg["model"] == "llama3.1"
     assert cfg["url"] == "http://localhost:11434/v1/"
+
+
+# ─── Modality-driven selection (no model-name lists) ─────────────────────────
+
+def test_required_modality_map():
+    assert P.required_modality("TRANSCRIBER_LEAD") == "image"
+    assert P.required_modality("OCR_ENGINE") == "image"
+    assert P.required_modality("COPY_EDITOR") == "text"
+    assert P.required_modality("anything_else") == "text"
+
+
+@pytest.mark.parametrize("model_id,has_image", [
+    ("gemma4:e2b", True),
+    ("gemini-2.5-flash", True),
+    ("gpt-4o", True),
+    ("llava", True),
+    ("llama-3.2-11b-vision", True),
+    ("deepseek-r1:8b", False),
+    ("llama-3.3-70b-versatile", False),   # text-only hint wins
+    ("text-embedding-3-large", False),    # embed → text only
+])
+def test_infer_modalities(model_id, has_image):
+    assert ("image" in P.infer_modalities(model_id)) == has_image
+
+
+def test_local_ocr_picks_vision_skips_text(mem_vault, monkeypatch):
+    """G1 fixed: a vision role skips a text-only local model and picks one that sees."""
+    monkeypatch.setattr(ss, "get_api_key", lambda p: "")
+    monkeypatch.setattr(ss.providers, "probe_local_engines",
+                        lambda timeout=0.4: [{"name": "ollama",
+                                              "base": "http://localhost:11434/v1/",
+                                              "models": ["deepseek-r1:8b", "gemma4:e2b"]}])
+    caps = {"deepseek-r1:8b": {"text"}, "gemma4:e2b": {"text", "image"}}
+    monkeypatch.setattr(ss.providers, "ollama_capabilities", lambda b, m, timeout=2.0: caps.get(m))
+    ss.invalidate_model_cache()
+    cfg = ss.get_model_for_role("TRANSCRIBER_LEAD")   # OCR → needs image
+    assert cfg["provider"] == "local"
+    assert cfg["model"] == "gemma4:e2b"               # deepseek-r1 (text) skipped
+
+
+def test_local_text_role_takes_first_text(mem_vault, monkeypatch):
+    monkeypatch.setattr(ss, "get_api_key", lambda p: "")
+    monkeypatch.setattr(ss.providers, "probe_local_engines",
+                        lambda timeout=0.4: [{"name": "ollama",
+                                              "base": "http://localhost:11434/v1/",
+                                              "models": ["deepseek-r1:8b", "gemma4:e2b"]}])
+    caps = {"deepseek-r1:8b": {"text"}, "gemma4:e2b": {"text", "image"}}
+    monkeypatch.setattr(ss.providers, "ollama_capabilities", lambda b, m, timeout=2.0: caps.get(m))
+    ss.invalidate_model_cache()
+    cfg = ss.get_model_for_role("COPY_EDITOR")        # text role
+    assert cfg["model"] == "deepseek-r1:8b"           # first text-capable wins
+
+
+def test_cloud_auto_excludes_non_vision_for_ocr(monkeypatch):
+    monkeypatch.setattr(ss, "_fetch_model_list_sync", lambda prov, key: ["llama-3.3-70b-versatile"])
+    # versatile is text-only → no vision model available → no resolution
+    assert ss._resolve_auto_model("TRANSCRIBER_LEAD", _settings_with("groq")) is None
+
+
+def test_cloud_auto_keeps_vision_for_ocr(monkeypatch):
+    monkeypatch.setattr(ss, "_fetch_model_list_sync",
+                        lambda prov, key: ["llama-3.3-70b-versatile", "llama-3.2-11b-vision"])
+    chosen = ss._resolve_auto_model("TRANSCRIBER_LEAD", _settings_with("groq"))
+    assert chosen == "llama-3.2-11b-vision"
 
 
 def test_role_uses_cloud_when_key_present(mem_vault, monkeypatch):

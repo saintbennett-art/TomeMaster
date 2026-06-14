@@ -202,6 +202,92 @@ def resolve_endpoint(key: str = None, provider: str = None,
     return None
 
 
+# ─── Modality (the selection axis — NO model-name preference lists) ───────────
+# A model is chosen by whether it supports the MODALITY a role requires, not by
+# a hand-curated ranked list of model names. Local engines REPORT their modality
+# (authoritative); cloud APIs usually don't, so cloud falls back to a small set
+# of general modality RULES (patterns, not versioned names).
+
+# Role → required modality. Semantic + stable: it describes ROLES we own (OCR
+# will always need to see an image), not models that churn. The only hand map.
+ROLE_REQUIRED_MODALITY = {
+    "TRANSCRIBER_LEAD": "image",
+    "OCR_ENGINE":       "image",
+    "vision":           "image",
+}
+
+
+def required_modality(role: str) -> str:
+    """The modality a role's model MUST support. Defaults to 'text'."""
+    return ROLE_REQUIRED_MODALITY.get(role, "text")
+
+
+# General modality RULES — used ONLY where the engine/API doesn't report
+# capabilities (cloud, non-Ollama). Broad patterns that survive new versions,
+# not a list of specific model names.
+_VISION_HINTS = (
+    "vision", "-vl", "gpt-4o", "gpt-4.1", "o4-", "gemini", "claude-3", "claude-4",
+    "claude-opus", "claude-sonnet", "llava", "moondream", "minicpm-v",
+    "gemma3", "gemma4", "pixtral", "llama-3.2-11b", "llama-3.2-90b", "llama-4",
+)
+_TEXT_ONLY_HINTS = ("versatile", "instant", "-text", "embed", "whisper", "tts")
+
+
+def infer_modalities(model_id: str) -> set:
+    """Best-effort modality set from a model id, when nothing authoritative is
+    available. Always includes 'text'; adds 'image' on a vision pattern."""
+    m = (model_id or "").lower()
+    if any(k in m for k in _TEXT_ONLY_HINTS):
+        return {"text"}
+    mods = {"text"}
+    if any(h in m for h in _VISION_HINTS):
+        mods.add("image")
+    return mods
+
+
+def ollama_capabilities(base: str, model_id: str, timeout: float = 2.0):
+    """[AUTHORITATIVE]: Query Ollama's native /api/show for real capabilities.
+    Returns a modality set, or None when unavailable (non-Ollama engine)."""
+    import urllib.request
+    import json as _json
+
+    host = base.split("/v1")[0].rstrip("/")
+    try:
+        req = urllib.request.Request(
+            host + "/api/show",
+            data=_json.dumps({"model": model_id}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = _json.loads(resp.read())
+        caps = [str(c).lower() for c in data.get("capabilities", [])]
+        if not caps:
+            return None
+        mods = {"text"}
+        if "vision" in caps:
+            mods.add("image")
+        if "audio" in caps:
+            mods.add("audio")
+        return mods
+    except Exception:
+        return None
+
+
+def model_modalities(model_id: str, base: str = None) -> set:
+    """Modalities a model supports: engine-reported (authoritative, local only)
+    where possible, else inferred from general rules. /api/show is Ollama-native
+    so it's only attempted for localhost bases."""
+    if base and ("localhost" in base or "127.0.0.1" in base):
+        reported = ollama_capabilities(base, model_id)
+        if reported:
+            return reported
+    return infer_modalities(model_id)
+
+
+def model_supports(model_id: str, modality: str, base: str = None) -> bool:
+    return modality in model_modalities(model_id, base)
+
+
 def probe_local_engines(timeout: float = 0.4) -> list:
     """[LOCAL DISCOVERY]: Ping the known localhost engine ports and return those
     that answer ``/models``. Safe by construction — localhost only, keyless,
