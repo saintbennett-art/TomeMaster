@@ -638,6 +638,82 @@ export async function fetchAvailableModels(provider: string): Promise<Discovered
     }
 }
 
+// ─── Wave 2: local engines + custom OpenAI-compatible endpoints ──────────────
+
+export interface LocalEngine {
+    name: string;
+    base: string;
+    models: string[];
+}
+
+/** Auto-detect OpenAI-compatible engines on localhost (keyless, sub-second). */
+export async function fetchLocalEngines(): Promise<LocalEngine[]> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/local-engines`);
+        if ('isNetworkError' in res) return [];
+        const response = res as Response;
+        if (!response.ok) return [];
+        const data = await response.json();
+        return data.engines || [];
+    } catch {
+        return [];
+    }
+}
+
+export interface CustomProvider {
+    label: string;
+    base_url: string;
+    key?: string;
+}
+
+/** Persist the full custom-provider list to the encrypted vault. */
+export async function saveCustomProviders(list: CustomProvider[]): Promise<boolean> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/settings/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ custom_providers: list }),
+        });
+        if ('isNetworkError' in res) return false;
+        return (res as Response).ok;
+    } catch {
+        return false;
+    }
+}
+
+/** Load saved custom providers (keys come back masked). */
+export async function fetchCustomProviders(): Promise<CustomProvider[]> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/settings/`);
+        if ('isNetworkError' in res) return [];
+        const response = res as Response;
+        if (!response.ok) return [];
+        const data = await response.json();
+        return data.custom_providers || [];
+    } catch {
+        return [];
+    }
+}
+
+/** Validate a custom OpenAI-compatible endpoint and return its live model list. */
+export async function validateCustomEndpoint(
+    base_url: string,
+    key: string,
+): Promise<{ success: boolean; message: string; models: string[] }> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/validate-key`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider: 'openai-compatible', api_key: key, custom_url: base_url }),
+        });
+        if ('isNetworkError' in res) return { success: false, message: 'Network unreachable', models: [] };
+        const data = await (res as Response).json();
+        return { success: !!data.success, message: data.message || '', models: data.models || [] };
+    } catch (e) {
+        return { success: false, message: String(e), models: [] };
+    }
+}
+
 export async function checkSystemHealth(): Promise<{ backend: boolean; vault: boolean; ollama: boolean; bitnet: boolean }> {
     const health = { backend: false, vault: false, ollama: false, bitnet: false };
 

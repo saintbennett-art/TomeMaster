@@ -2,7 +2,8 @@ import os
 import asyncio
 import json
 import httpx
-from .settings_service import get_model_for_role
+from .settings_service import get_model_for_role, ANTHROPIC_STATIC_PORTFOLIO
+from . import providers
 from .pii_scrubber import pii_scrubber
 from .ai import json_steward, specialist_registry, prompt_orchestrator
 from .logger_service import log_api_usage
@@ -30,19 +31,11 @@ def _resolve_gateway_config(role: str, override: dict = None) -> dict:
     key_override      = override.get("api_key") or override.get("key")
     url_override      = override.get("url")
 
-    # If provider is overridden, rebase URL/key from the provider table.
+    # If provider is overridden, rebase URL/key from the single provider registry.
     if provider_override and provider_override != base.get("provider"):
         from .settings_service import get_api_key
         out["provider"] = provider_override
-        bitnet_host = os.getenv("BITNET_HOST", "http://localhost:8080")
-        provider_urls = {
-            "gemini":    "https://generativelanguage.googleapis.com/v1beta/openai/",
-            "openai":    "https://api.openai.com/v1/",
-            "anthropic": "https://api.anthropic.com/v1/",
-            "groq":      "https://api.groq.com/openai/v1/",
-            "bitnet":    f"{bitnet_host}/v1/",
-        }
-        out["url"] = provider_urls.get(provider_override, base.get("url"))
+        out["url"] = providers.provider_base(provider_override) or base.get("url")
         # If no per-request key supplied, look up the provider's key from vault.
         if not key_override:
             out["key"] = get_api_key(provider_override) or base.get("key", "")
@@ -159,16 +152,8 @@ async def _call_standard_gateway(role: str, prompt: str, is_json: bool = True, o
 # settings_service.detect_gateway_from_key (instant ImportError if ever invoked).
 # Live model ranking is settings_service._resolve_auto_model + _ROLE_RANKING.
 
-# [ROUTING TABLE]: Default discovery endpoints per provider. Used when callers
-# don't pass an explicit gateway URL.
-_BITNET_HOST = os.getenv("BITNET_HOST", "http://localhost:8080")
-_PROVIDER_DISCOVERY_URLS = {
-    "openai":    "https://api.openai.com/v1/",
-    "gemini":    "https://generativelanguage.googleapis.com/v1beta/openai/",
-    "groq":      "https://api.groq.com/openai/v1/",
-    "anthropic": "https://api.anthropic.com/v1/",
-    "bitnet":    f"{_BITNET_HOST}/v1/",
-}
+# [ROUTING TABLE]: Default discovery endpoints come from the single provider
+# registry (services.providers) — no duplicate URL table lives here anymore.
 
 
 async def list_models_async(provider_type: str, api_key: str, url: str = None):
@@ -179,14 +164,24 @@ async def list_models_async(provider_type: str, api_key: str, url: str = None):
     /models endpoint.
     """
     if provider_type == "anthropic":
-        return {"success": True, "models": [
-            "claude-3-5-sonnet-20241022",
-            "claude-3-5-sonnet-latest",
-            "claude-3-opus-20240229",
-        ]}
+        # Real GET /v1/models — kept HONEST: a non-200 (bad/expired key) must
+        # surface as failure, never a silent static fallback, because
+        # validate_key_async treats success here as "key is live."
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.get(
+                    "https://api.anthropic.com/v1/models",
+                    headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+                )
+            if res.status_code == 200:
+                ids = [m["id"] for m in res.json().get("data", []) if m.get("id")]
+                return {"success": True, "models": ids or list(ANTHROPIC_STATIC_PORTFOLIO)}
+            return {"success": False, "message": f"Discovery failed with code {res.status_code}", "models": []}
+        except Exception as e:
+            return {"success": False, "message": str(e), "models": []}
 
     if not url:
-        url = _PROVIDER_DISCOVERY_URLS.get(provider_type)
+        url = providers.provider_base(provider_type)
     if not url:
         return {"success": False, "message": f"Unknown provider '{provider_type}' and no URL provided.", "models": []}
 
@@ -213,7 +208,7 @@ async def validate_key_async(provider: str, api_key: str, model: str = None, cus
     if not api_key:
         return {"success": False, "message": "No API key provided."}
 
-    url = custom_url or _PROVIDER_DISCOVERY_URLS.get(provider)
+    url = custom_url or providers.provider_base(provider)
     result = await list_models_async(provider, api_key, url)
 
     if result.get("success"):
@@ -232,7 +227,7 @@ async def discover_gateway_async(brand_name: str, provider: str, api_key: str) -
     Currently maps to the known provider table; raises if the brand is unknown.
     Future expansion can probe candidate URLs with the supplied key.
     """
-    url = _PROVIDER_DISCOVERY_URLS.get(provider)
+    url = providers.provider_base(provider)
     if not url:
         raise ValueError(f"No known gateway for brand '{brand_name}' (provider hint: '{provider}').")
     return url

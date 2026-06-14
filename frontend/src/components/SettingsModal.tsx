@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { X, Sparkles, Activity, ShieldCheck, Cpu, Database, Zap, Lock, Settings, FileText, Key, Info, Check, Loader2, ChevronDown } from "lucide-react";
-import { API_BASE_HOLDER, fetchAvailableModels, saveVaultToEnv, type DiscoveredModel } from "../lib/apiClient";
+import { X, Sparkles, Activity, ShieldCheck, Cpu, Database, Zap, Lock, Settings, FileText, Key, Info, Check, Loader2, ChevronDown, Server, Plus, Trash2, RadioTower } from "lucide-react";
+import { API_BASE_HOLDER, fetchAvailableModels, saveVaultToEnv, fetchLocalEngines, fetchCustomProviders, saveCustomProviders, validateCustomEndpoint, type DiscoveredModel, type LocalEngine, type CustomProvider } from "../lib/apiClient";
 import { VaultDashboard } from "./workstation/settings/VaultDashboard";
 import { MASTER_PROVIDER_LIBRARY } from "../lib/ai_config";
 
@@ -53,6 +53,50 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
     const [selectedModels, setSelectedModels] = useState<Record<string, string>>({});
     const [modelFetchStatus, setModelFetchStatus] = useState<Record<string, 'idle' | 'loading' | 'done' | 'error'>>({});
 
+    // [WAVE 2]: local-engine auto-detect + custom OpenAI-compatible endpoints
+    const [localEngines, setLocalEngines] = useState<LocalEngine[]>([]);
+    const [localScan, setLocalScan] = useState<'idle' | 'scanning' | 'done'>('idle');
+    const [customProviders, setCustomProviders] = useState<CustomProvider[]>([]);
+    const [draft, setDraft] = useState<CustomProvider>({ label: '', base_url: '', key: '' });
+    const [draftStatus, setDraftStatus] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
+    const [draftMsg, setDraftMsg] = useState('');
+
+    const scanLocalEngines = async () => {
+        setLocalScan('scanning');
+        const engines = await fetchLocalEngines();
+        setLocalEngines(engines);
+        setLocalScan('done');
+    };
+
+    const testAndAddCustom = async () => {
+        const base = draft.base_url.trim();
+        if (!base) { setDraftStatus('error'); setDraftMsg('Base URL is required.'); return; }
+        setDraftStatus('testing'); setDraftMsg('');
+        const result = await validateCustomEndpoint(base, (draft.key || '').trim());
+        if (!result.success) {
+            setDraftStatus('error');
+            setDraftMsg(result.message || 'Endpoint did not respond.');
+            return;
+        }
+        const entry: CustomProvider = {
+            label: draft.label.trim() || base,
+            base_url: base,
+            key: (draft.key || '').trim(),
+        };
+        const next = [...customProviders.filter(c => c.base_url !== entry.base_url), entry];
+        setCustomProviders(next);
+        await saveCustomProviders(next);
+        setDraft({ label: '', base_url: '', key: '' });
+        setDraftStatus('ok');
+        setDraftMsg(`Added — ${result.models.length} model(s) discovered.`);
+    };
+
+    const removeCustom = async (base_url: string) => {
+        const next = customProviders.filter(c => c.base_url !== base_url);
+        setCustomProviders(next);
+        await saveCustomProviders(next);
+    };
+
     const fetchSovereignSettingsLocal = async () => {
         try {
             const res = await fetch(`${API_BASE_HOLDER.current}/ai/status`);
@@ -65,6 +109,8 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
         if (isOpen) {
             setLocalKeys(keys);
             fetchSovereignSettingsLocal();
+            scanLocalEngines();
+            fetchCustomProviders().then(setCustomProviders);
             if (activeTab === "usage") fetchUsageLedger();
         }
     }, [isOpen]);
@@ -246,6 +292,100 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
                                             </div>
                                         );
                                     })}
+                                </div>
+
+                                {/* [WAVE 2]: Local engines (auto-detected) + custom OpenAI-compatible endpoints */}
+                                <div className="space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <h3 className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.25em] flex items-center gap-2">
+                                            <RadioTower size={10} className="text-cyan-400" />
+                                            Local & Exotic Engines
+                                        </h3>
+                                        <button
+                                            onClick={scanLocalEngines}
+                                            disabled={localScan === 'scanning'}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-black/40 border border-white/5 rounded-lg text-[8px] font-black uppercase tracking-widest text-zinc-400 hover:text-white hover:border-white/15 transition-all"
+                                        >
+                                            {localScan === 'scanning'
+                                                ? <Loader2 size={9} className="animate-spin" />
+                                                : <Server size={9} />}
+                                            {localScan === 'scanning' ? 'Scanning' : 'Rescan localhost'}
+                                        </button>
+                                    </div>
+
+                                    {/* Detected local engines */}
+                                    {localEngines.length > 0 ? (
+                                        <div className="space-y-2">
+                                            {localEngines.map(eng => (
+                                                <div key={eng.base} className="flex items-center justify-between p-3 bg-cyan-500/5 border border-cyan-500/15 rounded-xl">
+                                                    <div className="flex items-center gap-2 min-w-0">
+                                                        <div className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse shrink-0" />
+                                                        <span className="text-[9px] font-black text-cyan-300 uppercase tracking-wide">{eng.name}</span>
+                                                        <span className="text-[8px] text-zinc-600 font-mono truncate">{eng.base}</span>
+                                                    </div>
+                                                    <span className="text-[7px] text-zinc-500 font-bold uppercase shrink-0">{eng.models.length} models</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <p className="text-[8px] text-zinc-600 italic px-1">
+                                            {localScan === 'done'
+                                                ? 'No local engine detected (Ollama / LM Studio / vLLM / llama.cpp). Start one, or add a custom endpoint below.'
+                                                : 'Scanning localhost…'}
+                                        </p>
+                                    )}
+
+                                    {/* Saved custom endpoints */}
+                                    {customProviders.map(cp => (
+                                        <div key={cp.base_url} className="flex items-center justify-between p-3 bg-black/30 border border-white/5 rounded-xl">
+                                            <div className="flex flex-col min-w-0">
+                                                <span className="text-[9px] font-black text-zinc-200 uppercase tracking-wide truncate">{cp.label}</span>
+                                                <span className="text-[8px] text-zinc-600 font-mono truncate">{cp.base_url}</span>
+                                            </div>
+                                            <button onClick={() => removeCustom(cp.base_url)} title="Remove" className="text-zinc-600 hover:text-rose-400 transition-colors shrink-0 ml-2">
+                                                <Trash2 size={12} />
+                                            </button>
+                                        </div>
+                                    ))}
+
+                                    {/* Add custom endpoint */}
+                                    <div className="p-4 bg-black/20 border border-dashed border-white/10 rounded-2xl space-y-2">
+                                        <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Add OpenAI-compatible endpoint (Kimi, DeepSeek, remote Ollama…)</p>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <input
+                                                value={draft.label}
+                                                onChange={e => setDraft(d => ({ ...d, label: e.target.value }))}
+                                                placeholder="Label (e.g. Kimi)"
+                                                className="bg-black/40 border border-white/5 rounded-lg px-3 py-2 text-[10px] text-white font-mono focus:outline-none focus:border-cyan-500/50"
+                                            />
+                                            <input
+                                                value={draft.base_url}
+                                                onChange={e => setDraft(d => ({ ...d, base_url: e.target.value }))}
+                                                placeholder="Base URL (https://api.moonshot.cn/v1)"
+                                                className="bg-black/40 border border-white/5 rounded-lg px-3 py-2 text-[10px] text-white font-mono focus:outline-none focus:border-cyan-500/50"
+                                            />
+                                        </div>
+                                        <input
+                                            type="password"
+                                            value={draft.key || ''}
+                                            onChange={e => setDraft(d => ({ ...d, key: e.target.value }))}
+                                            placeholder="API key (leave blank for keyless local engines)"
+                                            className="w-full bg-black/40 border border-white/5 rounded-lg px-3 py-2 text-[10px] text-white font-mono focus:outline-none focus:border-cyan-500/50"
+                                        />
+                                        <div className="flex items-center justify-between">
+                                            {draftMsg ? (
+                                                <span className={`text-[8px] font-bold uppercase tracking-tighter ${draftStatus === 'ok' ? 'text-emerald-500/80' : 'text-rose-500/80'}`}>{draftMsg}</span>
+                                            ) : <span />}
+                                            <button
+                                                onClick={testAndAddCustom}
+                                                disabled={draftStatus === 'testing'}
+                                                className="flex items-center gap-1.5 px-4 py-2 bg-cyan-500/10 border border-cyan-500/30 rounded-lg text-[9px] font-black uppercase text-cyan-400 hover:bg-cyan-500 hover:text-white transition-all"
+                                            >
+                                                {draftStatus === 'testing' ? <Loader2 size={10} className="animate-spin" /> : <Plus size={10} />}
+                                                {draftStatus === 'testing' ? 'Testing' : 'Test & Add'}
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

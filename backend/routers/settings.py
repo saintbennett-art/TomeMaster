@@ -9,6 +9,8 @@ class SettingsUpdateRequest(BaseModel):
     api_keys: Optional[Dict[str, str]] = None
     preferred_models: Optional[Dict[str, str]] = None
     preferences: Optional[Dict[str, Any]] = None
+    # User-defined OpenAI-compatible endpoints: [{label, base_url, key}]
+    custom_providers: Optional[list] = None
 
 def _mask_key(value: str) -> str:
     """Last-4 mask — enough for the UI to show presence, useless to an attacker."""
@@ -31,6 +33,11 @@ def get_all_settings():
         provider: _mask_key(value)
         for provider, value in settings.get("api_keys", {}).items()
     }
+    # Custom-provider keys are masked too — labels/URLs cross the wire, keys never do.
+    masked["custom_providers"] = [
+        {**cp, "key": _mask_key(cp.get("key", ""))}
+        for cp in settings.get("custom_providers", [])
+    ]
     return masked
 
 @router.post("/update")
