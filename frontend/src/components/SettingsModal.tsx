@@ -274,6 +274,7 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
                                                         placeholder={isSealed ? '••••••••••••••••••••' : p.placeholder}
                                                         value={isSealed ? '' : currentVal}
                                                         onChange={e => setLocalKeys(prev => ({ ...prev, [p.id]: e.target.value }))}
+                                                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); saveAll(); } }}
                                                         className="w-full bg-black/40 border border-white/5 rounded-xl px-4 py-3 text-[10px] text-white font-mono focus:outline-none focus:border-indigo-500/50 transition-all pr-10"
                                                     />
                                                     {isSealed && (

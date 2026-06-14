@@ -211,7 +211,8 @@ export default function Home() {
         setKeys={handleSetKeys}
       />
       
-      <NerveCenter isLeftSidebarOpen={isLeftSidebarOpen} />
+      {/* Hide the Nerve Center bar while the path-choice / onboarding page is up. */}
+      {!isOnboardingOpen && <NerveCenter isLeftSidebarOpen={isLeftSidebarOpen} />}
       <StructuralAnalysisModal />
       <AiEnhancementHub />
     </div>
