@@ -75,6 +75,19 @@ def start_transcription(req: TranscribeRequestSchema):
     api_key       = vision_config.get("key", "")
     model         = vision_config.get("model", vision_model)
 
+    # [SOVEREIGN LOCK]: locked to local but no local VISION engine for OCR — tell
+    # the user plainly (the UI can offer install / switch-to-Industrial from this).
+    if provider == "sovereign_blocked":
+        return {
+            "status": "blocked",
+            "reason": "sovereign_lock",
+            "message": (
+                "Sovereign Lock is ON and no local VISION model is installed for OCR. "
+                "Install a vision model (e.g. moondream or llava) via Ollama, or turn off "
+                "Sovereign Lock to use cloud transcription."
+            ),
+        }
+
     # [FALLBACK CHAIN]: Velocity Engine (Groq) as spectrum fallback
     fallback_config   = settings_service.get_model_for_role("COPY_EDITOR")  # closest to velocity
     fallback_provider = "groq"

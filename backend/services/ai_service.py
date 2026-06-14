@@ -96,6 +96,14 @@ async def _call_standard_gateway(role: str, prompt: str, is_json: bool = True, o
     model    = config["model"]
     provider = config.get("provider")
 
+    # [SOVEREIGN LOCK]: get_model_for_role marked this role un-servable locally.
+    if provider == "sovereign_blocked":
+        raise Exception(
+            f"Sovereign Lock is ON and no local engine can perform '{role}' "
+            f"(needs a {config.get('modality', 'capable')} model). "
+            "Install a local model or turn off Sovereign Lock."
+        )
+
     # [PII GATE]: Off by default — the editor needs real character names to
     # reach the model. Set preferences.pii_scrub=true in the encrypted vault to enable
     # for compliance-sensitive deployments.

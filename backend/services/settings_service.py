@@ -29,7 +29,9 @@ DEFAULT_SETTINGS = {
         "MARKETING_ANALYST": "auto",
         "SOVEREIGN_LIAISON": "auto",
     },
-    "preferences": {"theme": "dark", "auto_stitch": True, "language": "en", "pii_scrub": False},
+    # sovereign_lock=True → force LOCAL engines for every role, ignoring cloud
+    # keys ("Think Sovereign in all cases"). The UI asks before any cloud fallback.
+    "preferences": {"theme": "dark", "auto_stitch": True, "language": "en", "pii_scrub": False, "sovereign_lock": False},
     # User-defined OpenAI-compatible endpoints (exotic cloud or non-default local).
     # Each entry: {"label": str, "base_url": str, "key": str}. Self-service — lets
     # the user reach any provider with zero developer involvement.
@@ -41,7 +43,7 @@ DEFAULT_SETTINGS = {
 _PERMITTED_TOP_KEYS = set(DEFAULT_SETTINGS.keys())
 _PERMITTED_API_KEYS = {"openai", "gemini", "groq", "anthropic", "bitnet", "slot_primary", "slot_specialist", "slot_velocity"}
 _PERMITTED_MODEL_KEYS = {"vision", "logic", "analysis", "NARRATIVE_ARCHITECT", "COPY_EDITOR", "TRANSCRIBER_LEAD", "MARKETING_ANALYST", "SOVEREIGN_LIAISON"}
-_PERMITTED_PREF_KEYS = {"theme", "auto_stitch", "language", "pii_scrub"}
+_PERMITTED_PREF_KEYS = {"theme", "auto_stitch", "language", "pii_scrub", "sovereign_lock"}
 
 
 def _validate_settings(data: dict) -> dict:
@@ -521,6 +523,17 @@ def get_model_for_role(role: str) -> dict:
     Explicit model pinning (user chose a specific model in Settings) is honored.
     """
     settings = load_settings()
+
+    # 0. [SOVEREIGN LOCK]: force LOCAL resolution, ignoring cloud keys entirely.
+    # If no local engine can serve the role's modality, return a 'sovereign_blocked'
+    # marker — the gateway raises an honest error and the UI asks before any cloud
+    # use. An explicit per-call override (user-confirmed cloud) still wins downstream.
+    if settings.get("preferences", {}).get("sovereign_lock"):
+        req_mod = providers.required_modality(role)
+        local = _resolve_local_or_custom_endpoint(settings, req_mod)
+        if local:
+            return local
+        return {"url": "", "key": "", "model": "", "provider": "sovereign_blocked", "modality": req_mod}
 
     # 1. Map role to category. NARRATIVE_ARCHITECT is the structural editor —
     # it needs the analysis (Gemini 3.1 Pro) tier, not vision. Vision is for

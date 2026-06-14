@@ -1,7 +1,8 @@
 "use client";
 import React, { useState, useEffect, useRef } from "react";
-import { Maximize2, Minimize2, Save, Eye, Zap, RefreshCw, ExternalLink, ShieldAlert, ShieldCheck } from "lucide-react";
-import { runMultiAgentAnalysis, validateAiKey, API_BASE_HOLDER } from "@/lib/apiClient";
+import { Maximize2, Minimize2, Save, Eye, Zap, RefreshCw, ExternalLink, ShieldAlert, ShieldCheck, Lock } from "lucide-react";
+import { runMultiAgentAnalysis, validateAiKey, API_BASE_HOLDER, fetchLocalEngines, type LocalEngine } from "@/lib/apiClient";
+import { isVisionModel } from "@/lib/ai_config";
 import { secureVault } from "@/lib/vault";
 
 // [BLACK BOX IMPORTS]
@@ -65,6 +66,30 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     const [auditData, setAuditData] = useState({weight: 0, assignments: [] as Assignment[]});
     const [currentExpert, setCurrentExpert] = useState<string | null>(null);
     const [handshakeStatus, setHandshakeStatus] = useState("ok");
+    // [SOVEREIGN LOCK]: real local-engine fidelity + the Sovereign/Industrial lock.
+    const [localEngines, setLocalEngines] = useState<LocalEngine[]>([]);
+    const [sovereignLock, setSovereignLock] = useState(false);
+    useEffect(() => {
+        fetchLocalEngines().then(setLocalEngines);
+        if (typeof window !== 'undefined') {
+            setSovereignLock(localStorage.getItem('tome_master_local_mode') === 'true');
+        }
+    }, []);
+    const _sovModels = localEngines.flatMap(e => e.models);
+    const localReady = localEngines.length > 0 && _sovModels.length > 0;
+    const localVisionReady = _sovModels.some(m => isVisionModel(m));
+    const toggleSovereignLock = () => {
+        const next = !sovereignLock;
+        setSovereignLock(next);
+        localStorage.setItem('tome_master_local_mode', String(next));
+        // Persist to the vault so the BACKEND forces local resolution when locked.
+        fetch(`${API_BASE_HOLDER.current}/settings/update`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ preferences: { sovereign_lock: next } }),
+        }).catch(() => {});
+        window.dispatchEvent(new CustomEvent('tome-master-settings-changed'));
+        notify(next ? "Sovereign Lock ON — local engines only." : "Industrial mode — cloud AI enabled.");
+    };
     const [isInterventionMode, setIsInterventionMode] = useState(true);
     const [isDeepAnalysis, setIsDeepAnalysis] = useState(false);
     const [authModal, setAuthModal] = useState({ isOpen: false, persona: "", prompt: "", model: "" });
@@ -279,17 +304,39 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
                             selectedAgents={selectedAgents} setSelectedAgents={setSelectedAgents} 
                             customAgents={customAgents} setCustomAgents={setCustomAgents} 
                         />
-                        {handshakeStatus === "ok" && (
-                            <div className="p-4 bg-emerald-500/5 border border-emerald-500/10 rounded-2xl flex items-center gap-3">
-                                <div className="p-2 bg-emerald-500/10 rounded-lg">
-                                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                        {/* [SOVEREIGN LOCK]: real local-engine fidelity + lock toggle */}
+                        <div className="p-4 bg-black/30 border border-white/5 rounded-2xl space-y-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-3 min-w-0">
+                                    <div className={`p-2 rounded-lg shrink-0 ${localReady ? 'bg-emerald-500/10' : 'bg-amber-500/10'}`}>
+                                        {localReady ? <ShieldCheck className="w-4 h-4 text-emerald-400" /> : <ShieldAlert className="w-4 h-4 text-amber-400" />}
+                                    </div>
+                                    <div className="min-w-0">
+                                        <p className={`text-[10px] font-black uppercase leading-none ${localReady ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                            {localReady ? 'Sovereign Fidelity Verified' : 'No Local Engine Detected'}
+                                        </p>
+                                        <p className="text-[8px] text-zinc-500 font-bold uppercase mt-1 truncate">
+                                            {localReady
+                                                ? `${localEngines.length} engine(s) · ${localVisionReady ? 'OCR + text capable' : 'text only — no vision/OCR'}`
+                                                : 'Sovereign mode needs a local engine'}
+                                        </p>
+                                    </div>
                                 </div>
-                                <div>
-                                    <p className="text-[10px] font-black text-emerald-400 uppercase leading-none">Sovereign Fidelity Verified</p>
-                                    <p className="text-[8px] text-zinc-500 font-bold uppercase mt-1">Optimal Engines Established for Analysis</p>
-                                </div>
+                                <button
+                                    onClick={toggleSovereignLock}
+                                    title={sovereignLock ? 'Sovereign Lock is ON (local only) — click to allow cloud (Industrial)' : 'Click to lock to local-only (Sovereign)'}
+                                    className={`shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all ${sovereignLock ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300' : 'bg-black/40 border-white/10 text-zinc-400 hover:text-white hover:border-white/20'}`}
+                                >
+                                    {sovereignLock ? <Lock className="w-3 h-3" /> : <Zap className="w-3 h-3" />}
+                                    {sovereignLock ? 'Sovereign' : 'Industrial'}
+                                </button>
                             </div>
-                        )}
+                            {sovereignLock && !localVisionReady && (
+                                <p className="text-[8px] text-amber-500/80 font-bold leading-relaxed">
+                                    ⚠ No local VISION model — OCR / transcription will ask before using cloud, or you can install one.
+                                </p>
+                            )}
+                        </div>
                         <button 
                             onClick={() => runAnalysis()} 
                             disabled={isAnalyzing} 

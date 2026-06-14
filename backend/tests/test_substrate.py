@@ -325,3 +325,28 @@ def test_role_uses_cloud_when_key_present(mem_vault, monkeypatch):
     cfg = ss.get_model_for_role("NARRATIVE_ARCHITECT")
     assert cfg["provider"] == "gemini"
     assert cfg["url"] == P.provider_base("gemini")
+
+
+# ─── Sovereign Lock: force local even when a cloud key exists ─────────────────
+
+def test_sovereign_lock_forces_local_over_cloud_key(mem_vault, monkeypatch):
+    monkeypatch.setattr(ss, "get_api_key", lambda p: "AIza-real-cloud-key")  # cloud key PRESENT
+    monkeypatch.setattr(ss.providers, "probe_local_engines",
+                        lambda timeout=0.4: [{"name": "ollama", "base": "http://localhost:11434/v1/",
+                                              "models": ["deepseek-r1:8b", "gemma4:e2b"]}])
+    caps = {"deepseek-r1:8b": {"text"}, "gemma4:e2b": {"text", "image"}}
+    monkeypatch.setattr(ss.providers, "ollama_capabilities", lambda b, m, timeout=2.0: caps.get(m))
+    ss.save_settings({"preferences": {"sovereign_lock": True}})
+    ss.invalidate_model_cache()
+    cfg = ss.get_model_for_role("TRANSCRIBER_LEAD")
+    assert cfg["provider"] == "local"            # cloud key ignored
+    assert cfg["model"] == "gemma4:e2b"          # modality still respected (vision)
+
+
+def test_sovereign_lock_blocks_when_no_local(mem_vault, monkeypatch):
+    monkeypatch.setattr(ss, "get_api_key", lambda p: "AIza-real-cloud-key")
+    monkeypatch.setattr(ss.providers, "probe_local_engines", lambda timeout=0.4: [])
+    ss.save_settings({"preferences": {"sovereign_lock": True}})
+    ss.invalidate_model_cache()
+    cfg = ss.get_model_for_role("NARRATIVE_ARCHITECT")
+    assert cfg["provider"] == "sovereign_blocked"   # honest: no silent cloud fallback
