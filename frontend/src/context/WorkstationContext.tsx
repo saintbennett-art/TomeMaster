@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
 import { get, set } from "idb-keyval";
 import {
     checkTranscriptionStatus, targetFolder, pickManuscript, readLocalFile,
@@ -71,6 +71,8 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [bookTitle, setBookTitle] = useState("Manuscript");
     const [authorName, setAuthorName] = useState("Author");
     const [coverImage, setCoverImage] = useState<string | null>(null);
+    // Gates metadata persistence until hydrate() runs, so defaults can't clobber saved values.
+    const metadataHydratedRef = useRef(false);
     const [activeFolderPath, setActiveFolderPath] = useState<string | null>(null);
     const [isTranscribing, setIsTranscribing] = useState(false);
     const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus | null>(null);
@@ -298,6 +300,14 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
         const enhancements = await get<string[]>('tome_master_active_enhancements');
         if (enhancements) setActiveEnhancements(enhancements);
 
+        const savedTitle = await get<string>('tome_master_draft_title');
+        if (savedTitle) setBookTitle(savedTitle);
+        const savedAuthor = await get<string>('tome_master_draft_author');
+        if (savedAuthor) setAuthorName(savedAuthor);
+        const savedCover = await get<string>('tome_master_draft_cover');
+        if (savedCover) setCoverImage(savedCover);
+        metadataHydratedRef.current = true;
+
         try {
             const res = await fetch(`${API_BASE_HOLDER.current}/license/status`);
             const data = await res.json();
@@ -306,6 +316,14 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }, []);
 
     useEffect(() => { hydrate(); }, [hydrate]);
+
+    // [PERSIST]: project metadata survives reload; skip until hydrate restored saved values.
+    useEffect(() => {
+        if (!metadataHydratedRef.current) return;
+        set('tome_master_draft_title', bookTitle);
+        set('tome_master_draft_author', authorName);
+        if (coverImage) set('tome_master_draft_cover', coverImage);
+    }, [bookTitle, authorName, coverImage]);
 
     useEffect(() => {
         const pulse = setInterval(async () => {

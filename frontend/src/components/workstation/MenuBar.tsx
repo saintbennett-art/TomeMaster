@@ -74,7 +74,7 @@ const MenuBar: React.FC<MenuBarProps> = ({
                 }
             }},
             { label: "Load Sealed Manuscript", icon: ShieldCheck, action: loadSealedManuscript },
-            { label: "Save Snapshot", icon: Save, shortcut: "Ctrl+S", action: onTakeSnapshot || (() => notify("Snapshot saved to local vault.")) },
+            { label: "Save Project", icon: Save, shortcut: "Ctrl+S", action: onTakeSnapshot || (() => notify("No project to save yet.")) },
             { type: "separator" },
             { label: "Export Manuscript", icon: FileOutput, action: onExport || (() => notify("Opening Export bridge...")) },
         ],

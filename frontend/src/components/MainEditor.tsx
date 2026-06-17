@@ -9,7 +9,9 @@ import { RichTextEditorRef } from "@/components/RichTextEditor";
 import { useDictation } from "@/hooks/useDictation";
 import { useTextToSpeech } from "@/hooks/useTextToSpeech";
 import { useScreenRecorder } from "@/hooks/useScreenRecorder";
-import { exportDocx, exportEpub, exportPdf, checkTranscriptionStatus, saveSnapshot } from "@/lib/apiClient";
+import { exportDocx, exportEpub, exportPdf, checkTranscriptionStatus } from "@/lib/apiClient";
+import { set } from "idb-keyval";
+import { saveCompressed } from "@/lib/storage_utils";
 import { useWorkstationState, useWorkstationActions } from "@/context/WorkstationContext";
 import { useEditorState, useEditorActions } from "@/context/EditorContext";
 import { secureVault } from "@/lib/vault";
@@ -183,21 +185,31 @@ export default function MainEditor({
   const handleRedo = () => editorRef.current?.redo();
 
   const handleTakeSnapshot = async () => {
-    if (!activeFolderPath) {
-        notify("Set a project root first to save snapshots.");
-        return;
-    }
-    notify("Capturing architectural snapshot...");
+    // [SAVE PROJECT]: flush the live draft to IndexedDB (same store autosave uses).
     try {
-        // [SIMULATION]: Since we don't have html2canvas in this environment's standard bundle yet, 
-        // we use a formatted timestamped log as the 'snapshot' content or a placeholder dataUrl
-        const placeholderDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
-        await saveSnapshot(placeholderDataUrl, activeFolderPath);
-        notify("Snapshot preserved in project vault.");
+        await saveCompressed('tome_master_draft_html', htmlContent);
+        await saveCompressed('tome_master_draft_text', content);
+        await set('tome_master_draft_toc', chapters);
+        await set('tome_master_draft_reports', agentReports);
+        await set('tome_master_draft_arc', arcData);
+        await set('tome_master_draft_ts', Date.now());
+        notify(`Project saved at ${new Date().toLocaleTimeString()}.`);
     } catch (err) {
-        notify("Snapshot Handshake Failed.");
+        notify(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
+
+  // [SHORTCUT]: Ctrl/Cmd+S → Save Project (and suppress the browser Save dialog).
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        handleTakeSnapshot();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [content, htmlContent, chapters, agentReports, arcData]);
 
   const handleGrammarCheck = () => {
     if (!content) return;

@@ -2,6 +2,8 @@
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
 import { Chapter, AgentReport, ArcPoint } from "@/types/industrial";
+import { get, set } from "idb-keyval";
+import { saveCompressed, loadCompressed } from "@/lib/storage_utils";
 
 // --- [STRICT DOMAIN INTERFACES] ---
 export interface EditorState {
@@ -69,6 +71,54 @@ export const EditorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if (workerRef.current) {
             workerRef.current.postMessage({ type: 'PROCESS_TEXT', content: rawText });
         }
+    }, []);
+
+    // [AUTOSAVE]: Silent, debounced persistence of the live draft to IndexedDB.
+    useEffect(() => {
+        if (!htmlContent && !content) return;
+        const timeout = setTimeout(async () => {
+            try {
+                await saveCompressed('tome_master_draft_html', htmlContent);
+                await saveCompressed('tome_master_draft_text', content);
+                await set('tome_master_draft_toc', chapters);
+                await set('tome_master_draft_reports', agentReports);
+                await set('tome_master_draft_arc', arcData);
+                await set('tome_master_draft_ts', Date.now());
+            } catch (err) {
+                console.warn("Storage pressure detected. Auto-save failed.", err);
+            }
+        }, 2500);
+        return () => clearTimeout(timeout);
+    }, [htmlContent, content, chapters, agentReports, arcData]);
+
+    // [RESTORE]: On mount, rehydrate the draft. An opened active file wins
+    // (that path is owned by WorkstationContext.hydrate), so skip then.
+    useEffect(() => {
+        (async () => {
+            try {
+                const activeFile = await get<string>('tome_master_active_file');
+                const ext = activeFile?.split('.').pop()?.toLowerCase();
+                if (activeFile && ['md', 'markdown', 'txt'].includes(ext || '')) return;
+
+                const html = await loadCompressed<string>('tome_master_draft_html');
+                const text = await loadCompressed<string>('tome_master_draft_text');
+                if (html || text) {
+                    setHtmlContent(html || "");
+                    setContent(text || "");
+                    window.dispatchEvent(new CustomEvent('tome-master-editor-hydrate', {
+                        detail: { content: text || "", html: html || "" }
+                    }));
+                    const toc = await get('tome_master_draft_toc');
+                    if (Array.isArray(toc) && toc.length) setChapters(toc as Chapter[]);
+                    const reports = await get('tome_master_draft_reports');
+                    if (reports) setAgentReports(reports as Record<string, AgentReport>);
+                    const arc = await get('tome_master_draft_arc');
+                    if (Array.isArray(arc) && arc.length) setArcData(arc as ArcPoint[]);
+                }
+            } catch (err) {
+                console.error("Draft hydration failed:", err);
+            }
+        })();
     }, []);
 
     const editorState: EditorState = {
