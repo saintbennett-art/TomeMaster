@@ -184,7 +184,7 @@ function Sidebar({
                                 key={i} 
                                 onMouseEnter={() => ambientNotify(`Scrolling to ${chap.suggested_title || 'Chapter'}. Duration: ${chap.reading_time_mins || 1} minutes.`)}
                                 onClick={(e) => {
-                                    onChapterClick?.(chap.startingWords || "");
+                                    onChapterClick?.(chap.startingWords || chap.starting_words || "");
                                     e.currentTarget.scrollIntoView({ behavior: 'smooth', block: 'start' });
                                 }}
                                 className="text-xs py-2.5 pl-3 border-l-2 border-[#1a1a1a] hover:border-indigo-500/50 text-zinc-400 hover:text-zinc-100 cursor-pointer ml-2 transition-all mt-1 flex justify-between items-start pr-3 group hover:bg-white/5 rounded-r-md"

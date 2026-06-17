@@ -305,7 +305,10 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
           // If we were already tracking a chapter, finalize it
           if (currentChapter) {
             currentChapter.content = chapterText.join('\n\n');
-            currentChapter.chapter_word_count = chapterText.join(' ').split(/\s+/).filter(w => w.length > 0).length;
+            const wc = chapterText.join(' ').split(/\s+/).filter(w => w.length > 0).length;
+            currentChapter.chapter_word_count = wc;
+            currentChapter.reading_time_mins = Math.max(1, Math.round(wc / 220)); // ~220 wpm
+            currentChapter.startingWords = currentChapter.starting_words; // mirror for camelCase consumers (sidebar jump, search)
             toc.push(currentChapter);
           }
 
@@ -338,7 +341,10 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
       const lastChapter = currentChapter as Chapter | null;
       if (lastChapter) {
         lastChapter.content = chapterText.join('\n\n');
-        lastChapter.chapter_word_count = chapterText.join(' ').split(/\s+/).filter(w => w.length > 0).length;
+        const wc = chapterText.join(' ').split(/\s+/).filter(w => w.length > 0).length;
+        lastChapter.chapter_word_count = wc;
+        lastChapter.reading_time_mins = Math.max(1, Math.round(wc / 220)); // ~220 wpm
+        lastChapter.startingWords = lastChapter.starting_words; // mirror for camelCase consumers
         toc.push(lastChapter);
       }
       
