@@ -31,15 +31,25 @@ class PipelineRequest(BaseModel):
 from services.security import validate_project_path
 
 @router.get("/ingest")
-async def ingest_project_baseline(folder_path: str):
-    """[LEDGER]: Ingests the project baseline and hydrates the UI."""
+def ingest_project_baseline(folder_path: str):
+    """[LEDGER]: Ingests the project baseline and hydrates the UI.
+
+    SYNC def: acquires the blocking TRANSCRIPTION_LOCK; as async it would freeze
+    the event loop. FastAPI runs sync defs in a threadpool.
+    """
     safe_path = validate_project_path(folder_path)
     success = transcriber_service.ingest_project_baseline(safe_path)
     return {"status": "success" if success else "failed"}
 
 @router.get("/status")
-async def get_transcription_status(summary: bool = False):
-    """[LEDGER]: Polls the global state and delivers new pages to the UI."""
+def get_transcription_status(summary: bool = False):
+    """[LEDGER]: Polls the global state and delivers new pages to the UI.
+
+    SYNC def (CRITICAL): the frontend polls this continuously, and it holds the
+    blocking TRANSCRIPTION_LOCK. As an async endpoint, every poll competing for
+    the lock with a busy worker thread froze the entire event loop (backend
+    'disconnects'). Sync → threadpool → the loop stays free.
+    """
     with transcriber_service.TRANSCRIPTION_LOCK:
         state = dict(transcriber_service.TRANSCRIPTION_STATE)
         
@@ -153,8 +163,11 @@ def set_offset(req: OffsetRequest):
     return {"status": "offset_applied"}
 
 @router.get("/resort")
-async def resort_manuscript_get(folder_path: str):
-    """Triggers manuscript unification (background thread)."""
+def resort_manuscript_get(folder_path: str):
+    """Triggers manuscript unification (background thread).
+
+    SYNC def: holds TRANSCRIPTION_LOCK; async would block the event loop.
+    """
     import glob
     import threading
     from services.transcriber_service import TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK

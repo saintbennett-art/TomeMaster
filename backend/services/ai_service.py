@@ -85,6 +85,15 @@ async def _call_anthropic_gateway(model: str, key: str, prompt: str, is_json: bo
             raise Exception(f"Anthropic Gateway Unreachable: {target_url}")
 
 
+# [QUOTA SAFETY NET]: tier-safe fallback model per provider, used ONLY when the
+# resolved model returns 429/503 at runtime. Not the primary selection.
+_QUOTA_FALLBACK_MODEL = {
+    "gemini": "gemini-2.5-flash",
+    "openai": "gpt-4o-mini",
+    "groq":   "llama-3.3-70b-versatile",
+}
+
+
 async def _call_standard_gateway(role: str, prompt: str, is_json: bool = True, override: dict = None):
     """[SOVEREIGN DISPATCH]: Universal handler for any OpenAI-compatible gateway."""
     config = _resolve_gateway_config(role, override)
@@ -137,9 +146,22 @@ async def _call_standard_gateway(role: str, prompt: str, is_json: bool = True, o
         
         try:
             response = await client.post(target_url, json=payload, headers=headers)
+            # [QUOTA FAILOVER]: a 429 (quota/tier limit) or 503 (overloaded) on the
+            # resolved model → retry ONCE with a tier-safe fallback for this provider.
+            # The tier limit is only revealed by the 429 (e.g. a free Gemini key cannot
+            # use gemini-*-pro), so this is a runtime safety net — paid users still get
+            # the top-ranked model; free keys auto-drop to flash instead of failing.
+            if response.status_code in (429, 503):
+                fb = _QUOTA_FALLBACK_MODEL.get(provider)
+                if fb and fb != model:
+                    print(f"GATEWAY FAILOVER: {provider}:{model} -> HTTP {response.status_code}; retrying with {fb}")
+                    payload["model"] = fb
+                    response = await client.post(target_url, json=payload, headers=headers)
+                    if response.status_code == 200:
+                        model = fb  # so the ledger records the model that actually ran
             if response.status_code != 200:
                 raise Exception(f"Gateway Refused Request (HTTP {response.status_code}): {response.text}")
-                
+
             data = response.json()
             raw_content = data["choices"][0]["message"]["content"]
             # [LEDGER]: OpenAI-compatible gateways (incl. Gemini-compat, Groq)

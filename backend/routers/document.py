@@ -212,8 +212,13 @@ async def export_epub(req: ExportRequest):
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/target")
-async def target_project_folder():
-    """Directorial Target: Invokes the native folder picker and returns the selected path to the UI."""
+def target_project_folder():
+    """Directorial Target: Invokes the native folder picker and returns the selected path to the UI.
+
+    SYNC def (not async): pick_directory() opens a BLOCKING native dialog. As an
+    async endpoint it would freeze the whole event loop (backend appears to
+    'disconnect' / picker never reopens). FastAPI runs sync defs in a threadpool.
+    """
     folder = transcriber_service.pick_directory()
     if not folder:
         return {"status": "cancelled", "folder_path": None}
@@ -221,8 +226,13 @@ async def target_project_folder():
     return {"status": "targeted", "folder_path": folder}
 
 @router.get("/load")
-async def load_manuscript_picker():
-    """Manuscript Load: Invokes native file picker and targets project to its directory."""
+def load_manuscript_picker():
+    """Manuscript Load: Invokes native file picker and targets project to its directory.
+
+    SYNC def (not async): pick_file() opens a BLOCKING native dialog; as an async
+    endpoint it freezes the event loop (blank screen, picker won't reopen, backend
+    'disconnects'). FastAPI runs sync defs in a threadpool so the loop stays free.
+    """
     file_path = transcriber_service.pick_file()
     if not file_path:
         return {"status": "cancelled", "file_path": None}
@@ -242,6 +252,42 @@ async def load_manuscript_picker():
         "folder_path": folder,
         "filename": os.path.basename(file_path),
         "is_parseable": is_parseable  # Frontend uses this to skip "Click Transcribe" gate
+    }
+
+@router.post("/upload-to-project")
+def upload_to_project(file: UploadFile = File(...)):
+    """[BROWSER LOAD — FULL FIDELITY]: Saves an uploaded manuscript to a real
+    on-disk project folder and returns the SAME shape as /document/load, so
+    browser mode reuses the *entire* native load+transcribe pipeline — every
+    format the desktop picker supported (.txt/.md/.doc/.docx/.wpd/.wps/.odt/.pdf,
+    incl. legacy Word/WordPerfect via legacy_parser) — with no capability loss.
+
+    SYNC def (not async): the file write + parseable probe are blocking, so they
+    run in FastAPI's threadpool, never freezing the event loop. The frontend's
+    invokeTranscription does the actual ingestion/parsing afterward.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file uploaded")
+
+    base = os.path.join(os.path.expanduser("~"), "TomeMaster", "Uploads")
+    os.makedirs(base, exist_ok=True)
+    safe_name = os.path.basename(file.filename)
+    dest = os.path.join(base, safe_name)
+
+    data = file.file.read()           # sync read of the spooled upload
+    with open(dest, "wb") as fh:
+        fh.write(data)
+
+    dest_norm = dest.replace("\\", "/")
+    from services.transcriber import vision_processor
+    is_parseable = vision_processor.is_parseable_document(dest_norm)
+
+    return {
+        "status": "loaded",
+        "file_path": dest_norm,
+        "folder_path": base.replace("\\", "/"),
+        "filename": safe_name,
+        "is_parseable": is_parseable,
     }
 
 @router.get("/read")

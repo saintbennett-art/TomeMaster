@@ -91,6 +91,40 @@ async def save_vault_to_env(req: VaultSaveRequest):
     return {"success": True}
 
 
+@router.post("/vault-validate")
+async def validate_and_prune_vault():
+    """[STALE GUARD]: Live-validate each stored key so the UI's SEALED indicator
+    reflects real, working keys. Clears (prunes) a key ONLY when the provider
+    DEFINITIVELY rejects it (auth error 400/401/403) — never on a network/timeout
+    failure, so a valid key is never lost to a transient blip.
+
+    Returns {"validity": {provider: bool}, "pruned": [providers cleared]}.
+    """
+    import re
+    from services import settings_service
+
+    provs = list(ALLOWED_VAULT_KEYS.keys())  # gemini, openai, anthropic, groq
+    stored = {p: settings_service.get_api_key(p) for p in provs}
+
+    async def _check(p):
+        k = stored[p]
+        if not k:
+            return p, "absent", ""
+        try:
+            res = await asyncio.wait_for(ai_service.validate_key_async(p, k), timeout=12.0)
+            return (p, "valid", "") if res.get("success") else (p, "invalid", str(res.get("message", "")))
+        except Exception as e:
+            return p, "unreachable", str(e)
+
+    checks = await asyncio.gather(*[_check(p) for p in provs])
+
+    validity = {p: (state == "valid") for p, state, _ in checks}
+    # [SAFETY]: report-only. NEVER delete keys here — the /models validation
+    # false-negatives on some valid keys (it deleted a working Gemini key once).
+    # Key removal is a deliberate user action, not an automatic side effect.
+    return {"validity": validity, "pruned": []}
+
+
 @router.get("/models")
 async def discover_available_models(provider: str = "gemini"):
     """

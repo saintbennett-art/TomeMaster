@@ -4,7 +4,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { get, set } from "idb-keyval";
 import {
     checkTranscriptionStatus, targetFolder, pickManuscript, readLocalFile,
-    API_BASE_HOLDER, startTranscription, resolveAudit
+    API_BASE_HOLDER, startTranscription, resolveAudit, uploadToProject, uploadManuscript
 } from "@/lib/apiClient";
 import { TranscriptionStatus } from "@/types/industrial";
 
@@ -53,6 +53,7 @@ export interface WorkstationActions {
     setIsFocusMode: (val: boolean) => void;
     setIsOfflineMode: (val: boolean) => void;
     loadManuscript: () => Promise<void>;
+    loadManuscriptFromUpload: (file: File) => Promise<void>;
     loadSealedManuscript: () => Promise<void>;
     establishProject: () => Promise<void>;
     invokeTranscription: () => Promise<void>;
@@ -105,52 +106,88 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
     };
 
+    // [SHARED LOAD LOGIC]: handles a picker/upload result identically — text
+    // formats hydrate immediately; .docx/.doc/.wpd/.wps/.odt/text-pdf route to the
+    // full backend parser via transcription; scanned docs prompt OCR. Both the
+    // native picker AND the browser upload feed through here → zero format loss.
+    const applyPickResult = async (result: { status: string; file_path?: string | null; folder_path?: string | null; filename?: string | null; is_parseable?: boolean }) => {
+        if (result.status !== 'loaded' || !result.file_path) return;
+        setActiveFolderPath(result.folder_path || null);
+        await set('tome_master_active_folder', result.folder_path);
+        await set('tome_master_active_file', result.file_path);
+
+        const ext = result.file_path.split('.').pop()?.toLowerCase();
+        if (['md', 'markdown', 'txt'].includes(ext || '')) {
+            notify(`Recovering prose from: ${result.filename}...`);
+            const data = await readLocalFile(result.file_path);
+            if (data.content) {
+                window.dispatchEvent(new CustomEvent('tome-master-editor-hydrate', {
+                    detail: {
+                        content: data.content,
+                        html: data.html || `<p>${data.content.replace(/\n/g, '<br>')}</p>`
+                    }
+                }));
+                notify(`Manuscript Ingested & Hydrated: ${result.filename}`);
+            }
+        } else {
+            notify(`Manuscript Ingested: ${result.filename}`);
+            notify(`Command set to: ${result.folder_path}`);
+            if (['pdf', 'docx', 'doc', 'wpd', 'wps', 'odt'].includes(ext || '')) {
+                // [SMART ROUTE]: parseable (digital PDF / Word doc / legacy) → the
+                // backend text-parses (legacy via legacy_parser); else it's a scan → OCR.
+                if (result.is_parseable) {
+                    const legacy = ['doc', 'wpd', 'wps', 'odt'].includes(ext || '');
+                    notify(legacy
+                        ? "Legacy document detected — resurrecting manuscript text..."
+                        : "Digital document detected — extracting text (no OCR needed)...");
+                    await invokeTranscription();
+                } else {
+                    notify("ACTION REQUIRED: This is a scanned document. Click 'Transcribe' to OCR the manuscript.");
+                }
+            } else {
+                notify("Ready for Structural Audit.");
+            }
+        }
+    };
+
     const loadManuscript = async () => {
         try {
-            const result = await pickManuscript();
-            if (result.status === 'loaded' && result.file_path) {
-                setActiveFolderPath(result.folder_path);
-                await set('tome_master_active_folder', result.folder_path);
-                await set('tome_master_active_file', result.file_path);
-                
-                // [AUTO-HYDRATION]: If it's a markdown or text file, load it immediately
-                const ext = result.file_path.split('.').pop()?.toLowerCase();
-                if (['md', 'markdown', 'txt'].includes(ext || '')) {
-                    notify(`Recovering prose from: ${result.filename}...`);
-                    const data = await readLocalFile(result.file_path);
-                    if (data.content) {
-                        window.dispatchEvent(new CustomEvent('tome-master-editor-hydrate', { 
-                            detail: { 
-                                content: data.content,
-                                html: data.html || `<p>${data.content.replace(/\n/g, '<br>')}</p>`
-                            } 
-                        }));
-                        notify(`Manuscript Ingested & Hydrated: ${result.filename}`);
-                    }
-                } else {
-                    notify(`Manuscript Ingested: ${result.filename}`);
-                    notify(`Command set to: ${result.folder_path}`);
-                    if (['pdf', 'docx', 'doc', 'wpd', 'wps', 'odt'].includes(ext || '')) {
-                        // [SMART ROUTE]: If the backend says this file is parseable
-                        // (digital PDF with text layer, Word doc, or legacy format), auto-start
-                        // transcription — the backend will text-parse instead of OCR.
-                        if (result.is_parseable) {
-                            const legacy = ['doc', 'wpd', 'wps', 'odt'].includes(ext || '');
-                            notify(legacy
-                                ? "Legacy document detected — resurrecting manuscript text..."
-                                : "Digital document detected — extracting text (no OCR needed)...");
-                            // Auto-trigger transcription; backend smart-routes to text parser
-                            await invokeTranscription();
-                        } else {
-                            notify("ACTION REQUIRED: This is a scanned document. Click 'Transcribe' to OCR the manuscript.");
-                        }
-                    } else {
-                        notify("Ready for Structural Audit.");
-                    }
-                }
-            }
+            const result = await pickManuscript();   // desktop native picker
+            await applyPickResult(result);
         } catch (err) {
             notify("Sovereign Ingestion Failed: Engine is unreachable.");
+        }
+    };
+
+    // [BROWSER LOAD]: feed a browser-picked File through the SAME pipeline as the
+    // native picker — every format the desktop app supports, none dropped.
+    const loadManuscriptFromUpload = async (file: File) => {
+        try {
+            const ext = file.name.split('.').pop()?.toLowerCase() || '';
+            // [STRUCTURED LOAD]: .docx is a finished manuscript — parse it with
+            // mammoth (real <h1>/<h2> headings + TOC) and hydrate the editor
+            // directly. The editor rebuilds the TOC sidebar from the headings.
+            // Do NOT route it through transcription (that flattens the structure).
+            if (ext === 'docx') {
+                notify(`Loading ${file.name}…`);
+                const parsed = await uploadManuscript(file);
+                if (parsed && (parsed.content || parsed.raw_text)) {
+                    window.dispatchEvent(new CustomEvent('tome-master-editor-hydrate', {
+                        detail: { html: parsed.content || '', content: parsed.raw_text || '' }
+                    }));
+                    const words = typeof parsed.word_count === 'number' ? parsed.word_count.toLocaleString() : '?';
+                    notify(`Loaded: ${file.name} (${words} words — chapter headings + TOC preserved)`);
+                    return;
+                }
+                notify(`Could not parse ${file.name}.`);
+                return;
+            }
+            // Legacy (.doc/.wpd/.wps/.odt), scanned PDF, etc. → full pipeline.
+            notify(`Uploading ${file.name}…`);
+            const result = await uploadToProject(file);
+            await applyPickResult(result);
+        } catch (err) {
+            notify(`Load failed: ${err instanceof Error ? err.message : String(err)}`);
         }
     };
 
@@ -297,7 +334,7 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setIsActivated, setLanguage, setIsSettingsOpen, setIsHelpOpen, setIsEnhancementHubOpen,
         setIsAuditOpen, setIsLedgerOpen, setIsReportOpen, setIsStructuralModalOpen, setIsFocusMode,
         setIsOfflineMode,
-        loadManuscript, loadSealedManuscript, establishProject, invokeTranscription, abortTranscription,
+        loadManuscript, loadManuscriptFromUpload, loadSealedManuscript, establishProject, invokeTranscription, abortTranscription,
         resolveAuditInput, notify, hydrate,
         toggleEnhancement
     };

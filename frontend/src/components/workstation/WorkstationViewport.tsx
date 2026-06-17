@@ -32,14 +32,22 @@ const WorkstationViewport: React.FC<WorkstationViewportProps> = ({
         htmlContent = "", activePage = 1, wordCount = 0, misspelledCount = 0 
     } = useEditorState();
     
-    const { setHtmlContent, setContent, setWordCount } = useEditorActions();
-    
+    const { setHtmlContent, setContent, setWordCount, setChapters } = useEditorActions();
+
     // [HYDRATION BRIDGE]: Listen for manual restoration events (e.g. Loading a Sealed Manuscript)
     React.useEffect(() => {
         const handleHydrate = (e: any) => {
             if (e.detail?.html && editorRef.current) {
                 editorRef.current.setContent(e.detail.html);
                 setHtmlContent(e.detail.html);
+                // [TOC BUILD]: build the chapter list / TOC sidebar from the
+                // headings in the loaded content — client-side, no AI needed.
+                setTimeout(() => {
+                    try {
+                        const toc = editorRef.current?.generateTOC?.();
+                        if (toc && toc.length > 0) setChapters(toc);
+                    } catch { /* editor not ready */ }
+                }, 60);
             }
             if (e.detail?.content) {
                 setContent(e.detail.content);
@@ -47,7 +55,7 @@ const WorkstationViewport: React.FC<WorkstationViewportProps> = ({
         };
         window.addEventListener('tome-master-editor-hydrate', handleHydrate);
         return () => window.removeEventListener('tome-master-editor-hydrate', handleHydrate);
-    }, [setContent, setHtmlContent, editorRef]);
+    }, [setContent, setHtmlContent, setChapters, editorRef]);
 
     return (
         <div className="flex-1 flex flex-col min-w-0 relative h-full" id="main-workstation-viewport">

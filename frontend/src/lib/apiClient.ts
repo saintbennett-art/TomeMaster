@@ -51,6 +51,17 @@ export async function uploadManuscript(file: File, isDemo: boolean = false, sign
     return res.json();
 }
 
+/** Uploads a browser-picked file to a real project folder and returns the same
+ *  shape as the native picker (/document/load), so the full load pipeline (every
+ *  format, incl. legacy Word/WordPerfect) is reused with no capability loss. */
+export async function uploadToProject(file: File): Promise<{ status: string; file_path?: string; folder_path?: string; filename?: string; is_parseable?: boolean }> {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch(`${API_BASE_HOLDER.current}/document/upload-to-project`, { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(`Upload failed (HTTP ${res.status})`);
+    return res.json();
+}
+
 export async function uploadManuscriptStream(file: File, onChunk: (data: Record<string, unknown>) => void, isDemo: boolean = false, signal?: AbortSignal) {
     const formData = new FormData();
     formData.append("file", file);
@@ -612,6 +623,20 @@ export async function saveVaultToEnv(keys: Record<string, string>): Promise<bool
         return response.ok;
     } catch (e) {
         return false;
+    }
+}
+
+/** Live-validate stored keys; backend prunes any the provider definitively
+ *  rejects. Returns which providers are valid + which were pruned (stale). */
+export async function validateVaultKeys(): Promise<{ validity: Record<string, boolean>; pruned: string[] }> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/vault-validate`, { method: 'POST' });
+        if ('isNetworkError' in res) return { validity: {}, pruned: [] };
+        const r = res as Response;
+        if (!r.ok) return { validity: {}, pruned: [] };
+        return await r.json();
+    } catch {
+        return { validity: {}, pruned: [] };
     }
 }
 

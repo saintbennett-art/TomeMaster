@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { X, Sparkles, Activity, ShieldCheck, Cpu, Database, Zap, Lock, Settings, FileText, Key, Info, Check, Loader2, ChevronDown, Server, Plus, Trash2, RadioTower } from "lucide-react";
-import { API_BASE_HOLDER, fetchAvailableModels, saveVaultToEnv, fetchLocalEngines, fetchCustomProviders, saveCustomProviders, validateCustomEndpoint, type DiscoveredModel, type LocalEngine, type CustomProvider } from "../lib/apiClient";
+import { X, Sparkles, Activity, ShieldCheck, Cpu, Database, Zap, Lock, Settings, FileText, Key, Info, Check, Loader2, ChevronDown, Server, Plus, Trash2, RadioTower, Eye, EyeOff } from "lucide-react";
+import { API_BASE_HOLDER, fetchAvailableModels, saveVaultToEnv, fetchLocalEngines, fetchCustomProviders, saveCustomProviders, validateCustomEndpoint, validateAiKey, validateVaultKeys, type DiscoveredModel, type LocalEngine, type CustomProvider } from "../lib/apiClient";
 import { VaultDashboard } from "./workstation/settings/VaultDashboard";
 import { MASTER_PROVIDER_LIBRARY } from "../lib/ai_config";
 
@@ -50,7 +50,8 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
     const [sovereignSettings, setSovereignSettings] = useState<SovereignSettings | null>(null);
     // [SOVEREIGN DISCOVERY]: Live models fetched from the provider using the saved key
     const [discoveredModels, setDiscoveredModels] = useState<Record<string, DiscoveredModel[]>>({});
-    const [selectedModels, setSelectedModels] = useState<Record<string, string>>({});
+    // resolved-models returns { ROLE: { model, provider } } per role.
+    const [selectedModels, setSelectedModels] = useState<Record<string, { model?: string; provider?: string }>>({});
     const [modelFetchStatus, setModelFetchStatus] = useState<Record<string, 'idle' | 'loading' | 'done' | 'error'>>({});
 
     // [WAVE 2]: local-engine auto-detect + custom OpenAI-compatible endpoints
@@ -60,6 +61,36 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
     const [draft, setDraft] = useState<CustomProvider>({ label: '', base_url: '', key: '' });
     const [draftStatus, setDraftStatus] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
     const [draftMsg, setDraftMsg] = useState('');
+
+    // [KEY VISIBILITY + VERIFY]: let the user SEE the pasted key (not just dots)
+    // and confirm it with the vendor before/after sealing.
+    const [revealed, setRevealed] = useState<Record<string, boolean>>({});
+    const [verifyState, setVerifyState] = useState<Record<string, 'idle' | 'checking' | 'ok' | 'fail'>>({});
+    const [verifyMsg, setVerifyMsg] = useState<Record<string, string>>({});
+
+    const verifyKey = async (providerId: string) => {
+        const raw = (localKeys[providerId] || '').trim();
+        const sealed = raw === '***SEALED***' || raw === '';
+        setVerifyState(prev => ({ ...prev, [providerId]: 'checking' }));
+        setVerifyMsg(prev => ({ ...prev, [providerId]: '' }));
+        try {
+            let ok = false, msg = '';
+            if (sealed) {
+                // No raw key in the browser — ask the backend to handshake the stored key.
+                const { validity } = await validateVaultKeys();
+                ok = !!validity[providerId];
+                msg = ok ? 'Stored key confirmed with vendor.' : 'Vendor rejected the stored key — Replace it.';
+            } else {
+                const res = await validateAiKey(providerId, raw);
+                ok = res.success; msg = res.message;
+            }
+            setVerifyState(prev => ({ ...prev, [providerId]: ok ? 'ok' : 'fail' }));
+            setVerifyMsg(prev => ({ ...prev, [providerId]: msg }));
+        } catch (e) {
+            setVerifyState(prev => ({ ...prev, [providerId]: 'fail' }));
+            setVerifyMsg(prev => ({ ...prev, [providerId]: e instanceof Error ? e.message : String(e) }));
+        }
+    };
 
     const scanLocalEngines = async () => {
         setLocalScan('scanning');
@@ -142,8 +173,12 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
             await saveVaultToEnv(realKeys);
         }
 
-        // Update React state and UI
-        setKeys({ ...localKeys, ...realKeys });
+        // [SEAL FEEDBACK]: flip the just-sealed fields to '***SEALED***' so the
+        // SEALED badge appears immediately (e.g. the moment Enter is pressed),
+        // instead of leaving the raw key sitting in the box.
+        const sealedMarks = Object.fromEntries(Object.keys(realKeys).map(k => [k, '***SEALED***']));
+        setLocalKeys(prev => ({ ...prev, ...sealedMarks }));
+        setKeys({ ...localKeys, ...sealedMarks });
         clearShadow();
         setSaved(true);
         setTimeout(() => setSaved(false), 2000);
@@ -257,6 +292,9 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
                                     {PROVIDERS.filter(p => p.id !== 'ollama').map(p => {
                                         const currentVal = localKeys[p.id] || '';
                                         const isSealed   = currentVal === '***SEALED***';
+                                        const show       = !!revealed[p.id] && !isSealed;
+                                        const vState     = verifyState[p.id] || 'idle';
+                                        const canVerify  = isSealed || (currentVal.trim().length > 5);
                                         return (
                                             <div key={p.id} className="p-4 bg-black/30 border border-white/5 rounded-2xl hover:border-white/10 transition-all">
                                                 <div className="flex items-center justify-between mb-2">
@@ -270,26 +308,58 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
                                                 <div className="relative">
                                                     <input
                                                         id={`key-input-${p.id}`}
-                                                        type="password"
+                                                        type={show ? 'text' : 'password'}
                                                         placeholder={isSealed ? '••••••••••••••••••••' : p.placeholder}
                                                         value={isSealed ? '' : currentVal}
                                                         onChange={e => setLocalKeys(prev => ({ ...prev, [p.id]: e.target.value }))}
                                                         onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); saveAll(); } }}
-                                                        className="w-full bg-black/40 border border-white/5 rounded-xl px-4 py-3 text-[10px] text-white font-mono focus:outline-none focus:border-indigo-500/50 transition-all pr-10"
+                                                        className="w-full bg-black/40 border border-white/5 rounded-xl px-4 py-3 text-[10px] text-white font-mono focus:outline-none focus:border-indigo-500/50 transition-all pr-20"
                                                     />
-                                                    {isSealed && (
-                                                        <button
-                                                            onClick={() => setLocalKeys(prev => ({ ...prev, [p.id]: '' }))}
-                                                            title="Replace key"
-                                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-zinc-300 transition-colors text-[8px] font-black uppercase"
-                                                        >
-                                                            Replace
-                                                        </button>
-                                                    )}
+                                                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                                                        {!isSealed && currentVal.length > 0 && (
+                                                            <button
+                                                                onClick={() => setRevealed(prev => ({ ...prev, [p.id]: !prev[p.id] }))}
+                                                                title={show ? 'Hide key' : 'Reveal key'}
+                                                                className="text-zinc-600 hover:text-zinc-200 transition-colors"
+                                                            >
+                                                                {show ? <EyeOff size={13} /> : <Eye size={13} />}
+                                                            </button>
+                                                        )}
+                                                        {isSealed && (
+                                                            <button
+                                                                onClick={() => { setLocalKeys(prev => ({ ...prev, [p.id]: '' })); setVerifyState(prev => ({ ...prev, [p.id]: 'idle' })); setVerifyMsg(prev => ({ ...prev, [p.id]: '' })); }}
+                                                                title="Replace key"
+                                                                className="text-zinc-600 hover:text-zinc-300 transition-colors text-[8px] font-black uppercase"
+                                                            >
+                                                                Replace
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                 </div>
-                                                <p className="text-[7px] text-zinc-600 mt-1.5">
-                                                    <a href={p.link} target="_blank" rel="noopener noreferrer" className="hover:text-indigo-400 transition-colors">{p.linkLabel} ↗</a>
-                                                </p>
+                                                <div className="flex items-center justify-between mt-1.5">
+                                                    <a href={p.link} target="_blank" rel="noopener noreferrer" className="text-[7px] text-zinc-600 hover:text-indigo-400 transition-colors">{p.linkLabel} ↗</a>
+                                                    <button
+                                                        onClick={() => verifyKey(p.id)}
+                                                        disabled={!canVerify || vState === 'checking'}
+                                                        title="Handshake this key with the vendor"
+                                                        className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all border ${
+                                                            vState === 'ok'   ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5'
+                                                          : vState === 'fail' ? 'text-rose-400 border-rose-500/30 bg-rose-500/5'
+                                                          : 'text-zinc-400 border-white/10 hover:text-white hover:border-white/25 disabled:opacity-30 disabled:cursor-not-allowed'
+                                                        }`}
+                                                    >
+                                                        {vState === 'checking' ? <Loader2 size={9} className="animate-spin" />
+                                                          : vState === 'ok'    ? <Check size={9} />
+                                                          : vState === 'fail'  ? <X size={9} />
+                                                          : <ShieldCheck size={9} />}
+                                                        {vState === 'checking' ? 'Verifying' : vState === 'ok' ? 'Verified' : vState === 'fail' ? 'Failed' : 'Verify'}
+                                                    </button>
+                                                </div>
+                                                {verifyMsg[p.id] && (
+                                                    <p className={`text-[7px] mt-1 font-bold leading-tight ${vState === 'ok' ? 'text-emerald-500/80' : 'text-rose-500/80'}`}>
+                                                        {verifyMsg[p.id]}
+                                                    </p>
+                                                )}
                                             </div>
                                         );
                                     })}
@@ -441,11 +511,11 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
                                                                 <div className="mt-1.5 space-y-1">
                                                                     <div className="flex items-center gap-2">
                                                                         <span className="text-[7px] text-zinc-600 font-black uppercase w-16 shrink-0">Transcriber</span>
-                                                                        <span className="text-[8px] text-indigo-300 font-mono truncate">{roleModel.transcriber || '—'}</span>
+                                                                        <span className="text-[8px] text-indigo-300 font-mono truncate">{roleModel.transcriber?.model || '—'}</span>
                                                                     </div>
                                                                     <div className="flex items-center gap-2">
                                                                         <span className="text-[7px] text-zinc-600 font-black uppercase w-16 shrink-0">Architect</span>
-                                                                        <span className="text-[8px] text-indigo-300 font-mono truncate">{roleModel.analysis || '—'}</span>
+                                                                        <span className="text-[8px] text-indigo-300 font-mono truncate">{roleModel.analysis?.model || '—'}</span>
                                                                     </div>
                                                                 </div>
                                                             )}
@@ -453,7 +523,7 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
                                                                 <div className="mt-1.5 flex items-center gap-2">
                                                                     <span className="text-[7px] text-zinc-600 font-black uppercase w-16 shrink-0">Assigned</span>
                                                                     <span className="text-[8px] text-indigo-300 font-mono truncate">
-                                                                        {selectedModels[p.id] || models[0]?.id || '—'}
+                                                                        {selectedModels[p.id]?.model || models[0]?.id || '—'}
                                                                     </span>
                                                                 </div>
                                                             )}

@@ -26,10 +26,11 @@ interface MainEditorProps {
   onPreviewChapter?: (startingWords: string) => void;
   onCoverUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onMisspelledCountChange?: (count: number) => void;
+  syncTrigger?: number;
 }
 
-export default function MainEditor({ 
-  scrollToText, onScrollComplete, onPreviewChapter, onCoverUpload, onMisspelledCountChange
+export default function MainEditor({
+  scrollToText, onScrollComplete, onPreviewChapter, onCoverUpload, onMisspelledCountChange, syncTrigger
 }: MainEditorProps) {
   const { 
     activeFolderPath, isTranscribing, transcriptionStatus,
@@ -63,6 +64,19 @@ export default function MainEditor({
   const editorRef = useRef<RichTextEditorRef | null>(null);
 
   const { speak, stop, isPlaying } = useTextToSpeech();
+
+  // [SYNC HEADINGS]: the sidebar "Sync" button bumps syncTrigger. Build the
+  // chapter list / TOC from the document's headings (client-side, no AI).
+  useEffect(() => {
+    if (!syncTrigger) return;
+    const toc = editorRef.current?.generateTOC?.();
+    if (toc && toc.length > 0) {
+      setChapters(toc);
+      notify(`Synced ${toc.length} chapter${toc.length === 1 ? '' : 's'} from headings.`);
+    } else {
+      notify("No chapter headings found to sync. Load a document with headings, or run Delineate Structure.");
+    }
+  }, [syncTrigger]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleStartTranscribe = async () => {
     setLastActionTime(Date.now());

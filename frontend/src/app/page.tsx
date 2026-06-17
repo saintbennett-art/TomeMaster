@@ -74,6 +74,10 @@ export default function Home() {
             if (Object.keys(masked).length > 0) {
                 setKeysState(masked);
             }
+
+            // [REMOVED]: the background validate-and-prune deleted VALID keys
+            // (the /models check false-negatives on some keys). SEALED now reflects
+            // vault presence only; the user manages keys manually. Never auto-delete.
         });
         setForcePrimary(localStorage.getItem('tome_master_force_primary') === 'true');
         setLocalMode(localStorage.getItem('tome_master_local_mode') === 'true');
@@ -179,11 +183,12 @@ export default function Home() {
 
       {/* Main content area */}
       <div className="flex-1 h-full min-w-0 flex flex-col">
-        <MainEditor 
+        <MainEditor
           scrollToText={scrollToText}
           onScrollComplete={() => setScrollToText(null)}
           onPreviewChapter={handleChapterClick}
           onCoverUpload={handleCoverUpload}
+          syncTrigger={syncTrigger}
         />
       </div>
 
