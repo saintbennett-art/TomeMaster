@@ -1,6 +1,7 @@
 "use client";
 import React, { useState, useEffect, useRef } from "react";
-import { Maximize2, Minimize2, Save, Eye, Zap, RefreshCw, ExternalLink, ShieldAlert, ShieldCheck, Lock } from "lucide-react";
+import { Maximize2, Minimize2, Save, Eye, Zap, RefreshCw, ExternalLink, ShieldAlert, ShieldCheck, Lock, LockOpen } from "lucide-react";
+import { useDraggableDialog } from "@/components/workstation/DraggableDialog";
 import { runMultiAgentAnalysis, validateAiKey, API_BASE_HOLDER, fetchLocalEngines, type LocalEngine } from "@/lib/apiClient";
 import { isVisionModel } from "@/lib/ai_config";
 import { secureVault } from "@/lib/vault";
@@ -69,6 +70,7 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     // [SOVEREIGN LOCK]: real local-engine fidelity + the Sovereign/Industrial lock.
     const [localEngines, setLocalEngines] = useState<LocalEngine[]>([]);
     const [sovereignLock, setSovereignLock] = useState(false);
+    const lock = useDraggableDialog(); // position-lock state from the DraggableDialog wrapper
     useEffect(() => {
         fetchLocalEngines().then(setLocalEngines);
         if (typeof window !== 'undefined') {
@@ -284,6 +286,15 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
                         )}
                     </div>
                     <div className="flex items-center gap-2">
+                        {lock?.hasMoved && (
+                            <button
+                                onClick={lock.toggleLock}
+                                title={lock.isLocked ? 'Unlock panel to move' : 'Lock panel in place'}
+                                className={`p-2 rounded-lg border transition-all ${lock.isLocked ? 'bg-emerald-500/90 hover:bg-emerald-400 text-black border-emerald-400' : 'bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 border-white/5'}`}
+                            >
+                                {lock.isLocked ? <Lock className="w-4 h-4" /> : <LockOpen className="w-4 h-4" />}
+                            </button>
+                        )}
                         <button onClick={() => setIsMinimized(!isMinimized)} className="p-2 bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 rounded-lg border border-white/5 transition-all">
                             {isMinimized ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
                         </button>

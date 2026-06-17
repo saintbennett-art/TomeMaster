@@ -1,7 +1,18 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Lock, LockOpen } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback, createContext, useContext } from 'react';
+
+interface DraggableLockState {
+    isLocked: boolean;
+    hasMoved: boolean;
+    toggleLock: () => void;
+}
+
+// Lets a dialog's children render the lock control INSIDE the bar, so it stays
+// reachable even when the bar is docked at the very top of the screen (a tab
+// floating above the bar gets clipped off-screen there).
+export const DraggableDialogContext = createContext<DraggableLockState | null>(null);
+export const useDraggableDialog = () => useContext(DraggableDialogContext);
 
 interface DraggableDialogProps {
     children: React.ReactNode;
@@ -66,25 +77,11 @@ export const DraggableDialog: React.FC<DraggableDialogProps> = ({
             }}
             onMouseDown={onMouseDown}
         >
-            {/* LOCK BUTTON — appears after moved, vanishes once locked */}
-            {hasMoved && !isLocked && (
-                <button
-                    onClick={() => setIsLocked(prev => !prev)}
-                    title={isLocked ? "Unlock panel to move" : "Lock panel in place"}
-                    style={{ position: 'absolute', top: '-26px', right: '0px', zIndex: 1001 }}
-                    className={`flex items-center gap-1 px-2 py-1 text-[9px] font-black uppercase tracking-wider rounded-t-lg shadow-lg transition-all animate-in fade-in duration-200 cursor-pointer ${
-                        isLocked 
-                            ? 'bg-emerald-500/90 hover:bg-emerald-400 text-black' 
-                            : 'bg-zinc-700/90 hover:bg-zinc-600 text-zinc-300'
-                    }`}
-                >
-                    {isLocked 
-                        ? <><Lock className="w-2.5 h-2.5" /> Locked</> 
-                        : <><LockOpen className="w-2.5 h-2.5" /> Lock</>
-                    }
-                </button>
-            )}
-            {children}
+            {/* Lock control is rendered by the children INSIDE the bar header (via context),
+                so it stays clickable even when the bar is docked at the top of the screen. */}
+            <DraggableDialogContext.Provider value={{ isLocked, hasMoved, toggleLock: () => setIsLocked(prev => !prev) }}>
+                {children}
+            </DraggableDialogContext.Provider>
         </div>
     );
 };
