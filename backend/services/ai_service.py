@@ -2,6 +2,7 @@ import os
 import asyncio
 import json
 import httpx
+from contextlib import asynccontextmanager
 from .settings_service import get_model_for_role, ANTHROPIC_STATIC_PORTFOLIO
 from . import providers
 from .pii_scrubber import pii_scrubber
@@ -14,6 +15,25 @@ from .logger_service import log_api_usage
 
 # [MIGRATED]: JSON parsing moved to ai.json_steward
 _robust_parse_json = json_steward.robust_parse
+
+# [LOCAL JOB POLICY]: serialize local-engine inference so only ONE local job runs
+# at a time. On low-power hardware (e.g. an 8 GB laptop) concurrent local jobs
+# compound CPU load + RAM pressure → thermal throttle + UI lag. Cloud calls are
+# unaffected (still concurrent). Thread-cap / process-priority are bitnet.cpp
+# launch-side, not settable over HTTP — see LOCAL_AI_POLICY.md.
+_LOCAL_INFERENCE_LOCK = asyncio.Lock()
+
+def _is_local_target(url: str, provider: str) -> bool:
+    u = (url or "").lower()
+    return provider == "bitnet" or "localhost" in u or "127.0.0.1" in u or "0.0.0.0" in u
+
+@asynccontextmanager
+async def _local_single_flight(is_local: bool):
+    if is_local:
+        async with _LOCAL_INFERENCE_LOCK:
+            yield
+    else:
+        yield
 
 def _resolve_gateway_config(role: str, override: dict = None) -> dict:
     """[CONFIG RESOLVER]: Per-request override > settings vault.
@@ -126,56 +146,58 @@ async def _call_standard_gateway(role: str, prompt: str, is_json: bool = True, o
     if provider == "anthropic":
         return await _call_anthropic_gateway(model, key, prompt, is_json)
 
-    # [CERTIFICATION STANDARD]: Use standard httpx for gateway communication
-    async with httpx.AsyncClient(timeout=180.0) as client:
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}]
-        }
-        if is_json:
-            # Note: Some local gateways (Ollama) prefer 'json' in the prompt rather than a flag
-            payload["response_format"] = {"type": "json_object"}
-            
-        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-        
-        # Resolve target endpoint
-        base_url = url.rstrip('/')
-        target_url = base_url if base_url.endswith('/chat/completions') else f"{base_url}/chat/completions"
-
-        print(f"GATEWAY PULSE: {role} -> {target_url} (Model: {model})")
-        
-        try:
-            response = await client.post(target_url, json=payload, headers=headers)
-            # [QUOTA FAILOVER]: a 429 (quota/tier limit) or 503 (overloaded) on the
-            # resolved model → retry ONCE with a tier-safe fallback for this provider.
-            # The tier limit is only revealed by the 429 (e.g. a free Gemini key cannot
-            # use gemini-*-pro), so this is a runtime safety net — paid users still get
-            # the top-ranked model; free keys auto-drop to flash instead of failing.
-            if response.status_code in (429, 503):
-                fb = _QUOTA_FALLBACK_MODEL.get(provider)
-                if fb and fb != model:
-                    print(f"GATEWAY FAILOVER: {provider}:{model} -> HTTP {response.status_code}; retrying with {fb}")
-                    payload["model"] = fb
-                    response = await client.post(target_url, json=payload, headers=headers)
-                    if response.status_code == 200:
-                        model = fb  # so the ledger records the model that actually ran
-            if response.status_code != 200:
-                raise Exception(f"Gateway Refused Request (HTTP {response.status_code}): {response.text}")
-
-            data = response.json()
-            raw_content = data["choices"][0]["message"]["content"]
-            # [LEDGER]: OpenAI-compatible gateways (incl. Gemini-compat, Groq)
-            # return token usage here — log it so the boardroom shows up in the
-            # cost ledger, not just PDF OCR.
-            usage = data.get("usage") or {}
-            log_api_usage(role, provider or "unknown", model,
-                          {"total_tokens": usage.get("total_tokens", 0) or 0})
-
+    # [CERTIFICATION STANDARD]: Use standard httpx for gateway communication.
+    # [LOCAL JOB POLICY]: serialize local inference (one at a time); cloud is unaffected.
+    async with _local_single_flight(_is_local_target(url, provider)):
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}]
+            }
             if is_json:
-                return _robust_parse_json(raw_content)
-            return {"feedback": raw_content}
-        except httpx.ConnectError:
-            raise Exception(f"Gateway Unreachable: {target_url}. Ensure your local server or VPN is active.")
+                # Note: Some local gateways (Ollama) prefer 'json' in the prompt rather than a flag
+                payload["response_format"] = {"type": "json_object"}
+
+            headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+            # Resolve target endpoint
+            base_url = url.rstrip('/')
+            target_url = base_url if base_url.endswith('/chat/completions') else f"{base_url}/chat/completions"
+
+            print(f"GATEWAY PULSE: {role} -> {target_url} (Model: {model})")
+
+            try:
+                response = await client.post(target_url, json=payload, headers=headers)
+                # [QUOTA FAILOVER]: a 429 (quota/tier limit) or 503 (overloaded) on the
+                # resolved model → retry ONCE with a tier-safe fallback for this provider.
+                # The tier limit is only revealed by the 429 (e.g. a free Gemini key cannot
+                # use gemini-*-pro), so this is a runtime safety net — paid users still get
+                # the top-ranked model; free keys auto-drop to flash instead of failing.
+                if response.status_code in (429, 503):
+                    fb = _QUOTA_FALLBACK_MODEL.get(provider)
+                    if fb and fb != model:
+                        print(f"GATEWAY FAILOVER: {provider}:{model} -> HTTP {response.status_code}; retrying with {fb}")
+                        payload["model"] = fb
+                        response = await client.post(target_url, json=payload, headers=headers)
+                        if response.status_code == 200:
+                            model = fb  # so the ledger records the model that actually ran
+                if response.status_code != 200:
+                    raise Exception(f"Gateway Refused Request (HTTP {response.status_code}): {response.text}")
+
+                data = response.json()
+                raw_content = data["choices"][0]["message"]["content"]
+                # [LEDGER]: OpenAI-compatible gateways (incl. Gemini-compat, Groq)
+                # return token usage here — log it so the boardroom shows up in the
+                # cost ledger, not just PDF OCR.
+                usage = data.get("usage") or {}
+                log_api_usage(role, provider or "unknown", model,
+                              {"total_tokens": usage.get("total_tokens", 0) or 0})
+
+                if is_json:
+                    return _robust_parse_json(raw_content)
+                return {"feedback": raw_content}
+            except httpx.ConnectError:
+                raise Exception(f"Gateway Unreachable: {target_url}. Ensure your local server or VPN is active.")
 
 # [REMOVED]: rank_models_for_role() + auto_configure_gateway_async() were dead and
 # broken — no callers in the app, and auto_configure imported the nonexistent
