@@ -4,7 +4,7 @@ import { LucideIcon, X, CheckCircle, RefreshCcw, Save, Maximize2, Minimize2, Lay
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import ReactMarkdown from 'react-markdown';
 import { useTextToSpeech } from '@/hooks/useTextToSpeech';
-import { exportDocx } from '@/lib/apiClient';
+import { exportAnalysisReport } from '@/lib/apiClient';
 
 import { Chapter, AgentReport, Suggestion, ArcPoint } from "@/types/industrial";
 
@@ -124,7 +124,7 @@ export default function BoardroomReport({ isOpen, onClose, arcData, chapters, ag
             });
 
             // Use the centralized, hardened export bridge (now with native OS Picker support)
-            await exportDocx(md, [], `Tome-Master_Audit_Report_${new Date().toISOString().split('T')[0]}`, "Tome-Master AI");
+            await exportAnalysisReport(md, `Tome-Master_Audit_Report_${new Date().toISOString().split('T')[0]}`);
         } catch (err) {
             // Silent Navigation Bypass
             alert("Failed to connect to the Sovereign Engine for export. Is the backend running?");

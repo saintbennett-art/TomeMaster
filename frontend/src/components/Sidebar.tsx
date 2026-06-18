@@ -4,6 +4,7 @@ import { FileText, Settings, BarChart2, Scroll, RefreshCw, HelpCircle, Activity 
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 import { checkSystemHealth } from '@/lib/apiClient';
 import { Chapter, ArcPoint } from '@/types/industrial';
+import { isFrontMatter } from '@/lib/chapters';
 
 interface SidebarProps {
   chapters: Chapter[];
@@ -173,8 +174,9 @@ function Sidebar({
                         {chapters.length > 0 ? (
                         chapters
                             .filter((chap: Chapter, i: number) => {
+                                if (isFrontMatter(chap)) return false; // skip title page, prelude, TOC, dedication, etc.
                                 const title = (chap.original_heading || chap.suggested_title || "").toLowerCase();
-                                if (title.includes('epilogue') || title.includes('prologue') || title.includes('prelude')) return true;
+                                if (title.includes('epilogue') || title.includes('prologue')) return true;
                                 if ((chap.chapter_word_count || 0) < 30) return false;
                                 if (i < 2 && (chap.chapter_word_count || 0) < 250) return false;
                                 return true;

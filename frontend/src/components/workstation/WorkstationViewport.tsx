@@ -28,11 +28,15 @@ const WorkstationViewport: React.FC<WorkstationViewportProps> = ({
     } = useWorkstationState();
     
     // Pull domain data from the Editor silo
-    const { 
-        htmlContent = "", activePage = 1, wordCount = 0, misspelledCount = 0 
+    const {
+        htmlContent = "", content = "", activePage = 1, wordCount = 0, misspelledCount = 0
     } = useEditorState();
-    
+
     const { setHtmlContent, setContent, setWordCount, setChapters } = useEditorActions();
+
+    // [WORD COUNT]: derive from live content so it never reads a stale 0 after a load/restore
+    // (the editor's onChange only recalculates on typing). 0 only when the document is truly empty.
+    const liveWordCount = content.trim() ? content.trim().split(/\s+/).length : 0;
 
     // [HYDRATION BRIDGE]: Listen for manual restoration events (e.g. Loading a Sealed Manuscript)
     React.useEffect(() => {
@@ -112,21 +116,25 @@ const WorkstationViewport: React.FC<WorkstationViewportProps> = ({
 
             <footer className="h-10 border-t border-border bg-surface flex items-center justify-between px-6 shrink-0 z-20">
                 <div className="flex items-center gap-6">
+                    {isTranscribing && (
+                        <>
+                            <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Transcription Status:</span>
+                                <span className="text-[10px] font-mono text-foreground font-bold">Page {activePage}</span>
+                            </div>
+                            <div className="h-3 w-[1px] bg-border" />
+                        </>
+                    )}
                     <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Transcription Status:</span>
-                        <span className="text-[10px] font-mono text-foreground font-bold">Page {activePage}</span>
-                    </div>
-                    <div className="h-3 w-[1px] bg-border" />
-                    <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Lexical Mass:</span>
-                        <span className="text-[10px] font-mono text-foreground font-bold">{wordCount.toLocaleString()} Words</span>
+                        <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Word Count:</span>
+                        <span className="text-[10px] font-mono text-foreground font-bold">{liveWordCount.toLocaleString()} Words</span>
                     </div>
                 </div>
 
                 <div className="flex items-center gap-4">
                     {misspelledCount > 0 && (
                         <div className="flex items-center gap-2 px-2 py-0.5 bg-rose-500/10 border border-rose-500/20 rounded text-rose-400 animate-pulse">
-                            <span className="text-[9px] font-black uppercase tracking-tighter italic">{misspelledCount} Lexical Anomalies (Spelling)</span>
+                            <span className="text-[9px] font-black uppercase tracking-tighter italic">{misspelledCount} Misspellings</span>
                         </div>
                     )}
                     <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-[0.2em] opacity-50">Sovereign Encryption Active</span>

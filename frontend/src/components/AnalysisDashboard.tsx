@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Maximize2, Minimize2, Save, Eye, Zap, RefreshCw, ExternalLink, ShieldAlert, ShieldCheck, Lock, LockOpen } from "lucide-react";
 import { useDraggableDialog } from "@/components/workstation/DraggableDialog";
+import { isFrontMatter } from "@/lib/chapters";
 import { runMultiAgentAnalysis, validateAiKey, API_BASE_HOLDER, fetchLocalEngines, type LocalEngine } from "@/lib/apiClient";
 import { isVisionModel } from "@/lib/ai_config";
 import { secureVault } from "@/lib/vault";
@@ -101,6 +102,18 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     const [analyticScope, setAnalyticScope] = useState("full");
     const [rangeStartIdx, setRangeStartIdx] = useState(0);
     const [rangeEndIdx, setRangeEndIdx] = useState(0);
+
+    // [SCOPE READOUT]: keep the picker's "Targeting" + "Payload Weight" honest about the
+    // actual selection (front matter excluded), instead of always saying "Full Scope".
+    const scopeWordCount = (analyticScope === "range" ? chapters.slice(rangeStartIdx, rangeEndIdx + 1) : chapters)
+        .filter((c) => !isFrontMatter(c))
+        .reduce((sum, c) => sum + (c.chapter_word_count || 0), 0)
+        || (analyticScope === "range" ? 0 : editorContent.split(/\s+/).length);
+    const startTitle = chapters[rangeStartIdx]?.suggested_title || `Chapter ${rangeStartIdx + 1}`;
+    const endTitle = chapters[rangeEndIdx]?.suggested_title || `Chapter ${rangeEndIdx + 1}`;
+    const scopeLabel = analyticScope !== "range"
+        ? "Full Document"
+        : (rangeStartIdx === rangeEndIdx ? startTitle : `${startTitle} → ${endTitle}`);
     const startTimeRef = useRef(0);
 
     // [LOGIC]: Analysis Dispatch
@@ -118,10 +131,18 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
         
         try {
             const allAgents = [...selectedAgents, ...customAgents];
+            // Build the analysis payload from chapters, ALWAYS excluding front matter
+            // (title page, prelude, TOC, …) — moot for both Range and Full Document.
+            // "range" = the selected chapters; "full" = every real chapter. Falls back to
+            // the raw editor text only if chapters haven't been built yet.
+            const scopedContent = (analyticScope === "range"
+                ? chapters.slice(rangeStartIdx, rangeEndIdx + 1)
+                : chapters
+            ).filter((c) => !isFrontMatter(c)).map((c) => c.content || "").join("\n\n").trim() || editorContent;
             for (const agentId of allAgents) {
                 setCurrentExpert(agentId);
                 // Sovereign Dispatch: Trust the backend role mappings
-                const result = await runMultiAgentAnalysis(editorContent, [agentId], undefined, undefined, 'full', chapters);
+                const result = await runMultiAgentAnalysis(scopedContent, [agentId], undefined, undefined, analyticScope, chapters);
                 if (result && result[agentId]) {
                     setAgentReports(prev => ({ ...prev, [agentId]: result[agentId] }));
                 }
@@ -309,7 +330,7 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
                             analyticScope={analyticScope} setAnalyticScope={setAnalyticScope} userChapters={chapters} 
                             rangeStartIdx={rangeStartIdx} setRangeStartIdx={setRangeStartIdx} 
                             rangeEndIdx={rangeEndIdx} setRangeEndIdx={setRangeEndIdx} 
-                            visibilityMap={new Map()} displacement={editorContent.split(/\s+/).length} tacticalSummary="Full Scope"
+                            visibilityMap={new Map(chapters.map((c) => [c.id, !isFrontMatter(c)] as [string, boolean]))} displacement={scopeWordCount} tacticalSummary={scopeLabel}
                         />
                         <SpecialistRegistry 
                             selectedAgents={selectedAgents} setSelectedAgents={setSelectedAgents} 

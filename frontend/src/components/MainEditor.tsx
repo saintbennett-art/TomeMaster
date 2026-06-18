@@ -40,7 +40,7 @@ export default function MainEditor({
   } = useWorkstationState();
 
   const {
-    notify, setIsTranscribing, setTranscriptionStatus, setProcessedPageCount, invokeTranscription, abortTranscription
+    notify, setIsTranscribing, setTranscriptionStatus, setProcessedPageCount, invokeTranscription, abortTranscription, setIsReportOpen
   } = useWorkstationActions();
 
   const {
@@ -330,7 +330,7 @@ export default function MainEditor({
           setIsAnalyzing={setIsAnalyzing}
           analysisTrigger={localAnalysisTrigger}
           projectFolder={activeFolderPath}
-          onCompletion={() => notify("Boardroom Consensus Established.")}
+          onCompletion={() => { notify("Boardroom Consensus Established."); setIsReportOpen(true); }}
           notify={notify}
         />
       </DraggableDialog>
