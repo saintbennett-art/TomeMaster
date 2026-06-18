@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Maximize2, Minimize2, Save, Eye, Zap, RefreshCw, ExternalLink, ShieldAlert, ShieldCheck, Lock, LockOpen } from "lucide-react";
 import { useDraggableDialog } from "@/components/workstation/DraggableDialog";
 import { isFrontMatter } from "@/lib/chapters";
-import { runMultiAgentAnalysis, validateAiKey, API_BASE_HOLDER, fetchLocalEngines, type LocalEngine } from "@/lib/apiClient";
+import { runMultiAgentAnalysis, validateAiKey, API_BASE_HOLDER, fetchLocalEngines, fetchVaultSync, fetchAvailableModels, type LocalEngine, type DiscoveredModel } from "@/lib/apiClient";
 import { isVisionModel } from "@/lib/ai_config";
 import { secureVault } from "@/lib/vault";
 
@@ -103,12 +103,47 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     const [rangeStartIdx, setRangeStartIdx] = useState(0);
     const [rangeEndIdx, setRangeEndIdx] = useState(0);
 
+    // [BOARDROOM ENGINE]: the USER picks which provider+model runs the boardroom,
+    // from the models discovered on their own keys. Persisted so it sticks, and the
+    // dispatch sends the prompt to exactly that model (provider follows the model).
+    const [engineOptions, setEngineOptions] = useState<{ provider: string; model: string }[]>([]);
+    const [boardroomEngine, setBoardroomEngine] = useState<{ provider: string; model: string } | null>(() => {
+        if (typeof window === 'undefined') return null;
+        const p = localStorage.getItem('tome_master_boardroom_provider');
+        const m = localStorage.getItem('tome_master_boardroom_model');
+        return p && m ? { provider: p, model: m } : null;
+    });
+    const selectBoardroomEngine = (provider: string, model: string) => {
+        setBoardroomEngine({ provider, model });
+        localStorage.setItem('tome_master_boardroom_provider', provider);
+        localStorage.setItem('tome_master_boardroom_model', model);
+    };
+    useEffect(() => {
+        (async () => {
+            try {
+                const presence = await fetchVaultSync();
+                const keyed = ['gemini', 'openai', 'anthropic', 'groq'].filter((p) => presence && presence[p]);
+                const opts: { provider: string; model: string }[] = [];
+                for (const p of keyed) {
+                    try {
+                        const models = await fetchAvailableModels(p);
+                        models.forEach((m: DiscoveredModel) => opts.push({ provider: p, model: m.id }));
+                    } catch { /* skip a provider whose discovery fails */ }
+                }
+                setEngineOptions(opts);
+            } catch { /* leave empty; dispatch falls back to defaults */ }
+        })();
+    }, []);
+
     // [SCOPE READOUT]: keep the picker's "Targeting" + "Payload Weight" honest about the
     // actual selection (front matter excluded), instead of always saying "Full Scope".
-    const scopeWordCount = (analyticScope === "range" ? chapters.slice(rangeStartIdx, rangeEndIdx + 1) : chapters)
-        .filter((c) => !isFrontMatter(c))
-        .reduce((sum, c) => sum + (c.chapter_word_count || 0), 0)
-        || (analyticScope === "range" ? 0 : editorContent.split(/\s+/).length);
+    // Full = the editor's actual word count (a direct transfer, matches the editor exactly).
+    // Range = words in the selected chapters' real text — counted from content, not the
+    // unreliable chapter_word_count field (which was summing to ~2x the document).
+    const scopeWordCount = analyticScope === "range"
+        ? (chapters.slice(rangeStartIdx, rangeEndIdx + 1).filter((c) => !isFrontMatter(c))
+            .map((c) => c.content || "").join(" ").trim().split(/\s+/).filter(Boolean).length)
+        : (editorContent.trim() ? editorContent.trim().split(/\s+/).length : 0);
     const startTitle = chapters[rangeStartIdx]?.suggested_title || `Chapter ${rangeStartIdx + 1}`;
     const endTitle = chapters[rangeEndIdx]?.suggested_title || `Chapter ${rangeEndIdx + 1}`;
     const scopeLabel = analyticScope !== "range"
@@ -131,18 +166,17 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
         
         try {
             const allAgents = [...selectedAgents, ...customAgents];
-            // Build the analysis payload from chapters, ALWAYS excluding front matter
-            // (title page, prelude, TOC, …) — moot for both Range and Full Document.
-            // "range" = the selected chapters; "full" = every real chapter. Falls back to
-            // the raw editor text only if chapters haven't been built yet.
-            const scopedContent = (analyticScope === "range"
-                ? chapters.slice(rangeStartIdx, rangeEndIdx + 1)
-                : chapters
-            ).filter((c) => !isFrontMatter(c)).map((c) => c.content || "").join("\n\n").trim() || editorContent;
+            // Full = the document as-is (a clean transfer of the editor text, so the payload
+            // matches the editor count and is never doubled). Range = the selected chapters'
+            // real text with front matter excluded. Falls back to editor text if empty.
+            const scopedContent = analyticScope === "range"
+                ? (chapters.slice(rangeStartIdx, rangeEndIdx + 1).filter((c) => !isFrontMatter(c))
+                    .map((c) => c.content || "").join("\n\n").trim() || editorContent)
+                : editorContent;
             for (const agentId of allAgents) {
                 setCurrentExpert(agentId);
                 // Sovereign Dispatch: Trust the backend role mappings
-                const result = await runMultiAgentAnalysis(scopedContent, [agentId], undefined, undefined, analyticScope, chapters);
+                const result = await runMultiAgentAnalysis(scopedContent, [agentId], boardroomEngine?.provider, boardroomEngine?.model, analyticScope, chapters);
                 if (result && result[agentId]) {
                     setAgentReports(prev => ({ ...prev, [agentId]: result[agentId] }));
                 }
@@ -332,6 +366,19 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
                             rangeEndIdx={rangeEndIdx} setRangeEndIdx={setRangeEndIdx} 
                             visibilityMap={new Map(chapters.map((c) => [c.id, !isFrontMatter(c)] as [string, boolean]))} displacement={scopeWordCount} tacticalSummary={scopeLabel}
                         />
+                        <div className="flex flex-col gap-1.5 px-1">
+                            <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Boardroom Engine</span>
+                            <select
+                                value={boardroomEngine ? `${boardroomEngine.provider}|${boardroomEngine.model}` : ''}
+                                onChange={(e) => { const [p, m] = e.target.value.split('|'); if (p && m) selectBoardroomEngine(p, m); }}
+                                className="w-full bg-black/60 border border-white/10 rounded-xl py-2 px-3 text-[10px] text-zinc-300 font-bold font-mono focus:border-amber-500/40 outline-none cursor-pointer"
+                            >
+                                <option value="" disabled>{engineOptions.length ? 'Choose model…' : 'Add + verify a key to list models'}</option>
+                                {engineOptions.map((o) => (
+                                    <option key={`${o.provider}|${o.model}`} value={`${o.provider}|${o.model}`}>{o.provider} — {o.model}</option>
+                                ))}
+                            </select>
+                        </div>
                         <SpecialistRegistry 
                             selectedAgents={selectedAgents} setSelectedAgents={setSelectedAgents} 
                             customAgents={customAgents} setCustomAgents={setCustomAgents} 

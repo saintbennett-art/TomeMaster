@@ -25,18 +25,32 @@ export default function NerveCenter({ isLeftSidebarOpen = true }: { isLeftSideba
     const [history, setHistory] = useState<number[]>(new Array(15).fill(0));
     const [status, setStatus] = useState<'online' | 'offline'>('offline');
     const [initPos] = useState({ x: 0, y: 162 });
-    const [position, setPosition] = useState({ x: 0, y: 162 });
+    const [position, setPosition] = useState(() => {
+        if (typeof window !== 'undefined') {
+            try { const s = localStorage.getItem('tome_master_nerve_pos'); if (s) return JSON.parse(s); } catch {}
+        }
+        return { x: 0, y: 162 };
+    });
     const [isDragging, setIsDragging] = useState(false);
-    const [hasMoved, setHasMoved] = useState(false);
-    const [isLocked, setIsLocked] = useState(false);
+    const [hasMoved, setHasMoved] = useState(() => typeof window !== 'undefined' && !!localStorage.getItem('tome_master_nerve_pos'));
+    const [isLocked, setIsLocked] = useState(() => typeof window !== 'undefined' && localStorage.getItem('tome_master_nerve_locked') === 'true');
     const [rel, setRel] = useState({ x: 0, y: 0 });
     const [activeAgents, setActiveAgents] = useState<ActiveAgent[]>([]);
 
     useEffect(() => {
-        // Set startup position: far right, just below toolbar
+        // Default startup position (far right, below toolbar) only if the user hasn't placed it before.
+        if (typeof window !== 'undefined' && localStorage.getItem('tome_master_nerve_pos')) return;
         const startX = window.innerWidth - 220;
         setPosition({ x: startX, y: 162 });
     }, []);
+
+    // [PERSIST]: remember the bar's position + lock across restarts.
+    useEffect(() => {
+        if (hasMoved && typeof window !== 'undefined') localStorage.setItem('tome_master_nerve_pos', JSON.stringify(position));
+    }, [position, hasMoved]);
+    useEffect(() => {
+        if (typeof window !== 'undefined') localStorage.setItem('tome_master_nerve_locked', String(isLocked));
+    }, [isLocked]);
 
     const onMouseDown = (e: React.MouseEvent) => {
         if (e.button !== 0 || isLocked) return;

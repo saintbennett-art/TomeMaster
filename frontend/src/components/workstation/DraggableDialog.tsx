@@ -26,12 +26,27 @@ const MOVED_THRESHOLD = 20; // pixels from start = considered "moved"
 export const DraggableDialog: React.FC<DraggableDialogProps> = ({ 
     children, initialX = 20, initialY = 20, headerId
 }) => {
-    const [position, setPosition] = useState({ x: initialX, y: initialY });
+    const posKey = `tome_master_dialog_${headerId}_pos`;
+    const lockKey = `tome_master_dialog_${headerId}_locked`;
+    const [position, setPosition] = useState(() => {
+        if (typeof window !== 'undefined') {
+            try { const s = localStorage.getItem(posKey); if (s) return JSON.parse(s); } catch {}
+        }
+        return { x: initialX, y: initialY };
+    });
     const [isDragging, setIsDragging] = useState(false);
-    const [hasMoved, setHasMoved] = useState(false);
-    const [isLocked, setIsLocked] = useState(false);
+    const [hasMoved, setHasMoved] = useState(() => typeof window !== 'undefined' && !!localStorage.getItem(posKey));
+    const [isLocked, setIsLocked] = useState(() => typeof window !== 'undefined' && localStorage.getItem(lockKey) === 'true');
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
     const dialogRef = useRef<HTMLDivElement>(null);
+
+    // [PERSIST]: remember this dialog's position + lock across restarts (keyed by headerId).
+    useEffect(() => {
+        if (hasMoved && typeof window !== 'undefined') localStorage.setItem(posKey, JSON.stringify(position));
+    }, [position, hasMoved, posKey]);
+    useEffect(() => {
+        if (typeof window !== 'undefined') localStorage.setItem(lockKey, String(isLocked));
+    }, [isLocked, lockKey]);
 
     const onMouseDown = (e: React.MouseEvent) => {
         if (isLocked) return; // Locked — no dragging

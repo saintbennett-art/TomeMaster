@@ -182,7 +182,12 @@ async def _call_standard_gateway(role: str, prompt: str, is_json: bool = True, o
                         if response.status_code == 200:
                             model = fb  # so the ledger records the model that actually ran
                 if response.status_code != 200:
-                    raise Exception(f"Gateway Refused Request (HTTP {response.status_code}): {response.text}")
+                    raise Exception(
+                        f"{(provider or 'gateway').title()} refused the request for model "
+                        f"'{model}' (HTTP {response.status_code}). Most likely a bad or missing "
+                        f"{provider or 'provider'} API key — re-check it in Settings. "
+                        f"Provider said: {response.text.strip()[:200]}"
+                    )
 
                 data = response.json()
                 raw_content = data["choices"][0]["message"]["content"]
