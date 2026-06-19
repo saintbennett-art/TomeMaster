@@ -43,7 +43,16 @@ DEFAULT_SETTINGS = {
 _PERMITTED_TOP_KEYS = set(DEFAULT_SETTINGS.keys())
 _PERMITTED_API_KEYS = {"openai", "gemini", "groq", "anthropic", "bitnet", "slot_primary", "slot_specialist", "slot_velocity"}
 _PERMITTED_MODEL_KEYS = {"vision", "logic", "analysis", "NARRATIVE_ARCHITECT", "COPY_EDITOR", "TRANSCRIBER_LEAD", "MARKETING_ANALYST", "SOVEREIGN_LIAISON"}
-_PERMITTED_PREF_KEYS = {"theme", "auto_stitch", "language", "pii_scrub", "sovereign_lock"}
+_PERMITTED_PREF_KEYS = {
+    "theme", "auto_stitch", "language", "pii_scrub", "sovereign_lock",
+    # [FILES-ONLY MIGRATION]: global UI/app preferences moved off browser
+    # localStorage into the vault. Non-secret; live in settings.enc preferences.
+    "onboarded", "force_primary", "local_mode", "guide_voice", "greeted",
+    "boardroom_provider", "boardroom_model",
+    "spell_custom_words", "spell_ignored_words", "spell_language",
+    "ui_layout",        # { <dialogId>: { pos:{x,y}, locked:bool } } for draggable panels
+    "last_project",     # Group 4: reopen the last book on launch
+}
 
 
 def _validate_settings(data: dict) -> dict:
@@ -124,9 +133,23 @@ def save_settings(new_settings):
 
 
 def get_api_key(provider):
-    """Retrieves a specific API key from the vault or environment fallback."""
+    """Retrieves a specific API key from the vault or environment fallback.
+
+    [VAULT AUTHORITATIVE]: For the real cloud providers, a slot that EXISTS in the
+    vault wins outright — even when blank. A key the user deliberately cleared must
+    never resurrect from a stale process/OS env var (the bug where a cleared Gemini
+    key kept reappearing because GEMINI_API_KEY was hydrated at startup). The env/
+    slot fallbacks below now only apply to slot pseudo-providers / genuinely absent
+    keys, never to override an explicit vault value.
+    """
     settings = load_settings()
-    key = settings.get("api_keys", {}).get(provider.lower())
+    api_keys = settings.get("api_keys", {})
+    prov = provider.lower()
+
+    if prov in {"openai", "gemini", "groq", "anthropic"} and prov in api_keys:
+        return api_keys.get(prov) or ""
+
+    key = api_keys.get(prov)
 
     # [UPGRADE]: Map slots to branded fallbacks if slot-specific key is missing
     if not key:

@@ -33,13 +33,12 @@ export default function RootLayout({
           httpEquiv="Content-Security-Policy"
           content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src 'self' fonts.gstatic.com; img-src 'self' data: blob: https://image.pollinations.ai; connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; frame-ancestors 'none'; object-src 'none';"
         />
+        {/* [FILES-ONLY]: theme lives in the vault (loaded async). Apply the default
+            here so first paint is correct for the common case; ThemeToggle re-applies
+            the saved theme once preferences load (one-frame flash only if non-default). */}
         <script dangerouslySetInnerHTML={{ __html: `
           (function() {
-            try {
-              const savedTheme = localStorage.getItem('tome-master-theme');
-              const theme = savedTheme || 'dark';
-              document.documentElement.setAttribute('data-theme', theme);
-            } catch (e) {}
+            try { document.documentElement.setAttribute('data-theme', 'dark'); } catch (e) {}
           })();
         `}} />
       </head>

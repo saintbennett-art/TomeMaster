@@ -91,6 +91,30 @@ async def save_vault_to_env(req: VaultSaveRequest):
     return {"success": True}
 
 
+class VaultClearRequest(BaseModel):
+    provider: str
+
+
+@router.post("/vault-clear")
+async def clear_vault_key(req: VaultClearRequest):
+    """[VAULT PURGE]: Blanks ONE provider's stored key so the user can recover from
+    a wrong value (e.g. a password pasted into the key field). Sets the slot to ""
+    — save_settings merges, so "" overwrites the bad value and the presence check
+    then reports the slot empty. Also clears the hydrated process env var.
+    """
+    from services import settings_service
+
+    provider = (req.provider or "").strip().lower()
+    if provider not in ALLOWED_VAULT_KEYS:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {req.provider}")
+
+    if not settings_service.save_settings({"api_keys": {provider: ""}}):
+        raise HTTPException(status_code=500, detail="Vault clear failed.")
+
+    os.environ.pop(ALLOWED_VAULT_KEYS[provider], None)
+    return {"success": True}
+
+
 @router.post("/vault-validate")
 async def validate_and_prune_vault():
     """[STALE GUARD]: Live-validate each stored key so the UI's SEALED indicator

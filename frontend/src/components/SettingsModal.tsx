@@ -2,11 +2,10 @@
 
 import React, { useState, useEffect } from "react";
 import { X, Sparkles, Activity, ShieldCheck, Cpu, Database, Zap, Lock, Settings, FileText, Key, Info, Check, Loader2, ChevronDown, Server, Plus, Trash2, RadioTower, Eye, EyeOff } from "lucide-react";
-import { API_BASE_HOLDER, fetchAvailableModels, saveVaultToEnv, fetchLocalEngines, fetchCustomProviders, saveCustomProviders, validateCustomEndpoint, validateAiKey, validateVaultKeys, type DiscoveredModel, type LocalEngine, type CustomProvider } from "../lib/apiClient";
+import { API_BASE_HOLDER, fetchAvailableModels, saveVaultToEnv, clearVaultKey, fetchStoredKeyPreview, fetchLocalEngines, fetchCustomProviders, saveCustomProviders, validateCustomEndpoint, validateAiKey, validateVaultKeys, type DiscoveredModel, type LocalEngine, type CustomProvider } from "../lib/apiClient";
 import { VaultDashboard } from "./workstation/settings/VaultDashboard";
 import { MASTER_PROVIDER_LIBRARY } from "../lib/ai_config";
 
-import { useShadowSave } from "../hooks/useShadowSave";
 
 const PROVIDERS = MASTER_PROVIDER_LIBRARY;
 
@@ -44,8 +43,21 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
     const [ledgerEntries, setLedgerEntries] = useState<UsageEntry[]>([]);
     const [totalTokens, setTotalTokens] = useState(0);
 
-    // [SOVEREIGN RESILIENCE]: Shadow-Save for volatile Vault inputs
-    const [localKeys, setLocalKeys, clearShadow] = useShadowSave<Record<string, string>>("vault_entry", keys);
+    // [NO KEY CACHING]: API keys must NEVER persist in the browser — they live
+    // only in the encrypted vault. A prior build shadow-saved the key inputs to
+    // localStorage ("shadow_vault_entry"), which resurrected a stale/wrong value
+    // (e.g. RonLamb2026!) into the field on every open, regardless of the vault.
+    // Plain in-memory state only; clearShadow purges any legacy ghost.
+    const [localKeys, setLocalKeys] = useState<Record<string, string>>(keys);
+    const clearShadow = () => {
+        if (typeof window !== "undefined") {
+            localStorage.removeItem("shadow_vault_entry");
+            localStorage.removeItem("shadow_vault_entry_ts");
+        }
+    };
+    // [GHOST PURGE]: wipe the legacy localStorage key cache on mount so an old
+    // cached value can't keep reappearing in the input.
+    useEffect(() => { clearShadow(); }, []);
 
     const [sovereignSettings, setSovereignSettings] = useState<SovereignSettings | null>(null);
     // [SOVEREIGN DISCOVERY]: Live models fetched from the provider using the saved key
@@ -67,6 +79,18 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
     const [revealed, setRevealed] = useState<Record<string, boolean>>({});
     const [verifyState, setVerifyState] = useState<Record<string, 'idle' | 'checking' | 'ok' | 'fail'>>({});
     const [verifyMsg, setVerifyMsg] = useState<Record<string, string>>({});
+    // [VAULT PEEK]: head…tail preview of the STORED key so the user can confirm
+    // what's actually in the vault (and catch a wrong value). Masked, not raw.
+    const [storedPreview, setStoredPreview] = useState<Record<string, string>>({});
+
+    const revealStored = async (providerId: string) => {
+        if (storedPreview[providerId] !== undefined) {
+            setStoredPreview(prev => { const n = { ...prev }; delete n[providerId]; return n; });
+            return;
+        }
+        const preview = await fetchStoredKeyPreview(providerId);
+        setStoredPreview(prev => ({ ...prev, [providerId]: preview || '(empty — no key stored)' }));
+    };
 
     const verifyKey = async (providerId: string) => {
         const raw = (localKeys[providerId] || '').trim();
@@ -161,6 +185,18 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
 
     // [REMOVED]: handleGatewayDiscovery — it posted to /analysis/auto-configure,
     // an endpoint that never existed, and was never wired into the UI.
+
+    // [VAULT PURGE]: Remove a stored key the user wants gone (e.g. a wrong value
+    // pasted into the slot). Clears the vault server-side, blanks the field, and
+    // drops the page-level mask + stale localStorage shadow so it can't resurrect.
+    const clearKey = async (providerId: string) => {
+        await clearVaultKey(providerId);
+        setLocalKeys(prev => { const next = { ...prev }; delete next[providerId]; return next; });
+        const remaining = { ...keys }; delete remaining[providerId]; setKeys(remaining);
+        setRevealed(prev => ({ ...prev, [providerId]: false }));
+        setVerifyState(prev => ({ ...prev, [providerId]: 'idle' }));
+        setVerifyMsg(prev => ({ ...prev, [providerId]: '' }));
+    };
 
     const saveAll = async () => {
         // [MASK GUARD]: Strip display placeholders — never write '***SEALED***' to the vault
@@ -327,15 +363,29 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
                                                         )}
                                                         {isSealed && (
                                                             <button
-                                                                onClick={() => { setLocalKeys(prev => ({ ...prev, [p.id]: '' })); setVerifyState(prev => ({ ...prev, [p.id]: 'idle' })); setVerifyMsg(prev => ({ ...prev, [p.id]: '' })); }}
-                                                                title="Replace key"
-                                                                className="text-zinc-600 hover:text-zinc-300 transition-colors text-[8px] font-black uppercase"
+                                                                onClick={() => revealStored(p.id)}
+                                                                title="Peek at the key stored in the vault (masked)"
+                                                                className="text-zinc-600 hover:text-zinc-200 transition-colors"
                                                             >
-                                                                Replace
+                                                                {storedPreview[p.id] !== undefined ? <EyeOff size={13} /> : <Eye size={13} />}
+                                                            </button>
+                                                        )}
+                                                        {(isSealed || currentVal.length > 0) && (
+                                                            <button
+                                                                onClick={() => clearKey(p.id)}
+                                                                title="Remove this key from the vault so you can enter a new one"
+                                                                className="text-zinc-600 hover:text-rose-300 transition-colors text-[8px] font-black uppercase"
+                                                            >
+                                                                Clear
                                                             </button>
                                                         )}
                                                     </div>
                                                 </div>
+                                                {storedPreview[p.id] !== undefined && (
+                                                    <p className="text-[8px] mt-1.5 font-mono text-amber-400/80 break-all">
+                                                        In vault: <span className="text-amber-300">{storedPreview[p.id]}</span>
+                                                    </p>
+                                                )}
                                                 <div className="flex items-center justify-between mt-1.5">
                                                     <a href={p.link} target="_blank" rel="noopener noreferrer" className="text-[7px] text-zinc-600 hover:text-indigo-400 transition-colors">{p.linkLabel} ↗</a>
                                                     <button

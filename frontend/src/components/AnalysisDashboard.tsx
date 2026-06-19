@@ -3,9 +3,9 @@ import React, { useState, useEffect, useRef } from "react";
 import { Maximize2, Minimize2, Save, Eye, Zap, RefreshCw, ExternalLink, ShieldAlert, ShieldCheck, Lock, LockOpen } from "lucide-react";
 import { useDraggableDialog } from "@/components/workstation/DraggableDialog";
 import { isFrontMatter } from "@/lib/chapters";
-import { runMultiAgentAnalysis, validateAiKey, API_BASE_HOLDER, fetchLocalEngines, fetchVaultSync, fetchAvailableModels, type LocalEngine, type DiscoveredModel } from "@/lib/apiClient";
+import { runMultiAgentAnalysis, validateAiKey, API_BASE_HOLDER, fetchLocalEngines, fetchVaultSync, fetchAvailableModels, saveProjectState, type LocalEngine, type DiscoveredModel } from "@/lib/apiClient";
+import { loadPreferences, getPref, setPref } from "@/lib/preferences";
 import { isVisionModel } from "@/lib/ai_config";
-import { secureVault } from "@/lib/vault";
 
 // [BLACK BOX IMPORTS]
 import { SpecialistRegistry } from "./workstation/boardroom/SpecialistRegistry";
@@ -74,9 +74,14 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     const lock = useDraggableDialog(); // position-lock state from the DraggableDialog wrapper
     useEffect(() => {
         fetchLocalEngines().then(setLocalEngines);
-        if (typeof window !== 'undefined') {
-            setSovereignLock(localStorage.getItem('tome_master_local_mode') === 'true');
-        }
+        // [FILES-ONLY]: derive lock + saved boardroom engine from vault preferences.
+        (async () => {
+            await loadPreferences();
+            setSovereignLock(getPref<boolean>('local_mode', false));
+            const p = getPref<string>('boardroom_provider', '');
+            const m = getPref<string>('boardroom_model', '');
+            if (p && m) setBoardroomEngine({ provider: p, model: m });
+        })();
     }, []);
     const _sovModels = localEngines.flatMap(e => e.models);
     const localReady = localEngines.length > 0 && _sovModels.length > 0;
@@ -84,12 +89,10 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     const toggleSovereignLock = () => {
         const next = !sovereignLock;
         setSovereignLock(next);
-        localStorage.setItem('tome_master_local_mode', String(next));
-        // Persist to the vault so the BACKEND forces local resolution when locked.
-        fetch(`${API_BASE_HOLDER.current}/settings/update`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ preferences: { sovereign_lock: next } }),
-        }).catch(() => {});
+        // [FILES-ONLY]: both flags persist to the vault. sovereign_lock drives the
+        // BACKEND's forced-local resolution; local_mode is the UI mirror.
+        setPref('local_mode', next);
+        setPref('sovereign_lock', next);
         window.dispatchEvent(new CustomEvent('tome-master-settings-changed'));
         notify(next ? "Sovereign Lock ON — local engines only." : "Industrial mode — cloud AI enabled.");
     };
@@ -107,16 +110,12 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     // from the models discovered on their own keys. Persisted so it sticks, and the
     // dispatch sends the prompt to exactly that model (provider follows the model).
     const [engineOptions, setEngineOptions] = useState<{ provider: string; model: string }[]>([]);
-    const [boardroomEngine, setBoardroomEngine] = useState<{ provider: string; model: string } | null>(() => {
-        if (typeof window === 'undefined') return null;
-        const p = localStorage.getItem('tome_master_boardroom_provider');
-        const m = localStorage.getItem('tome_master_boardroom_model');
-        return p && m ? { provider: p, model: m } : null;
-    });
+    // Initialised null; hydrated from vault preferences in the mount effect above.
+    const [boardroomEngine, setBoardroomEngine] = useState<{ provider: string; model: string } | null>(null);
     const selectBoardroomEngine = (provider: string, model: string) => {
         setBoardroomEngine({ provider, model });
-        localStorage.setItem('tome_master_boardroom_provider', provider);
-        localStorage.setItem('tome_master_boardroom_model', model);
+        setPref('boardroom_provider', provider);
+        setPref('boardroom_model', model);
     };
     useEffect(() => {
         (async () => {
@@ -239,10 +238,12 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
                 input.click();
             }},
             { type: "separator" },
-            { label: "Save State", icon: Save, action: () => {
-                const state = { selectedAgents, customAgents, activeTab };
-                localStorage.setItem("tm_boardroom_state", JSON.stringify(state));
-                showToast("Boardroom state cached.");
+            { label: "Save State", icon: Save, action: async () => {
+                // [FILES-ONLY]: boardroom selection persists into the project file.
+                const ok = await saveProjectState(projectFolder, {
+                    boardroom_state: { selectedAgents, customAgents, activeTab },
+                });
+                showToast(ok ? "Boardroom state saved to project." : "Save failed.");
             }}
         ],
         Edit: [

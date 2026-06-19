@@ -1,11 +1,14 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
-import { get, set } from "idb-keyval";
+// [LEGACY RECOVERY ONLY]: read old IndexedDB pointers during migration; no new writes.
+import { get } from "idb-keyval";
 import {
     checkTranscriptionStatus, targetFolder, pickManuscript, readLocalFile,
-    API_BASE_HOLDER, startTranscription, resolveAudit, uploadToProject, uploadManuscript
+    API_BASE_HOLDER, startTranscription, resolveAudit, uploadToProject, uploadManuscript,
+    saveProjectState, loadProjectState
 } from "@/lib/apiClient";
+import { loadPreferences, getPref, setPref } from "@/lib/preferences";
 import { TranscriptionStatus } from "@/types/industrial";
 
 // --- [STRICT WORKSTATION INTERFACES] ---
@@ -14,6 +17,7 @@ export interface WorkstationState {
     authorName: string;
     coverImage: string | null;
     activeFolderPath: string | null;
+    activeFilePath: string | null;
     isTranscribing: boolean;
     transcriptionStatus: TranscriptionStatus | null;
     processedPageCount: number;
@@ -37,6 +41,7 @@ export interface WorkstationActions {
     setAuthorName: (val: string) => void;
     setCoverImage: (val: string | null) => void;
     setActiveFolderPath: (val: string | null) => void;
+    setActiveFilePath: (val: string | null) => void;
     setIsTranscribing: (val: boolean) => void;
     setTranscriptionStatus: React.Dispatch<React.SetStateAction<TranscriptionStatus | null>>;
     setProcessedPageCount: React.Dispatch<React.SetStateAction<number>>;
@@ -74,6 +79,7 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
     // Gates metadata persistence until hydrate() runs, so defaults can't clobber saved values.
     const metadataHydratedRef = useRef(false);
     const [activeFolderPath, setActiveFolderPath] = useState<string | null>(null);
+    const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
     const [isTranscribing, setIsTranscribing] = useState(false);
     const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus | null>(null);
     const [processedPageCount, setProcessedPageCount] = useState(0);
@@ -100,7 +106,8 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
             const result = await targetFolder();
             if ((result.status === 'success' || result.status === 'established' || result.status === 'targeted') && result.folder_path) {
                 setActiveFolderPath(result.folder_path);
-                await set('tome_master_active_folder', result.folder_path);
+                // [FILES-ONLY]: remember the last project in the vault (reopen on launch).
+                setPref('last_project', { folder: result.folder_path, file: null });
                     notify(`Project Established: ${result.folder_path}`);
             }
         } catch (err) {
@@ -115,8 +122,8 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const applyPickResult = async (result: { status: string; file_path?: string | null; folder_path?: string | null; filename?: string | null; is_parseable?: boolean }) => {
         if (result.status !== 'loaded' || !result.file_path) return;
         setActiveFolderPath(result.folder_path || null);
-        await set('tome_master_active_folder', result.folder_path);
-        await set('tome_master_active_file', result.file_path);
+        setActiveFilePath(result.file_path || null);
+        setPref('last_project', { folder: result.folder_path || null, file: result.file_path || null });
 
         const ext = result.file_path.split('.').pop()?.toLowerCase();
         if (['md', 'markdown', 'txt'].includes(ext || '')) {
@@ -201,8 +208,9 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
             if (result.status === 'loaded' && result.file_path) {
                 notify(`Accessing: ${result.filename}...`);
                 setActiveFolderPath(result.folder_path);
-                await set('tome_master_active_folder', result.folder_path);
-                
+                setActiveFilePath(result.file_path || null);
+                setPref('last_project', { folder: result.folder_path || null, file: result.file_path || null });
+
                 // Read the content
                 const data = await readLocalFile(result.file_path);
                 if (data.content) {
@@ -270,16 +278,22 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const toggleEnhancement = (id: string) => {
         setActiveEnhancements(prev => {
             const next = prev.includes(id) ? prev.filter(e => e !== id) : [...prev, id];
-            set('tome_master_active_enhancements', next);
+            // [FILES-ONLY]: enhancements are per-project → persist into the project file.
+            saveProjectState(activeFolderPath, { active_enhancements: next });
             return next;
         });
     };
 
     const hydrate = useCallback(async () => {
-        const folder = await get<string>('tome_master_active_folder');
+        // [FILES-ONLY]: the last project (folder + file) lives in vault preferences;
+        // fall back to the legacy IndexedDB pointers so an existing user isn't reset.
+        await loadPreferences();
+        const last = getPref<{ folder?: string | null; file?: string | null }>('last_project', {});
+        const folder = last.folder || await get<string>('tome_master_active_folder') || null;
         if (folder) setActiveFolderPath(folder);
 
-        const filePath = await get<string>('tome_master_active_file');
+        const filePath = last.file || await get<string>('tome_master_active_file') || null;
+        if (filePath) setActiveFilePath(filePath);
         if (filePath) {
             const ext = filePath.split('.').pop()?.toLowerCase();
             if (['md', 'markdown', 'txt'].includes(ext || '')) {
@@ -297,15 +311,21 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
             }
         }
 
-        const enhancements = await get<string[]>('tome_master_active_enhancements');
-        if (enhancements) setActiveEnhancements(enhancements);
+        // [FILES-ONLY]: project metadata + enhancements live in tome_master_project.json.
+        // [LEGACY RECOVERY]: fall back to the old IndexedDB values so an existing user's
+        // title/author/cover/enhancements are never lost (then re-saved into the file).
+        const project = await loadProjectState(folder || null);
 
-        const savedTitle = await get<string>('tome_master_draft_title');
-        if (savedTitle) setBookTitle(savedTitle);
-        const savedAuthor = await get<string>('tome_master_draft_author');
-        if (savedAuthor) setAuthorName(savedAuthor);
-        const savedCover = await get<string>('tome_master_draft_cover');
-        if (savedCover) setCoverImage(savedCover);
+        const enhancements = (Array.isArray(project.active_enhancements) ? project.active_enhancements : null)
+            || await get<string[]>('tome_master_active_enhancements');
+        if (enhancements) setActiveEnhancements(enhancements as string[]);
+
+        const title = (project.draft_title as string) || await get<string>('tome_master_draft_title') || "";
+        const author = (project.draft_author as string) || await get<string>('tome_master_draft_author') || "";
+        const cover = (project.draft_cover as string) || await get<string>('tome_master_draft_cover') || "";
+        if (title) setBookTitle(title);
+        if (author) setAuthorName(author);
+        if (cover) setCoverImage(cover);
         metadataHydratedRef.current = true;
 
         try {
@@ -317,13 +337,17 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     useEffect(() => { hydrate(); }, [hydrate]);
 
-    // [PERSIST]: project metadata survives reload; skip until hydrate restored saved values.
+    // [PERSIST]: project metadata survives reload; skip until hydrate restored saved
+    // values. Writes the metadata slice into tome_master_project.json (merged
+    // server-side with the editor's draft slice).
     useEffect(() => {
         if (!metadataHydratedRef.current) return;
-        set('tome_master_draft_title', bookTitle);
-        set('tome_master_draft_author', authorName);
-        if (coverImage) set('tome_master_draft_cover', coverImage);
-    }, [bookTitle, authorName, coverImage]);
+        saveProjectState(activeFolderPath, {
+            draft_title: bookTitle,
+            draft_author: authorName,
+            ...(coverImage ? { draft_cover: coverImage } : {}),
+        });
+    }, [bookTitle, authorName, coverImage, activeFolderPath]);
 
     useEffect(() => {
         const pulse = setInterval(async () => {
@@ -339,7 +363,7 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }, []);
 
     const workstationState: WorkstationState = {
-        bookTitle, authorName, coverImage, activeFolderPath,
+        bookTitle, authorName, coverImage, activeFolderPath, activeFilePath,
         isTranscribing, transcriptionStatus, processedPageCount, transcriptionMode,
         isActivated, language, isSettingsOpen, isHelpOpen, isEnhancementHubOpen,
         isAuditOpen, isLedgerOpen, isReportOpen, isStructuralModalOpen, isFocusMode,
@@ -347,7 +371,7 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
     };
 
     const workstationActions: WorkstationActions = {
-        setBookTitle, setAuthorName, setCoverImage, setActiveFolderPath,
+        setBookTitle, setAuthorName, setCoverImage, setActiveFolderPath, setActiveFilePath,
         setIsTranscribing, setTranscriptionStatus, setProcessedPageCount, setTranscriptionMode,
         setIsActivated, setLanguage, setIsSettingsOpen, setIsHelpOpen, setIsEnhancementHubOpen,
         setIsAuditOpen, setIsLedgerOpen, setIsReportOpen, setIsStructuralModalOpen, setIsFocusMode,

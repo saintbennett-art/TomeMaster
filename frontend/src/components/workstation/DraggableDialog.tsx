@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback, createContext, useContext } from 'react';
+import { loadPreferences, getLayout, setLayout } from '@/lib/preferences';
 
 interface DraggableLockState {
     isLocked: boolean;
@@ -26,27 +27,32 @@ const MOVED_THRESHOLD = 20; // pixels from start = considered "moved"
 export const DraggableDialog: React.FC<DraggableDialogProps> = ({ 
     children, initialX = 20, initialY = 20, headerId
 }) => {
-    const posKey = `tome_master_dialog_${headerId}_pos`;
-    const lockKey = `tome_master_dialog_${headerId}_locked`;
-    const [position, setPosition] = useState(() => {
-        if (typeof window !== 'undefined') {
-            try { const s = localStorage.getItem(posKey); if (s) return JSON.parse(s); } catch {}
-        }
-        return { x: initialX, y: initialY };
-    });
+    // [FILES-ONLY]: position/lock come from vault preferences (ui_layout.dialog_<id>).
+    const layoutId = `dialog_${headerId}`;
+    const [position, setPosition] = useState(() => getLayout(layoutId).pos || { x: initialX, y: initialY });
     const [isDragging, setIsDragging] = useState(false);
-    const [hasMoved, setHasMoved] = useState(() => typeof window !== 'undefined' && !!localStorage.getItem(posKey));
-    const [isLocked, setIsLocked] = useState(() => typeof window !== 'undefined' && localStorage.getItem(lockKey) === 'true');
+    const [hasMoved, setHasMoved] = useState(() => !!getLayout(layoutId).pos);
+    const [isLocked, setIsLocked] = useState(() => getLayout(layoutId).locked === true);
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
     const dialogRef = useRef<HTMLDivElement>(null);
 
-    // [PERSIST]: remember this dialog's position + lock across restarts (keyed by headerId).
+    // Re-hydrate once vault preferences finish loading (cache may be empty at first render).
     useEffect(() => {
-        if (hasMoved && typeof window !== 'undefined') localStorage.setItem(posKey, JSON.stringify(position));
-    }, [position, hasMoved, posKey]);
+        (async () => {
+            await loadPreferences();
+            const saved = getLayout(layoutId);
+            if (saved.pos) { setPosition(saved.pos); setHasMoved(true); }
+            if (typeof saved.locked === 'boolean') setIsLocked(saved.locked);
+        })();
+    }, [layoutId]);
+
+    // [PERSIST]: remember this dialog's position + lock across restarts (vault, keyed by headerId).
     useEffect(() => {
-        if (typeof window !== 'undefined') localStorage.setItem(lockKey, String(isLocked));
-    }, [isLocked, lockKey]);
+        if (hasMoved) setLayout(layoutId, { pos: position });
+    }, [position, hasMoved, layoutId]);
+    useEffect(() => {
+        setLayout(layoutId, { locked: isLocked });
+    }, [isLocked, layoutId]);
 
     const onMouseDown = (e: React.MouseEvent) => {
         if (isLocked) return; // Locked — no dragging

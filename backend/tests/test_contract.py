@@ -39,10 +39,22 @@ def test_sources_exist():
         assert os.path.isfile(src), f"contract source missing: {src}"
 
 
+def _resolves(path, route_paths):
+    """A referenced path resolves if it matches a registered route exactly, or —
+    when it was captured up to a dynamic segment (e.g. `/settings/keys/${provider}`
+    → `/settings/keys/`) — if a registered route continues with a path param."""
+    full = f"/api/v1{path}"
+    if full in route_paths:
+        return True
+    if path.endswith("/"):
+        return any(r.startswith(full + "{") for r in route_paths)
+    return False
+
+
 def test_frontend_paths_have_routes(route_paths):
     referenced = _referenced_paths()
     assert referenced, "no endpoint literals parsed — regex or sources changed"
-    missing = [p for p in referenced if f"/api/v1{p}" not in route_paths]
+    missing = [p for p in referenced if not _resolves(p, route_paths)]
     assert not missing, (
         "Frontend calls endpoints with no backend route:\n  "
         + "\n  ".join(missing)

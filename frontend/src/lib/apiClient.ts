@@ -1,6 +1,8 @@
 import { saveBlobWithSovereignty } from './file_system_utils';
 import { Chapter, TranscriptionStatus } from '@/types/industrial';
-import { secureVault } from '@/lib/vault';
+// [FILES-ONLY]: local_mode lives in vault preferences (cached), not localStorage.
+// Used only inside request functions at runtime — safe despite the cyclic import.
+import { getPref } from '@/lib/preferences';
 
 // Single source of truth lives in types/industrial.ts
 export type { TranscriptionStatus };
@@ -66,8 +68,8 @@ export async function uploadManuscriptStream(file: File, onChunk: (data: Record<
     const formData = new FormData();
     formData.append("file", file);
 
-    const provider = typeof window !== 'undefined' ? (localStorage.getItem('tome_master_provider') || 'gemini') : 'gemini';
-    const apiKey = typeof window !== 'undefined' ? (secureVault.load()[provider] || '') : '';
+    const provider = 'gemini';
+    const apiKey = '';
 
     formData.append("api_key", apiKey);
     const res = await fetch(`${API_BASE_HOLDER.current}/document/upload/stream?is_demo=${isDemo}`, {
@@ -112,8 +114,8 @@ export async function uploadManuscriptStream(file: File, onChunk: (data: Record<
 
 
 export async function analyzeEmotionalArc(text: string, providerOverride?: string, modelOverride?: string) {
-    const provider = providerOverride || (typeof window !== 'undefined' ? (localStorage.getItem('tome_master_provider') || 'gemini') : 'gemini');
-    const local_mode = typeof window !== 'undefined' ? localStorage.getItem('tome_master_local_mode') === 'true' : false;
+    const provider = providerOverride || 'gemini';
+    const local_mode = getPref<boolean>('local_mode', false);
 
     let lastError = null;
     for (let i = 0; i < 3; i++) {
@@ -152,7 +154,8 @@ export async function runMultiAgentAnalysis(
     customPrompt?: string,
     projectFolder?: string
 ) {
-    const apiKey = typeof window !== 'undefined' ? (secureVault.load()[provider || 'gemini'] || '') : '';
+    // Keys live only in the backend vault; never sent from the browser.
+    const apiKey = '';
 
     const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/convene`, {
         method: "POST",
@@ -418,9 +421,9 @@ export async function checkTranscriptionStatus(summary: boolean = true): Promise
 }
 
 export async function fetchMoodboard(text: string, providerOverride?: string, modelOverride?: string) {
-    const provider = providerOverride || (typeof window !== 'undefined' ? (localStorage.getItem('tome_master_active_slot') || 'slot_primary') : 'slot_primary');
-    const apiKey = typeof window !== 'undefined' ? (secureVault.load()[provider] || '') : '';
-    const local_mode = typeof window !== 'undefined' ? localStorage.getItem('tome_master_local_mode') === 'true' : false;
+    const provider = providerOverride || 'slot_primary';
+    const apiKey = '';
+    const local_mode = getPref<boolean>('local_mode', false);
 
     const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/moodboard`, {
         method: "POST",
@@ -441,9 +444,9 @@ export async function fetchMoodboard(text: string, providerOverride?: string, mo
 }
 
 export async function checkWorldBible(text: string, providerOverride?: string, modelOverride?: string) {
-    const provider = providerOverride || (typeof window !== 'undefined' ? (localStorage.getItem('tome_master_active_slot') || 'slot_primary') : 'slot_primary');
-    const apiKey = typeof window !== 'undefined' ? (secureVault.load()[provider] || '') : '';
-    const local_mode = typeof window !== 'undefined' ? localStorage.getItem('tome_master_local_mode') === 'true' : false;
+    const provider = providerOverride || 'slot_primary';
+    const apiKey = '';
+    const local_mode = getPref<boolean>('local_mode', false);
 
     const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/world-bible`, {
         method: "POST",
@@ -611,6 +614,68 @@ export async function fetchVaultSync(): Promise<Record<string, string>> {
     }
 }
 
+// ─── Files-only persistence (replaces browser IndexedDB/localStorage) ──────────
+
+/** Persists the full manuscript document to tome_master_project.json in the
+ *  project folder (or the backend's default workspace when folder is null). */
+export async function saveProjectState(folder: string | null, state: Record<string, unknown>): Promise<boolean> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/document/project/save`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_path: folder || null, state })
+        });
+        if ('isNetworkError' in res) return false;
+        return (res as Response).ok;
+    } catch (e) {
+        return false;
+    }
+}
+
+/** Reads the manuscript document back from the project folder ({} if none). */
+export async function loadProjectState(folder: string | null): Promise<Record<string, unknown>> {
+    try {
+        const qs = folder ? `?project_path=${encodeURIComponent(folder)}` : '';
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/document/project/load${qs}`);
+        if ('isNetworkError' in res) return {};
+        const r = res as Response;
+        if (!r.ok) return {};
+        const data = await r.json();
+        return (data && data.state) || {};
+    } catch (e) {
+        return {};
+    }
+}
+
+/** Global preferences from the encrypted vault (theme/language/etc.). */
+export async function getPreferences(): Promise<Record<string, unknown>> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/settings/`);
+        if ('isNetworkError' in res) return {};
+        const r = res as Response;
+        if (!r.ok) return {};
+        const data = await r.json();
+        return (data && data.preferences) || {};
+    } catch (e) {
+        return {};
+    }
+}
+
+/** Patch global preferences into the vault (merged server-side). */
+export async function updatePreferences(patch: Record<string, unknown>): Promise<boolean> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/settings/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ preferences: patch })
+        });
+        if ('isNetworkError' in res) return false;
+        return (res as Response).ok;
+    } catch (e) {
+        return false;
+    }
+}
+
 export async function saveVaultToEnv(keys: Record<string, string>): Promise<boolean> {
     try {
         const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/vault-save`, {
@@ -621,6 +686,38 @@ export async function saveVaultToEnv(keys: Record<string, string>): Promise<bool
         if ('isNetworkError' in res) return false;
         const response = res as Response;
         return response.ok;
+    } catch (e) {
+        return false;
+    }
+}
+
+/** Fetches a head…tail masked preview of the STORED key (e.g. "AIza...5KkA") so
+ *  the user can verify what's actually in the vault and catch a wrong value.
+ *  Raw keys never cross the wire — this is the masked form only. '' = not set. */
+export async function fetchStoredKeyPreview(provider: string): Promise<string> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/settings/keys/${provider}`);
+        if ('isNetworkError' in res) return '';
+        const r = res as Response;
+        if (!r.ok) return '';
+        const data = await r.json();
+        return data.key_masked && data.key_masked !== 'NOT_FOUND' ? data.key_masked : '';
+    } catch (e) {
+        return '';
+    }
+}
+
+/** Blanks one provider's stored key in the vault so the user can recover from a
+ *  wrong value (e.g. a password pasted into the key field). */
+export async function clearVaultKey(provider: string): Promise<boolean> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/vault-clear`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider })
+        });
+        if ('isNetworkError' in res) return false;
+        return (res as Response).ok;
     } catch (e) {
         return false;
     }

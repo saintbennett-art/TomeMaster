@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Cpu, Lock, LockOpen, Zap } from 'lucide-react';
 import { API_BASE_HOLDER } from '@/lib/apiClient';
+import { loadPreferences, getLayout, setLayout } from '@/lib/preferences';
 
 const MOVED_THRESHOLD = 20;
 
@@ -25,31 +26,32 @@ export default function NerveCenter({ isLeftSidebarOpen = true }: { isLeftSideba
     const [history, setHistory] = useState<number[]>(new Array(15).fill(0));
     const [status, setStatus] = useState<'online' | 'offline'>('offline');
     const [initPos] = useState({ x: 0, y: 162 });
-    const [position, setPosition] = useState(() => {
-        if (typeof window !== 'undefined') {
-            try { const s = localStorage.getItem('tome_master_nerve_pos'); if (s) return JSON.parse(s); } catch {}
-        }
-        return { x: 0, y: 162 };
-    });
+    // [FILES-ONLY]: position/lock come from vault preferences (ui_layout.nerve).
+    const [position, setPosition] = useState(() => getLayout('nerve').pos || { x: 0, y: 162 });
     const [isDragging, setIsDragging] = useState(false);
-    const [hasMoved, setHasMoved] = useState(() => typeof window !== 'undefined' && !!localStorage.getItem('tome_master_nerve_pos'));
-    const [isLocked, setIsLocked] = useState(() => typeof window !== 'undefined' && localStorage.getItem('tome_master_nerve_locked') === 'true');
+    const [hasMoved, setHasMoved] = useState(() => !!getLayout('nerve').pos);
+    const [isLocked, setIsLocked] = useState(() => getLayout('nerve').locked === true);
     const [rel, setRel] = useState({ x: 0, y: 0 });
     const [activeAgents, setActiveAgents] = useState<ActiveAgent[]>([]);
 
     useEffect(() => {
-        // Default startup position (far right, below toolbar) only if the user hasn't placed it before.
-        if (typeof window !== 'undefined' && localStorage.getItem('tome_master_nerve_pos')) return;
-        const startX = window.innerWidth - 220;
-        setPosition({ x: startX, y: 162 });
+        // Re-hydrate once vault preferences finish loading (cache may have been
+        // empty at first render); otherwise place the default startup position.
+        (async () => {
+            await loadPreferences();
+            const saved = getLayout('nerve');
+            if (saved.pos) { setPosition(saved.pos); setHasMoved(true); }
+            else if (typeof window !== 'undefined') setPosition({ x: window.innerWidth - 220, y: 162 });
+            if (typeof saved.locked === 'boolean') setIsLocked(saved.locked);
+        })();
     }, []);
 
-    // [PERSIST]: remember the bar's position + lock across restarts.
+    // [PERSIST]: remember the bar's position + lock across restarts (vault).
     useEffect(() => {
-        if (hasMoved && typeof window !== 'undefined') localStorage.setItem('tome_master_nerve_pos', JSON.stringify(position));
+        if (hasMoved) setLayout('nerve', { pos: position });
     }, [position, hasMoved]);
     useEffect(() => {
-        if (typeof window !== 'undefined') localStorage.setItem('tome_master_nerve_locked', String(isLocked));
+        setLayout('nerve', { locked: isLocked });
     }, [isLocked]);
 
     const onMouseDown = (e: React.MouseEvent) => {

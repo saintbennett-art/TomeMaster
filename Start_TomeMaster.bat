@@ -27,13 +27,12 @@ if not exist "%FRONTEND_DIR%\node_modules" (
     pushd "%FRONTEND_DIR%" & call npm install & popd
 ) else ( echo [SOVEREIGN]: Frontend dependencies present. )
 
-:: ─── PHASE 1: Surgical sweep — kill any stale servers on our fixed ports ──────
-:: Restores the original PRoeditor model: FIXED ports + auto-reload. Stale
-:: backends fighting over a port were the cause of the "backend disconnects" bug.
-echo [SOVEREIGN]: Stopping any stale backend (uvicorn/run.py) and freeing ports %BACKEND_PORT% / %FRONTEND_PORT%...
-powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' -and ($_.CommandLine -like '*uvicorn*' -or $_.CommandLine -like '*run.py*') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" >nul 2>&1
-powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort %BACKEND_PORT%,%FRONTEND_PORT% -State Listen -ErrorAction SilentlyContinue | ForEach-Object { if ($_.OwningProcess -ne 0) { Stop-Process -Id $_.OwningProcess -Force } }" >nul 2>&1
-if exist "%PROJECT_ROOT%.sovereign_port" del /f /q "%PROJECT_ROOT%.sovereign_port"
+:: ─── PHASE 1: CLEANUP — a restart kills EVERYTHING we started, then starts fresh ──
+:: Uses the shared cleanup script which kills the FULL backend/frontend process tree
+:: (incl. the uvicorn --reload spawn-worker children the old filter missed) and frees
+:: the ports. Stale instances fighting over a port were the "backend disconnects" bug.
+echo [SOVEREIGN]: Cleanup — terminating any prior servers and freeing ports %BACKEND_PORT% / %FRONTEND_PORT%...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_ROOT%scripts\cleanup_tomemaster.ps1" -ProjectRoot "%PROJECT_ROOT%" -Ports %BACKEND_PORT%,%FRONTEND_PORT%
 
 :: ─── PHASE 2: Start backend (FIXED port + --reload) ───────────────────────────
 echo [SOVEREIGN]: Starting Intelligence Engine on http://127.0.0.1:%BACKEND_PORT% (auto-reload)...

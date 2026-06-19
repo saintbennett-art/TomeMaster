@@ -1,53 +1,38 @@
 /**
- * 🛡️ SOVEREIGN MIGRATION GATE
- * Forensicly unifies fragmented storage coordinates into the Absolute Bedrock Vault.
+ * 🛡️ FILES-ONLY PURGE
+ * This is a standalone desktop app — NOTHING is stored in the browser. Keys, the
+ * old "vault", and the shadow-save caches all moved to the encrypted backend vault
+ * / local project files. This sweep removes any legacy browser-stored remnants on
+ * load so a stale value (e.g. an old key cached in localStorage) can never resurface.
  */
-export function performMasterMigration() {
+export function purgeLegacyBrowserStorage() {
     if (typeof window === 'undefined') return;
-    const { secureVault } = require('./vault');
-
-    const VAULT_KEY = 'tome_master_vault';
-    const LEGACY_KEYS = ['tome_master_keys', 'tome_master_key_gemini', 'tome_master_key_openai', 'tome_master_key_anthropic'];
-
     try {
-        const existingVault = secureVault.load();
-        
-        // If the vault is already targeted, we bypass to preserve current state purity
-        if (Object.keys(existingVault).length > 0) return;
-
-        
-        const newVault: Record<string, string> = {};
-        
-        // [AUDIT 1]: Legacy Object Migration
-        const objKeys = localStorage.getItem('tome_master_keys');
-        if (objKeys) {
-            try {
-                const parsed = JSON.parse(objKeys);
-                Object.assign(newVault, parsed);
-            } catch (e) {
+        const legacy = [
+            // legacy API key material (must never live in the browser)
+            'tome_master_keys',
+            'tome_master_key_gemini', 'tome_master_key_openai', 'tome_master_key_anthropic',
+            'tome_master_vault', 'tome_master_vault_v2',
+            'shadow_vault_entry', 'shadow_vault_entry_ts',
+            // legacy prefs now in the encrypted vault preferences
+            'tome-master-theme', 'tome_master_onboarded', 'tome_master_force_primary',
+            'tome_master_local_mode', 'tome_master_guide_voice',
+            'tome_master_provider', 'tome_master_active_slot',
+            'tome_master_boardroom_provider', 'tome_master_boardroom_model',
+            'tome_master_custom_words', 'tome_master_ignored_words', 'tome_master_language',
+            'tome_master_nerve_pos', 'tome_master_nerve_locked', 'tome_master_shadow_path',
+            'tm_boardroom_state',
+        ];
+        legacy.forEach(k => localStorage.removeItem(k));
+        // any leftover shadow_* / dialog position keys from earlier builds
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+            const key = localStorage.key(i);
+            if (key && (key.startsWith('shadow_') || key.startsWith('tome_master_dialog_'))) {
+                localStorage.removeItem(key);
             }
         }
-
-        // [AUDIT 2]: Individual Folder Migration
-        LEGACY_KEYS.forEach(k => {
-            const val = localStorage.getItem(k);
-            if (val && !val.startsWith('{')) {
-                const provider = k.split('_').pop() || '';
-                if (provider && !newVault[provider]) {
-                    newVault[provider] = val;
-                }
-            }
-        });
-
-        // [RESOLUTION]: Absolute Bedrock Rooting & Upgrading
-        if (Object.keys(newVault).length > 0) {
-            // [UPGRADE]: Map legacy brands to their respective slots if they don't exist yet
-            if (newVault.gemini && !newVault.slot_primary) newVault.slot_primary = newVault.gemini;
-            if (newVault.openai && !newVault.slot_specialist) newVault.slot_specialist = newVault.openai;
-            if (newVault.groq && !newVault.slot_velocity) newVault.slot_velocity = newVault.groq;
-            
-            secureVault.save(newVault);
-        }
-    } catch (err) {
+        sessionStorage.removeItem('tome_master_greeted_logic');
+    } catch (e) {
+        // best-effort cleanup; never block app load
     }
 }

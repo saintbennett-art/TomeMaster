@@ -2,6 +2,10 @@
 import { useState, useEffect, memo, useCallback } from 'react';
 import { useTextToSpeech } from '@/hooks/useTextToSpeech';
 import { getBriefing } from '@/lib/apiClient';
+import { getPref } from '@/lib/preferences';
+
+// [FILES-ONLY]: greet once per app launch via an in-memory flag (no sessionStorage).
+let hasGreetedThisLaunch = false;
 
 interface GuideAssistantProps {
     content: string;
@@ -23,7 +27,7 @@ function AmbientGuide({ content, wordCount = 0, hasToc = false, hasReports = fal
     const [lastSpokenTime, setLastSpokenTime] = useState<number>(0);
 
     const directorialSpeak = useCallback((text: string) => {
-        const voice = (localStorage.getItem('tome_master_guide_voice') || 'female') as 'off' | 'male' | 'female';
+        const voice = getPref<'off' | 'male' | 'female'>('guide_voice', 'female');
         if (voice === 'off') return;
 
         // Debounce: Don't repeat the same thing within 20 seconds
@@ -60,8 +64,7 @@ function AmbientGuide({ content, wordCount = 0, hasToc = false, hasReports = fal
         if (!directorialSpeak || !content) return;
         
         const timer = setTimeout(async () => {
-            const hasGreeted = sessionStorage.getItem('tome_master_greeted_logic');
-            if (hasGreeted) return;
+            if (hasGreetedThisLaunch) return;
 
             const welcomePrefix = "Welcome to Tome-Master. I am the System Workflow Coordinator. ";
 
@@ -79,7 +82,7 @@ function AmbientGuide({ content, wordCount = 0, hasToc = false, hasReports = fal
                 }
             }
 
-            sessionStorage.setItem('tome_master_greeted_logic', 'true');
+            hasGreetedThisLaunch = true;
         }, 3000); // 3-second delay for systemic settling
         
         return () => clearTimeout(timer);

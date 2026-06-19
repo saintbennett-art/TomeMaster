@@ -11,8 +11,8 @@ import NerveCenter from "@/components/NerveCenter";
 import StructuralAnalysisModal from "@/components/workstation/StructuralAnalysisModal";
 import AiEnhancementHub from "@/components/workstation/AiEnhancementHub";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
-import { performMasterMigration } from "@/lib/migration_gate";
-import { secureVault } from "@/lib/vault";
+import { purgeLegacyBrowserStorage } from "@/lib/migration_gate";
+import { loadPreferences, getPref, setPref } from "@/lib/preferences";
 import { useWorkstationState, useWorkstationActions } from "@/context/WorkstationContext";
 import { useEditorState } from "@/context/EditorContext";
 
@@ -47,17 +47,20 @@ export default function Home() {
       isOpen: false, feature: ''
   });
 
-  // 🛡️ MIGRATION GATE
+  // 🛡️ [FILES-ONLY]: purge any legacy browser-stored keys/vault/shadow on load.
   useEffect(() => {
-    performMasterMigration();
+    purgeLegacyBrowserStorage();
   }, []);
 
-  // Detect first load for onboarding
+  // [FILES-ONLY]: load global preferences from the vault, then derive onboarding /
+  // mode flags from them (no browser localStorage).
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-        const hasOnboarded = localStorage.getItem('tome_master_onboarded');
-        if (!hasOnboarded) setIsOnboardingOpen(true);
-    }
+    (async () => {
+        await loadPreferences();
+        if (!getPref<boolean>('onboarded', false)) setIsOnboardingOpen(true);
+        setForcePrimary(getPref<boolean>('force_primary', false));
+        setLocalMode(getPref<boolean>('local_mode', false));
+    })();
   }, []);
 
   // Load vault presence on mount — keys live in backend .env, not in browser
@@ -79,8 +82,6 @@ export default function Home() {
             // (the /models check false-negatives on some keys). SEALED now reflects
             // vault presence only; the user manages keys manually. Never auto-delete.
         });
-        setForcePrimary(localStorage.getItem('tome_master_force_primary') === 'true');
-        setLocalMode(localStorage.getItem('tome_master_local_mode') === 'true');
     }
   }, []);
 
@@ -118,7 +119,7 @@ export default function Home() {
 
   // [SOVEREIGN]: Onboarding completion logic
   const handleOnboardingComplete = () => {
-    localStorage.setItem('tome_master_onboarded', 'true');
+    setPref('onboarded', true);
     setIsOnboardingOpen(false);
     window.dispatchEvent(new CustomEvent('tome-master-settings-changed'));
     notify("Industrial Architecture Established.");

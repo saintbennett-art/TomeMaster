@@ -1,6 +1,5 @@
 import React from 'react';
 import { ShieldCheck, Sparkles } from 'lucide-react';
-import { useShadowSave } from '@/hooks/useShadowSave';
 import { STANDARD_AGENTS } from "./SpecialistRegistry";
 
 interface ExpertAuthorizationPanelProps {
@@ -19,7 +18,10 @@ interface ExpertAuthorizationPanelProps {
 
 export const ExpertAuthorizationPanel = ({ authModal, dynamicModels, getFidelityPortfolioForExpert }: ExpertAuthorizationPanelProps) => {
     const [selectedModel, setSelectedModel] = React.useState(authModal.model);
-    const [customPrompt, setCustomPrompt] = useShadowSave("boardroom_directive", authModal.prompt);
+    // [FILES-ONLY]: the directive is a transient draft — in-memory only, never the browser.
+    const [customPrompt, setCustomPrompt] = React.useState(authModal.prompt);
+    // Keep the draft in sync when a different specialist's prompt opens the panel.
+    React.useEffect(() => { setCustomPrompt(authModal.prompt); }, [authModal.prompt]);
     const [handshakeStatus, setHandshakeStatus] = React.useState("idle"); // idle, checking, success, fail
     const portfolio = getFidelityPortfolioForExpert(authModal.persona, dynamicModels);
 

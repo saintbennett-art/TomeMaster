@@ -290,6 +290,38 @@ def upload_to_project(file: UploadFile = File(...)):
         "is_parseable": is_parseable,
     }
 
+class ProjectSaveRequest(BaseModel):
+    state: dict
+    project_path: Optional[str] = None
+
+
+@router.post("/project/save")
+def save_project(req: ProjectSaveRequest):
+    """[FILES-ONLY PERSISTENCE]: Saves the full manuscript document (draft html/text,
+    TOC, analysis artifacts, metadata) to tome_master_project.json in the project
+    folder — replacing browser IndexedDB. Falls back to ~/TomeMaster/Workspace for
+    drafts with no active folder yet. Every path goes through the home-dir guard."""
+    from services import persistence_service
+
+    target = req.project_path or persistence_service.default_workspace_dir()
+    safe = _safe_folder(target)
+    ok = persistence_service.save_project_state(safe, req.state or {})
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to write project state.")
+    return {"status": "saved", "folder_path": safe.replace("\\", "/")}
+
+
+@router.get("/project/load")
+def load_project(project_path: Optional[str] = None):
+    """[FILES-ONLY PERSISTENCE]: Reads the manuscript document back from the project
+    folder (or the default workspace). Returns {} when nothing is stored yet."""
+    from services import persistence_service
+
+    target = project_path or persistence_service.default_workspace_dir()
+    safe = _safe_folder(target)
+    return {"state": persistence_service.load_project_state(safe), "folder_path": safe.replace("\\", "/")}
+
+
 @router.get("/read")
 async def read_local_file(path: str):
     """Reads a local file and returns its content (text or html)."""

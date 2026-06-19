@@ -91,14 +91,19 @@ PyInstaller bundles the backend into a standalone `.exe`.
 - **`context/WorkstationContext.tsx`** + **`context/EditorContext.tsx`** — global state stores.
 - **`lib/apiClient.ts`** — centralized API client; all backend calls go through here.
 - **`types/industrial.ts`** — shared type source of truth (Chapter, TranscriptionStatus, etc.).
-- **`lib/migration_gate.ts`** — `performMasterMigration()` runs on load for localStorage schema migration.
-- **`lib/vault.ts`** — `secureVault` is a **deprecated stub** (returns `{}`); keys live backend-side, never in the browser.
+- **`lib/migration_gate.ts`** — `purgeLegacyBrowserStorage()` runs on load to delete any legacy browser-stored keys/vault/shadow/prefs remnants.
+- **`lib/preferences.ts`** — cached accessor for global prefs in the vault `preferences` block (`loadPreferences`/`getPref`/`setPref`/`getLayout`/`setLayout`). Sync getters back the React initializers; writes go through `/settings/update`.
 
-### Storage
+### Storage — **FILES-ONLY (no browser storage)**
 
-- **Keys/settings**: encrypted vault `settings.enc` (Fernet, derived from the machine fingerprint) via `src/tomemaster/vault_loader.py`; hydrated into env vars at startup. `GET /api/v1/settings/` returns keys **masked**; `/api/v1/analysis/vault-sync` returns presence booleans only.
-- **Manuscript content**: IndexedDB (frontend).
+This is a standalone desktop app: **nothing** is persisted to the browser (no localStorage / sessionStorage / IndexedDB). All persistence is local files, encrypted when sensitive.
+
+- **Keys/settings/global prefs**: encrypted vault `settings.enc` (Fernet, machine-fingerprint key) via `src/tomemaster/vault_loader.py`; hydrated into env vars at startup. `GET /api/v1/settings/` returns keys **masked**; `/api/v1/analysis/vault-sync` returns presence booleans only. Theme/onboarding/dictionary/UI-layout/last-project live in the vault `preferences` block.
+- **Manuscript content + per-project state** (draft html/text, TOC, analysis reports, arc, title/author/cover, enhancements, boardroom selection): a `tome_master_project.json` file in the active project folder (or `~/TomeMaster/Workspace` for an unsaved draft), via `services/persistence_service.save_project_state`/`load_project_state` (atomic temp-swap) behind `POST/GET /api/v1/document/project/{save,load}`. All paths go through `validate_project_path`.
+- **Legacy recovery**: `EditorContext`/`WorkstationContext` still *read* the old IndexedDB store (`idb-keyval`, `lib/storage_utils.ts`) once to migrate a pre-existing draft into the project file — read-only, no new browser writes. (These deps stay until the recovery window closes.)
 - **Usage ledger**: `api_usage_log.jsonl` — append-only, per AI call (provider, model, tokens).
+
+> **UI changes must be rebuilt to be seen.** The desktop app serves the static export from `backend/static` (mounted in `main.py`), NOT the `:3000` dev server. After editing frontend code, run `npm run build` and copy `frontend/out/*` → `backend/static/` (what `build_exe.bat` does) or the running app keeps executing the old bundle.
 
 ### AI Provider Wiring
 

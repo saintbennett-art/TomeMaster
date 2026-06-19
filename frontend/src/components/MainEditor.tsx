@@ -9,12 +9,9 @@ import { RichTextEditorRef } from "@/components/RichTextEditor";
 import { useDictation } from "@/hooks/useDictation";
 import { useTextToSpeech } from "@/hooks/useTextToSpeech";
 import { useScreenRecorder } from "@/hooks/useScreenRecorder";
-import { exportDocx, exportEpub, exportPdf, checkTranscriptionStatus } from "@/lib/apiClient";
-import { set } from "idb-keyval";
-import { saveCompressed } from "@/lib/storage_utils";
+import { exportDocx, exportEpub, exportPdf, checkTranscriptionStatus, saveProjectState } from "@/lib/apiClient";
 import { useWorkstationState, useWorkstationActions } from "@/context/WorkstationContext";
 import { useEditorState, useEditorActions } from "@/context/EditorContext";
-import { secureVault } from "@/lib/vault";
 
 import WorkstationHeader from "./workstation/WorkstationHeader";
 import WorkstationViewport from "./workstation/WorkstationViewport";
@@ -185,18 +182,18 @@ export default function MainEditor({
   const handleRedo = () => editorRef.current?.redo();
 
   const handleTakeSnapshot = async () => {
-    // [SAVE PROJECT]: flush the live draft to IndexedDB (same store autosave uses).
-    try {
-        await saveCompressed('tome_master_draft_html', htmlContent);
-        await saveCompressed('tome_master_draft_text', content);
-        await set('tome_master_draft_toc', chapters);
-        await set('tome_master_draft_reports', agentReports);
-        await set('tome_master_draft_arc', arcData);
-        await set('tome_master_draft_ts', Date.now());
-        notify(`Project saved at ${new Date().toLocaleTimeString()}.`);
-    } catch (err) {
-        notify(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    // [SAVE PROJECT]: flush the live draft to the project file (same store autosave uses).
+    const ok = await saveProjectState(activeFolderPath, {
+        draft_html: htmlContent,
+        draft_text: content,
+        draft_toc: chapters,
+        draft_reports: agentReports,
+        draft_arc: arcData,
+        draft_ts: Date.now(),
+    });
+    notify(ok
+        ? `Project saved at ${new Date().toLocaleTimeString()}.`
+        : "Save failed — could not write the project file.");
   };
 
   // [SHORTCUT]: Ctrl/Cmd+S → Save Project (and suppress the browser Save dialog).

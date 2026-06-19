@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { ShieldCheck, Cpu, Globe, Rocket, Check, ArrowRight, Download, Info, Eye, RefreshCw, Loader2, ExternalLink, AlertTriangle } from 'lucide-react';
 import { fetchLocalEngines, type LocalEngine } from '../lib/apiClient';
 import { isVisionModel } from '../lib/ai_config';
+import { setPref } from '../lib/preferences';
 
 interface OnboardingModalProps {
     isOpen: boolean;
@@ -119,9 +120,9 @@ export default function OnboardingModal({ isOpen, onClose }: OnboardingModalProp
     };
 
     const finalize = () => {
-        // Persist the chosen path so the app actually runs in that mode.
-        if (selectedPath === 'sovereign') localStorage.setItem('tome_master_local_mode', 'true');
-        else if (selectedPath === 'cloud') localStorage.setItem('tome_master_local_mode', 'false');
+        // [FILES-ONLY]: persist the chosen path to the vault so the app runs in that mode.
+        if (selectedPath === 'sovereign') setPref('local_mode', true);
+        else if (selectedPath === 'cloud') setPref('local_mode', false);
         onClose();
     };
 

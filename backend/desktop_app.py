@@ -16,6 +16,25 @@ PORT = get_free_port()
 
 _server_ready = threading.Event()
 
+def cleanup_stale_instances():
+    """[ACTUAL RESTART]: kill any prior TomeMaster servers (full process tree, incl.
+    uvicorn --reload spawn-workers and previous desktop_app instances) BEFORE starting,
+    so a restart never runs alongside orphans. Shares the launcher's cleanup script;
+    excludes our own PID. Best-effort — never blocks startup."""
+    try:
+        import subprocess
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        script = os.path.join(project_root, "scripts", "cleanup_tomemaster.ps1")
+        if not os.path.exists(script):
+            return
+        subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script,
+             "-ProjectRoot", project_root, "-ExcludePid", str(os.getpid())],
+            timeout=20, check=False,
+        )
+    except Exception as e:
+        print(f"BOARDROOM: pre-start cleanup skipped: {e}")
+
 def start_server():
     global PORT
     import main
@@ -49,6 +68,7 @@ def _wait_for_server(timeout: int = 15) -> bool:
     return False
 
 if __name__ == '__main__':
+    cleanup_stale_instances()   # restart = cleanup first, then start
     t = threading.Thread(target=start_server, name="TomeMaster-Engine", daemon=True)
     t.start()
 
