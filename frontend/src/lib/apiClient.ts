@@ -741,6 +741,7 @@ export interface DiscoveredModel {
     id: string;
     name: string;
     description: string;
+    trait?: string;   // primary-trait label (Thinking/Analysis/Fast/Visual/General)
 }
 
 /**

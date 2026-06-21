@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Maximize2, Minimize2, Save, Eye, Zap, RefreshCw, ExternalLink, ShieldAlert, ShieldCheck, Lock, LockOpen } from "lucide-react";
 import { useDraggableDialog } from "@/components/workstation/DraggableDialog";
 import { isFrontMatter } from "@/lib/chapters";
-import { runMultiAgentAnalysis, validateAiKey, API_BASE_HOLDER, fetchLocalEngines, fetchVaultSync, fetchAvailableModels, saveProjectState, type LocalEngine, type DiscoveredModel } from "@/lib/apiClient";
+import { runMultiAgentAnalysis, validateAiKey, API_BASE_HOLDER, fetchLocalEngines, fetchVaultSync, fetchAvailableModels, saveProjectState, loadProjectState, type LocalEngine, type DiscoveredModel } from "@/lib/apiClient";
 import { loadPreferences, getPref, setPref } from "@/lib/preferences";
 import { isVisionModel } from "@/lib/ai_config";
 
@@ -109,7 +109,7 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     // [BOARDROOM ENGINE]: the USER picks which provider+model runs the boardroom,
     // from the models discovered on their own keys. Persisted so it sticks, and the
     // dispatch sends the prompt to exactly that model (provider follows the model).
-    const [engineOptions, setEngineOptions] = useState<{ provider: string; model: string }[]>([]);
+    const [engineOptions, setEngineOptions] = useState<{ provider: string; model: string; trait?: string }[]>([]);
     // Initialised null; hydrated from vault preferences in the mount effect above.
     const [boardroomEngine, setBoardroomEngine] = useState<{ provider: string; model: string } | null>(null);
     const selectBoardroomEngine = (provider: string, model: string) => {
@@ -117,16 +117,38 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
         setPref('boardroom_provider', provider);
         setPref('boardroom_model', model);
     };
+
+    // [PER-AGENT MODEL]: optional per-specialist model override. Absent → the agent
+    // uses the global Boardroom Engine above. Per-project, so it lives in the project
+    // file (agent_models), loaded on mount and saved on change.
+    const [agentModels, setAgentModels] = useState<Record<string, { provider: string; model: string }>>({});
+    useEffect(() => {
+        (async () => {
+            const state = await loadProjectState(projectFolder || null);
+            if (state.agent_models && typeof state.agent_models === 'object') {
+                setAgentModels(state.agent_models as Record<string, { provider: string; model: string }>);
+            }
+        })();
+    }, [projectFolder]);
+    const setAgentModel = (agentId: string, provider: string, model: string) => {
+        setAgentModels(prev => {
+            const next = { ...prev };
+            if (!provider || !model) delete next[agentId];   // back to the default engine
+            else next[agentId] = { provider, model };
+            saveProjectState(projectFolder || null, { agent_models: next });
+            return next;
+        });
+    };
     useEffect(() => {
         (async () => {
             try {
                 const presence = await fetchVaultSync();
                 const keyed = ['gemini', 'openai', 'anthropic', 'groq'].filter((p) => presence && presence[p]);
-                const opts: { provider: string; model: string }[] = [];
+                const opts: { provider: string; model: string; trait?: string }[] = [];
                 for (const p of keyed) {
                     try {
                         const models = await fetchAvailableModels(p);
-                        models.forEach((m: DiscoveredModel) => opts.push({ provider: p, model: m.id }));
+                        models.forEach((m: DiscoveredModel) => opts.push({ provider: p, model: m.id, trait: m.trait }));
                     } catch { /* skip a provider whose discovery fails */ }
                 }
                 setEngineOptions(opts);
@@ -174,8 +196,9 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
                 : editorContent;
             for (const agentId of allAgents) {
                 setCurrentExpert(agentId);
-                // Sovereign Dispatch: Trust the backend role mappings
-                const result = await runMultiAgentAnalysis(scopedContent, [agentId], boardroomEngine?.provider, boardroomEngine?.model, analyticScope, chapters);
+                // Per-agent model override wins; otherwise the global Boardroom Engine.
+                const eng = agentModels[agentId] || boardroomEngine;
+                const result = await runMultiAgentAnalysis(scopedContent, [agentId], eng?.provider, eng?.model, analyticScope, chapters);
                 if (result && result[agentId]) {
                     setAgentReports(prev => ({ ...prev, [agentId]: result[agentId] }));
                 }
@@ -376,13 +399,15 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
                             >
                                 <option value="" disabled>{engineOptions.length ? 'Choose model…' : 'Add + verify a key to list models'}</option>
                                 {engineOptions.map((o) => (
-                                    <option key={`${o.provider}|${o.model}`} value={`${o.provider}|${o.model}`}>{o.provider} — {o.model}</option>
+                                    <option key={`${o.provider}|${o.model}`} value={`${o.provider}|${o.model}`}>{o.provider} — {o.model}{o.trait ? `  [${o.trait}]` : ''}</option>
                                 ))}
                             </select>
                         </div>
-                        <SpecialistRegistry 
-                            selectedAgents={selectedAgents} setSelectedAgents={setSelectedAgents} 
-                            customAgents={customAgents} setCustomAgents={setCustomAgents} 
+                        <SpecialistRegistry
+                            selectedAgents={selectedAgents} setSelectedAgents={setSelectedAgents}
+                            customAgents={customAgents} setCustomAgents={setCustomAgents}
+                            engineOptions={engineOptions} agentModels={agentModels} setAgentModel={setAgentModel}
+                            defaultEngine={boardroomEngine}
                         />
                         {/* [SOVEREIGN LOCK]: real local-engine fidelity + lock toggle */}
                         <div className="p-4 bg-black/30 border border-white/5 rounded-2xl space-y-3">

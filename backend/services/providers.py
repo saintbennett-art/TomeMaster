@@ -288,6 +288,33 @@ def model_supports(model_id: str, modality: str, base: str = None) -> bool:
     return modality in model_modalities(model_id, base)
 
 
+# ─── Primary trait (display label — pattern-based, NOT a model-name table) ─────
+# A short, human label for "what this model is mainly for", inferred from broad id
+# patterns that survive new versions (same philosophy as the modality rules). Used
+# only for UI hinting, never for selection. Priority order is deliberate so a
+# flagship reasoning/analysis model reads as such even though it's also multimodal:
+# Thinking > Analysis > Fast > Visual > General. (e.g. o3-mini=Thinking, claude-opus=
+# Analysis, gemini-flash=Fast, gpt-4o=Visual.)
+_THINKING_HINTS = ("o1", "o3", "o4-", "-r1", "r1-", "reasoning", "think", "qwq", "deepseek-r")
+_ANALYSIS_HINTS = ("pro", "opus", "-large", "405b", "70b", "72b", "65b", "ultra", "-max")
+_FAST_HINTS = ("flash", "mini", "nano", "haiku", "instant", "lite", "-8b", "-7b", "small", "-fast")
+
+
+def model_trait(model_id: str, base: str = None) -> str:
+    """A short primary-trait label for the UI: Thinking / Analysis / Fast / Visual /
+    General. Heuristic from id patterns; 'Visual' uses the authoritative modality."""
+    m = (model_id or "").lower()
+    if any(h in m for h in _THINKING_HINTS):
+        return "Thinking"
+    if any(h in m for h in _ANALYSIS_HINTS):
+        return "Analysis"
+    if any(h in m for h in _FAST_HINTS):
+        return "Fast"
+    if "image" in model_modalities(model_id, base):
+        return "Visual"
+    return "General"
+
+
 def probe_local_engines(timeout: float = 0.4) -> list:
     """[LOCAL DISCOVERY]: Ping the known localhost engine ports and return those
     that answer ``/models``. Safe by construction — localhost only, keyless,

@@ -149,6 +149,16 @@ async def validate_and_prune_vault():
     return {"validity": validity, "pruned": []}
 
 
+def _attach_traits(models):
+    """Tag each discovered model with a short primary-trait label for the UI
+    (Thinking/Analysis/Fast/Visual/General) — pattern-based, no name tables."""
+    from services import providers
+
+    for m in models:
+        m["trait"] = providers.model_trait(m.get("id", ""))
+    return models
+
+
 @router.get("/models")
 async def discover_available_models(provider: str = "gemini"):
     """
@@ -182,7 +192,7 @@ async def discover_available_models(provider: str = "gemini"):
                             "description": getattr(m, "description", ""),
                         }
                     )
-            return {"models": models, "provider": provider}
+            return {"models": _attach_traits(models), "provider": provider}
 
         elif provider == "openai":
             from openai import OpenAI
@@ -194,7 +204,7 @@ async def discover_available_models(provider: str = "gemini"):
                 for m in response.data
                 if "gpt" in m.id or "o1" in m.id or "o3" in m.id
             ]
-            return {"models": models, "provider": provider}
+            return {"models": _attach_traits(models), "provider": provider}
 
         elif provider == "groq":
             from openai import OpenAI
@@ -206,7 +216,7 @@ async def discover_available_models(provider: str = "gemini"):
             models = [
                 {"id": m.id, "name": m.id, "description": ""} for m in response.data
             ]
-            return {"models": models, "provider": provider}
+            return {"models": _attach_traits(models), "provider": provider}
 
         elif provider == "anthropic":
             # Single source of truth — same portfolio the resolver/validator use.
@@ -216,7 +226,7 @@ async def discover_available_models(provider: str = "gemini"):
                 {"id": mid, "name": mid, "description": ""}
                 for mid in ANTHROPIC_STATIC_PORTFOLIO
             ]
-            return {"models": models, "provider": provider}
+            return {"models": _attach_traits(models), "provider": provider}
 
         return {"models": [], "error": f"Unknown provider: {provider}"}
 
