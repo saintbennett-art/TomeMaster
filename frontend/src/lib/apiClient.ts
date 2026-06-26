@@ -175,7 +175,9 @@ export async function runMultiAgentAnalysis(
             custom_prompt: customPrompt,
             intensity
         }),
-    });
+    // Boardroom analysis is slow (esp. chapter-by-chapter on a blocked manuscript);
+    // the default 15s timeout was firing and the error was being swallowed → no report.
+    }, 300000);
 
     if ('isNetworkError' in res) {
         throw new Error("Sovereign connection failed. The Boardroom engine is unreachable.");

@@ -204,6 +204,12 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
             .map((c) => c.content || "").join("\n\n").trim() || editorContent)
         : editorContent;
 
+    // A minimal, valid AgentReport for "no response"/error states so the panel always
+    // shows something — a run that yields neither report nor error is itself a failure.
+    const stubReport = (agentId: string, feedback: string): AgentReport => ({
+        agent_id: agentId, timestamp: new Date().toISOString(), content: '', feedback, suggestions: [],
+    });
+
     // [PER-REPORT REGENERATE]: re-run a SINGLE agent at a new tone (from the report's
     // Soften/Harden buttons via a CustomEvent). Persists the new tone so it sticks.
     const regenerateAgent = async (agentId: string, intensity: 'soft' | 'balanced' | 'hard') => {
@@ -215,8 +221,14 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
         try {
             const eng = agentModels[agentId] || recommendedModelFor(agentId, engineOptions) || boardroomEngine;
             const result = await runMultiAgentAnalysis(scoped, [agentId], eng?.provider, eng?.model, analyticScope, chapters, undefined, false, false, undefined, projectFolder || undefined, intensity);
-            if (result && result[agentId]) setAgentReports(prev => ({ ...prev, [agentId]: result[agentId] }));
-        } catch { /* surfaced via report state */ }
+            const report = result && result[agentId];
+            // Always update the report — even a failure must be visible, never a silent no-op.
+            setAgentReports(prev => ({ ...prev, [agentId]: report ||
+                stubReport(agentId, `**${agentId} — No response.** The engine returned nothing. Try a different model or check the key/quota.`) }));
+        } catch (e) {
+            const m = e instanceof Error ? e.message : String(e);
+            setAgentReports(prev => ({ ...prev, [agentId]: stubReport(agentId, `**${agentId} — Re-run could not complete.**\n\n${m}`) }));
+        }
         finally { setIsAnalyzing(false); }
     };
     // Keep an always-fresh ref so the event listener never calls a stale closure.
@@ -254,13 +266,25 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
                 // Explicit per-agent override wins, else the recommended best-for-role
                 // model, else the global Boardroom Engine.
                 const eng = agentModels[agentId] || recommendedModelFor(agentId, engineOptions) || boardroomEngine;
-                const result = await runMultiAgentAnalysis(scopedContent, [agentId], eng?.provider, eng?.model, analyticScope, chapters, undefined, false, false, undefined, projectFolder || undefined, agentIntensities[agentId] || 'balanced');
-                if (result && result[agentId]) {
-                    setAgentReports(prev => ({ ...prev, [agentId]: result[agentId] }));
+                // [ALWAYS A REPORT]: a run that shows neither a report nor an error is
+                // itself a failure. Each agent is wrapped so it ALWAYS yields something
+                // — a real report, a "no response" note, or a visible error — and the
+                // loop never aborts (so the report panel always opens).
+                try {
+                    const result = await runMultiAgentAnalysis(scopedContent, [agentId], eng?.provider, eng?.model, analyticScope, chapters, undefined, false, false, undefined, projectFolder || undefined, agentIntensities[agentId] || 'balanced');
+                    const report = result && result[agentId];
+                    setAgentReports(prev => ({ ...prev, [agentId]: report ||
+                        stubReport(agentId, `**${agentId} — No response.** The engine returned nothing for this specialist. Try a different model, or check the key and quota in Settings.`) }));
+                } catch (e) {
+                    const m = e instanceof Error ? e.message : String(e);
+                    setAgentReports(prev => ({ ...prev, [agentId]:
+                        stubReport(agentId, `**${agentId} — Analysis could not complete.**\n\n${m}\n\nIf this looks like a timeout, the run may be slow (e.g. chapter-by-chapter on a blocked manuscript). Try a faster model, a smaller chapter range, or a local model (Sovereign mode).`) }));
                 }
             }
             onCompletion();
-        } catch (err) { }
+        } catch (err) {
+            notify(`Boardroom error: ${err instanceof Error ? err.message : String(err)}`);
+        }
         finally { setIsAnalyzing(false); }
     };
 

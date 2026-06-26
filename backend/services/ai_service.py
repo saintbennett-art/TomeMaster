@@ -426,12 +426,27 @@ def _is_content_block(msg: str) -> bool:
     ))
 
 
+def _is_quota_error(msg: str) -> bool:
+    """True when an error is a rate-limit / quota exhaustion (free-tier RPM/RPD)."""
+    m = (msg or "").lower()
+    return any(k in m for k in (
+        "429", "resource_exhausted", "quota", "rate limit", "too many requests", "exhausted",
+    ))
+
+
 async def _analyze_persona_by_chapter(persona, user_chapters, override, intensity):
     """[GRACEFUL DEGRADATION]: the model refused the whole manuscript on content
-    policy — analyze it CHAPTER BY CHAPTER instead so the analyzable chapters still
-    get a report, and any chapter that's also refused is skipped with a clear note.
-    (Line/copy work needs no whole-manuscript context, so quality is preserved.)"""
+    policy — analyze it CHAPTER BY CHAPTER so the analyzable chapters still get a
+    report. QUOTA-AWARE: uses the tier-safe model directly (no wasted pro calls) and
+    STOPS the moment a rate/quota limit is hit instead of hammering the key — then
+    shows everything analyzed so far with a clear next step."""
+    # Use the free-tier-safe model directly so we don't burn a 429 pro call per chapter.
+    ov = dict(override or {})
+    if ov.get("provider") in _QUOTA_FALLBACK_MODEL:
+        ov["model"] = _QUOTA_FALLBACK_MODEL[ov["provider"]]
+
     parts, suggestions, blocked, analyzed = [], [], [], 0
+    quota_stop = None
     for i, ch in enumerate(user_chapters or []):
         ch = ch or {}
         ch_text = (ch.get("content") or "").strip()
@@ -440,27 +455,40 @@ async def _analyze_persona_by_chapter(persona, user_chapters, override, intensit
             continue
         try:
             prompt, is_json, role = prompt_orchestrator.build_industrial_prompt(ch_text, persona, None, intensity=intensity)
-            res = await _call_standard_gateway(role, prompt, is_json, override=override)
+            res = await _call_standard_gateway(role, prompt, is_json, override=ov)
             fb = res.get("feedback", "") if isinstance(res, dict) else str(res)
             if isinstance(res, dict):
                 suggestions.extend(res.get("suggestions", []) or [])
             parts.append(f"## {title}\n\n{fb}")
             analyzed += 1
         except Exception as ce:
-            if _is_content_block(str(ce)):
+            cm = str(ce)
+            if _is_quota_error(cm):
+                quota_stop = title          # quota won't recover this run — STOP, don't hammer.
+                break
+            if _is_content_block(cm):
                 blocked.append(title)
-                parts.append(f"## {title}\n\n*Skipped — the model's content policy refused this chapter. "
-                             f"Re-run it on another provider (OpenAI / Anthropic) or a local model.*")
+                parts.append(f"## {title}\n\n*Skipped — the model's content policy refused this chapter.*")
             else:
-                parts.append(f"## {title}\n\n*Could not analyze: {str(ce)[:140]}*")
+                parts.append(f"## {title}\n\n*Could not analyze: {cm[:140]}*")
 
+    # Nothing usable AND we stopped on quota: raise a clear quota error (the caller's
+    # handler appends the billing/usage link). Otherwise, always show partial results.
     if analyzed == 0 and not blocked:
-        raise Exception("chapter-by-chapter fallback produced no analyzable content")
+        raise Exception(
+            "Rate limit / quota reached before any chapter could be analyzed. Free API "
+            "tiers are very limited — for a full manuscript, use a LOCAL model (Sovereign "
+            "mode: unlimited, free, no content policy) or add a paid key."
+        )
 
-    note = ("> **Note:** the model's content policy refused the full manuscript, so it was "
-            "analyzed chapter by chapter.")
+    note = ("> **Note:** the model refused the full manuscript, so it was analyzed chapter "
+            "by chapter.")
     if blocked:
-        note += f" Chapters skipped on content policy: {', '.join(blocked)}."
+        note += f" Skipped on content policy: {', '.join(blocked)}."
+    if quota_stop:
+        note += (f" **Stopped at {quota_stop} — the provider's free-tier rate/quota limit "
+                 f"was reached after {analyzed} chapter(s).** To finish the rest, switch this "
+                 f"specialist to a LOCAL model (Sovereign mode: unlimited & free) or a paid key.")
     return {"feedback": note + "\n\n" + "\n\n".join(parts), "suggestions": suggestions}
 
 
