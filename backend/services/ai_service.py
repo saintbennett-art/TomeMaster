@@ -105,6 +105,79 @@ async def _call_anthropic_gateway(model: str, key: str, prompt: str, is_json: bo
             raise Exception(f"Anthropic Gateway Unreachable: {target_url}")
 
 
+# Configurable Gemini safety categories — set permissive so the editor can analyze
+# fiction with mature/violent themes (the OpenAI-compat endpoint can't relax these;
+# the native SDK can). NOTE: this does NOT affect Gemini's core PROHIBITED_CONTENT
+# policy, which is non-configurable — that content must go to another provider.
+_GEMINI_SAFE_CATS = (
+    "HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH",
+    "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT",
+    "HARM_CATEGORY_CIVIC_INTEGRITY",
+)
+
+
+async def _call_gemini_gateway(role: str, model: str, key: str, prompt: str, is_json: bool):
+    """[GEMINI ADAPTER]: native google-genai SDK so we can set permissive safety
+    thresholds (a manuscript editor must analyze mature fiction). Falls over to a
+    free-tier-safe model on quota, and surfaces a clear, provider-switch message
+    when Gemini's non-configurable core policy refuses the content."""
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(api_key=key)
+    safety = [types.SafetySetting(category=c, threshold="BLOCK_NONE") for c in _GEMINI_SAFE_CATS]
+
+    def _gen(m):
+        kwargs = {"safety_settings": safety}
+        if is_json:
+            kwargs["response_mime_type"] = "application/json"
+        return client.models.generate_content(model=m, contents=prompt, config=types.GenerateContentConfig(**kwargs))
+
+    print(f"GATEWAY PULSE: GEMINI(native) -> {model}")
+    try:
+        resp = await asyncio.to_thread(_gen, model)
+    except Exception as e:
+        msg = str(e)
+        fb = _QUOTA_FALLBACK_MODEL.get("gemini")
+        # Free keys can't use pro models (limit 0) -> quota error -> drop to flash.
+        if fb and fb != model and ("429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower()):
+            print(f"GATEWAY FAILOVER: gemini:{model} -> quota; retrying with {fb}")
+            model = fb
+            resp = await asyncio.to_thread(_gen, model)
+        else:
+            raise
+
+    text = None
+    try:
+        text = resp.text
+    except Exception:
+        text = None
+
+    if not text:
+        reason = None
+        try:
+            if getattr(resp, "candidates", None):
+                reason = str(getattr(resp.candidates[0], "finish_reason", "") or "")
+            if not reason and getattr(resp, "prompt_feedback", None):
+                reason = str(getattr(resp.prompt_feedback, "block_reason", "") or "")
+        except Exception:
+            pass
+        raise Exception(
+            f"Gemini returned no content for model '{model}'"
+            + (f" (blocked: {reason})" if reason else "")
+            + ". Gemini's core content policy can refuse fiction with mature or violent "
+              "themes and this cannot be disabled. Route this specialist to another "
+              "provider (OpenAI / Anthropic) or a local model, which have no such policy."
+        )
+
+    usage = getattr(resp, "usage_metadata", None)
+    total = getattr(usage, "total_token_count", 0) if usage else 0
+    log_api_usage(role, "gemini", model, {"total_tokens": total or 0})
+    if is_json:
+        return _robust_parse_json(text)
+    return {"feedback": text}
+
+
 # [QUOTA SAFETY NET]: tier-safe fallback model per provider, used ONLY when the
 # resolved model returns 429/503 at runtime. Not the primary selection.
 _QUOTA_FALLBACK_MODEL = {
@@ -145,6 +218,12 @@ async def _call_standard_gateway(role: str, prompt: str, is_json: bool = True, o
     # openai, groq, ollama) continue through the standard path.
     if provider == "anthropic":
         return await _call_anthropic_gateway(model, key, prompt, is_json)
+
+    # [GEMINI NATIVE]: route Gemini through the SDK so we can relax safety filters
+    # for fiction (the OpenAI-compat endpoint rejects safety_settings). Local/custom
+    # OpenAI-compatible engines continue through the standard path below.
+    if provider == "gemini":
+        return await _call_gemini_gateway(role, model, key, prompt, is_json)
 
     # [CERTIFICATION STANDARD]: Use standard httpx for gateway communication.
     # [LOCAL JOB POLICY]: serialize local inference (one at a time); cloud is unaffected.
@@ -190,7 +269,28 @@ async def _call_standard_gateway(role: str, prompt: str, is_json: bool = True, o
                     )
 
                 data = response.json()
-                raw_content = data["choices"][0]["message"]["content"]
+                # [ROBUST EXTRACT]: a 200 can still carry no usable content — a safety
+                # block, an agentic/non-chat model (e.g. deep-research), or an error body
+                # returned as 200. Surface the REAL reason instead of a bare KeyError.
+                raw_content = None
+                if isinstance(data, dict):
+                    choices = data.get("choices") or []
+                    if choices and isinstance(choices[0], dict):
+                        raw_content = (choices[0].get("message") or {}).get("content")
+                if not raw_content:
+                    finish = None
+                    detail = None
+                    if isinstance(data, dict):
+                        ch = data.get("choices") or []
+                        if ch and isinstance(ch[0], dict):
+                            finish = ch[0].get("finish_reason")
+                        err = data.get("error")
+                        detail = err.get("message") if isinstance(err, dict) else None
+                    raise Exception(
+                        f"{(provider or 'gateway').title()} returned no usable content for model '{model}'"
+                        + (f" (finish_reason: {finish})" if finish else "")
+                        + (f": {detail}" if detail else ". This model may not support standard chat completions — choose a different model.")
+                    )
                 # [LEDGER]: OpenAI-compatible gateways (incl. Gemini-compat, Groq)
                 # return token usage here — log it so the boardroom shows up in the
                 # cost ledger, not just PDF OCR.
@@ -316,6 +416,54 @@ def _build_override(provider: str = None, api_key: str = None, model: str = None
     return o or None
 
 
+def _is_content_block(msg: str) -> bool:
+    """True when an error indicates the model refused the content on policy grounds
+    (a safety/PROHIBITED block), as opposed to a key/quota/network failure."""
+    m = (msg or "").lower()
+    return any(k in m for k in (
+        "prohibited_content", "content_filter", "no usable content",
+        "no content for model", "blocked:", "safety",
+    ))
+
+
+async def _analyze_persona_by_chapter(persona, user_chapters, override, intensity):
+    """[GRACEFUL DEGRADATION]: the model refused the whole manuscript on content
+    policy — analyze it CHAPTER BY CHAPTER instead so the analyzable chapters still
+    get a report, and any chapter that's also refused is skipped with a clear note.
+    (Line/copy work needs no whole-manuscript context, so quality is preserved.)"""
+    parts, suggestions, blocked, analyzed = [], [], [], 0
+    for i, ch in enumerate(user_chapters or []):
+        ch = ch or {}
+        ch_text = (ch.get("content") or "").strip()
+        title = ch.get("suggested_title") or ch.get("title") or f"Chapter {i + 1}"
+        if not ch_text:
+            continue
+        try:
+            prompt, is_json, role = prompt_orchestrator.build_industrial_prompt(ch_text, persona, None, intensity=intensity)
+            res = await _call_standard_gateway(role, prompt, is_json, override=override)
+            fb = res.get("feedback", "") if isinstance(res, dict) else str(res)
+            if isinstance(res, dict):
+                suggestions.extend(res.get("suggestions", []) or [])
+            parts.append(f"## {title}\n\n{fb}")
+            analyzed += 1
+        except Exception as ce:
+            if _is_content_block(str(ce)):
+                blocked.append(title)
+                parts.append(f"## {title}\n\n*Skipped — the model's content policy refused this chapter. "
+                             f"Re-run it on another provider (OpenAI / Anthropic) or a local model.*")
+            else:
+                parts.append(f"## {title}\n\n*Could not analyze: {str(ce)[:140]}*")
+
+    if analyzed == 0 and not blocked:
+        raise Exception("chapter-by-chapter fallback produced no analyzable content")
+
+    note = ("> **Note:** the model's content policy refused the full manuscript, so it was "
+            "analyzed chapter by chapter.")
+    if blocked:
+        note += f" Chapters skipped on content policy: {', '.join(blocked)}."
+    return {"feedback": note + "\n\n" + "\n\n".join(parts), "suggestions": suggestions}
+
+
 async def run_boardroom_parallel(
     text: str,
     personas: list,
@@ -346,9 +494,17 @@ async def run_boardroom_parallel(
             response = await _call_standard_gateway(role, prompt, is_json, override=override)
             return persona, response
         except Exception as e:
+            msg = str(e)
+            # [GRACEFUL DEGRADATION]: if the model refused the WHOLE submission on
+            # content policy, retry chapter-by-chapter so the analyzable chapters still
+            # get a report instead of the user losing the entire pass.
+            if _is_content_block(msg) and user_chapters and any((c or {}).get("content") for c in user_chapters):
+                try:
+                    return persona, await _analyze_persona_by_chapter(persona, user_chapters, override, intensity)
+                except Exception:
+                    pass  # fall through to the honest error below
             # Surface the raw provider error (governance: never swallow), then append a
             # self-service resolution link (billing/keys) so the user can act on it.
-            msg = str(e)
             link = providers.provider_help_link(msg, (override or {}).get("provider"))
             return persona, {"feedback": f"Expert {persona} Offline: {msg}{link}"}
 

@@ -753,7 +753,10 @@ export interface DiscoveredModel {
  */
 export async function fetchAvailableModels(provider: string): Promise<DiscoveredModel[]> {
     try {
-        const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/models?provider=${encodeURIComponent(provider)}`);
+        // Gemini's live SDK model-list can take ~15-20s on a cold call — give discovery
+        // a generous timeout so it isn't dropped by the default 15s (which left Gemini
+        // missing from the boardroom picker while faster providers loaded).
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/models?provider=${encodeURIComponent(provider)}`, {}, 35000);
         if ('isNetworkError' in res) return [];
         const response = res as Response;
         if (!response.ok) return [];

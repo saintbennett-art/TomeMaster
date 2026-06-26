@@ -25,17 +25,19 @@ function CmdRow({ cmd }: { cmd: string }) {
 
 /** Inline key entry: get-key link + masked input + Save, writing straight to the
  *  encrypted vault. Shows a sealed state for keys already configured. */
-function ProviderKeyRow({ provider, sealed, onSaved }: { provider: Provider; sealed: boolean; onSaved: (id: string) => void }) {
+function ProviderKeyRow({ provider, sealed, onSaved, onChange }: { provider: Provider; sealed: boolean; onSaved: (id: string) => void; onChange: (id: string, value: string) => void }) {
     const [val, setVal] = useState('');
     const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>(sealed ? 'saved' : 'idle');
     const [msg, setMsg] = useState('');
+
+    const setValue = (v: string) => { setVal(v); onChange(provider.id, v); };
 
     const save = async () => {
         const k = val.trim();
         if (!k) return;
         setState('saving'); setMsg('');
         const ok = await saveVaultToEnv({ [provider.id]: k });
-        if (ok) { setState('saved'); setVal(''); onSaved(provider.id); }
+        if (ok) { setState('saved'); setVal(''); onChange(provider.id, ''); onSaved(provider.id); }
         else { setState('error'); setMsg('Save failed — re-check the key.'); }
     };
 
@@ -60,7 +62,7 @@ function ProviderKeyRow({ provider, sealed, onSaved }: { provider: Provider; sea
                     <input
                         type="password"
                         value={val}
-                        onChange={e => setVal(e.target.value)}
+                        onChange={e => setValue(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter') save(); }}
                         placeholder={provider.placeholder}
                         className="flex-1 bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white font-mono outline-none focus:border-indigo-500/50"
@@ -147,7 +149,14 @@ export default function OnboardingModal({ isOpen, onClose }: OnboardingModalProp
 
     // Which providers already have a key in the vault (so we show "saved" not an empty field).
     const [sealed, setSealed] = useState<Record<string, boolean>>({});
-    const markSealed = (id: string) => setSealed(prev => ({ ...prev, [id]: true }));
+    const markSealed = (id: string) => {
+        setSealed(prev => ({ ...prev, [id]: true }));
+        // Tell the rest of the app a key changed so the boardroom re-reads its model list.
+        window.dispatchEvent(new CustomEvent('tome-master-settings-changed'));
+    };
+    // Typed-but-not-yet-saved key inputs, so the footer button can flush them (no lost keys).
+    const [pending, setPending] = useState<Record<string, string>>({});
+    const setPendingKey = (id: string, value: string) => setPending(prev => ({ ...prev, [id]: value }));
 
     // Live local-engine detection for the Sovereign path.
     const [engines, setEngines] = useState<LocalEngine[]>([]);
@@ -180,7 +189,17 @@ export default function OnboardingModal({ isOpen, onClose }: OnboardingModalProp
         setStep(2);
     };
 
-    const finalize = () => {
+    const finalize = async () => {
+        // [NO LOST KEYS]: flush any pasted-but-unsaved key inputs before closing, so the
+        // prominent footer button works even if the user didn't click each row's Save.
+        const toSave = Object.fromEntries(
+            Object.entries(pending).filter(([id, v]) => v.trim() && !sealed[id]).map(([id, v]) => [id, v.trim()])
+        );
+        if (Object.keys(toSave).length > 0) {
+            await saveVaultToEnv(toSave);
+            window.dispatchEvent(new CustomEvent('tome-master-settings-changed'));
+        }
+
         if (selectedPath === 'sovereign') {
             setPref('local_mode', true);
         } else {
@@ -297,7 +316,7 @@ export default function OnboardingModal({ isOpen, onClose }: OnboardingModalProp
                                     <p className="text-[12px] text-zinc-400 mb-3">
                                         <span className="text-white font-bold">Google Gemini</span> has a genuinely free API tier — grab a key (takes a minute) and the whole app runs at <span className="text-emerald-400 font-bold">no cost</span>.
                                     </p>
-                                    <ProviderKeyRow provider={GEMINI} sealed={!!sealed.gemini} onSaved={markSealed} />
+                                    <ProviderKeyRow provider={GEMINI} sealed={!!sealed.gemini} onSaved={markSealed} onChange={setPendingKey} />
                                     <label className="flex items-center gap-2 mt-3 cursor-pointer select-none">
                                         <input type="checkbox" checked={preferGemini} onChange={e => setPreferGemini(e.target.checked)}
                                             className="w-4 h-4 accent-emerald-500" />
@@ -321,7 +340,7 @@ export default function OnboardingModal({ isOpen, onClose }: OnboardingModalProp
                                     </p>
                                     <div className="space-y-2">
                                         {PAID_PROVIDERS.map(p => (
-                                            <ProviderKeyRow key={p.id} provider={p} sealed={!!sealed[p.id]} onSaved={markSealed} />
+                                            <ProviderKeyRow key={p.id} provider={p} sealed={!!sealed[p.id]} onSaved={markSealed} onChange={setPendingKey} />
                                         ))}
                                     </div>
                                 </div>
@@ -329,7 +348,8 @@ export default function OnboardingModal({ isOpen, onClose }: OnboardingModalProp
 
                             <div className="w-full mt-6">
                                 <FooterButtons onBack={() => setStep(1)} onActivate={finalize}
-                                    label={sealed.gemini || sealed.openai || sealed.anthropic || sealed.groq ? 'Enter Tome-Master' : 'Skip for now'}
+                                    label={(['gemini', 'openai', 'anthropic', 'groq'].some(id => sealed[id]) || Object.values(pending).some(v => v.trim()))
+                                        ? 'Save & Enter Tome-Master' : 'Skip for now'}
                                     color="bg-emerald-600 hover:bg-emerald-500" />
                             </div>
                         </div>

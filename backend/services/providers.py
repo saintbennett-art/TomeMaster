@@ -322,9 +322,11 @@ import re as _re
 _NON_CHAT_HINTS = (
     "embed", "embedding", "whisper", "tts", "text-to-speech", "moderation", "guard",
     "rerank", "realtime", "audio", "transcribe", "dall-e", "dalle", "imagen",
-    "image-generation", "stable-diffusion", "diffusion", "sora", "clip", "-search",
+    "image", "stable-diffusion", "diffusion", "sora", "clip", "-search",
     # media-generation / speech models that aren't text-chat (per-provider offenders)
     "lyria", "orpheus", "veo", "music", "speech", "voice", "playai", "canopy",
+    # agentic / non-chat-completions models (don't return a standard message)
+    "deep-research", "computer-use", "-tts", "gemma-3n-e2b-it-litert",
 )
 
 

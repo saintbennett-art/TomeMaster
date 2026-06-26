@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Maximize2, Minimize2, Save, Eye, Zap, RefreshCw, ExternalLink, ShieldAlert, ShieldCheck, Lock, LockOpen } from "lucide-react";
 import { useDraggableDialog } from "@/components/workstation/DraggableDialog";
 import { isFrontMatter } from "@/lib/chapters";
@@ -153,27 +153,34 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
             return next;
         });
     };
-    useEffect(() => {
-        (async () => {
-            try {
-                const presence = await fetchVaultSync();
-                const keyed = ['gemini', 'openai', 'anthropic', 'groq'].filter((p) => presence && presence[p]);
-                // Fetch every keyed provider IN PARALLEL so a slow one (e.g. Gemini's
-                // live SDK list) is never dropped by a sequential loop. The backend
-                // returns chat-only models ranked best-first; keep the top 4 per
-                // provider so the picker stays short and useful.
-                const perProvider = await Promise.all(keyed.map(async (p) => {
-                    try {
-                        const models = await fetchAvailableModels(p);
-                        return models.slice(0, 4).map((m: DiscoveredModel) => ({ provider: p, model: m.id, trait: m.trait, quality: m.quality }));
-                    } catch {
-                        return [] as { provider: string; model: string; trait?: string; quality?: number }[];
-                    }
-                }));
-                setEngineOptions(perProvider.flat());
-            } catch { /* leave empty; dispatch falls back to defaults */ }
-        })();
+    // Load the boardroom model picker: every keyed provider fetched IN PARALLEL so a
+    // slow one (e.g. Gemini's live SDK list) is never dropped; backend returns chat-only
+    // models ranked best-first; keep the top 4 per provider so the picker stays short.
+    const loadEngineOptions = useCallback(async () => {
+        try {
+            const presence = await fetchVaultSync();
+            const keyed = ['gemini', 'openai', 'anthropic', 'groq'].filter((p) => presence && presence[p]);
+            const perProvider = await Promise.all(keyed.map(async (p) => {
+                try {
+                    const models = await fetchAvailableModels(p);
+                    return models.slice(0, 4).map((m: DiscoveredModel) => ({ provider: p, model: m.id, trait: m.trait, quality: m.quality }));
+                } catch {
+                    return [] as { provider: string; model: string; trait?: string; quality?: number }[];
+                }
+            }));
+            setEngineOptions(perProvider.flat());
+        } catch { /* leave empty; dispatch falls back to defaults */ }
     }, []);
+
+    useEffect(() => {
+        loadEngineOptions();
+        // Re-read the model list whenever keys change (e.g. after onboarding/Settings
+        // saves a new key) so the dropdowns populate without a manual reload.
+        if (typeof window === 'undefined') return;
+        const onChanged = () => loadEngineOptions();
+        window.addEventListener('tome-master-settings-changed', onChanged);
+        return () => window.removeEventListener('tome-master-settings-changed', onChanged);
+    }, [loadEngineOptions]);
 
     // [SCOPE READOUT]: keep the picker's "Targeting" + "Payload Weight" honest about the
     // actual selection (front matter excluded), instead of always saying "Full Scope".

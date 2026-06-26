@@ -319,6 +319,22 @@ const SettingsModal = ({ isOpen, onClose, activeProvider, setActiveProvider, act
                         {activeTab === "keys" && (
                             <div className="space-y-6">
 
+                                {/* [SETUP GUIDE]: reopen the tiered startup walkthrough
+                                    (free Gemini default + how to add premium / local). */}
+                                <button
+                                    onClick={() => { onClose(); window.dispatchEvent(new CustomEvent('tome-master-open-onboarding')); }}
+                                    className="w-full flex items-center justify-between gap-3 p-4 rounded-2xl border border-emerald-500/25 bg-emerald-500/5 hover:bg-emerald-500/10 transition-all text-left group"
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <Sparkles className="w-5 h-5 text-emerald-400 shrink-0" />
+                                        <div>
+                                            <p className="text-[11px] font-black text-white uppercase tracking-widest">AI Setup Guide</p>
+                                            <p className="text-[10px] text-zinc-400">Free Gemini start, premium keys, or fully-local — walkthrough with links.</p>
+                                        </div>
+                                    </div>
+                                    <span className="text-emerald-400 text-[10px] font-black uppercase tracking-widest opacity-70 group-hover:opacity-100">Open →</span>
+                                </button>
+
                                 {/* Per-provider key inputs */}
                                 <div className="space-y-3">
                                     <h3 className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.25em] flex items-center gap-2">

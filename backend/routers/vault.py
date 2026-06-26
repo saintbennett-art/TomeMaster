@@ -149,6 +149,15 @@ async def validate_and_prune_vault():
     return {"validity": validity, "pruned": []}
 
 
+import time as _time
+
+# [DISCOVERY CACHE]: live model-list calls (esp. Gemini's SDK) are slow (~15-20s cold).
+# Cache the curated payload per provider for a few minutes so the boardroom picker
+# doesn't re-pay that cost on every open. Keyed by the key-tail so a changed key refreshes.
+_MODELS_CACHE: dict = {}
+_MODELS_TTL = 300.0  # seconds
+
+
 def _attach_traits(models):
     """Curate the discovered list to chat-only, dedupe snapshot families, sort
     best-first, then tag each with a short primary-trait label for the UI. Keeps
@@ -174,6 +183,11 @@ async def discover_available_models(provider: str = "gemini"):
     if not api_key:
         return {"models": [], "error": f"No API key found for provider: {provider}"}
 
+    cache_key = f"{provider}:{api_key[-6:]}"
+    cached = _MODELS_CACHE.get(cache_key)
+    if cached and (_time.time() - cached[0]) < _MODELS_TTL:
+        return cached[1]
+
     try:
         if provider == "gemini":
             from google import genai
@@ -195,7 +209,9 @@ async def discover_available_models(provider: str = "gemini"):
                             "description": getattr(m, "description", ""),
                         }
                     )
-            return {"models": _attach_traits(models), "provider": provider}
+            payload = {"models": _attach_traits(models), "provider": provider}
+            _MODELS_CACHE[cache_key] = (_time.time(), payload)
+            return payload
 
         elif provider == "openai":
             from openai import OpenAI
@@ -207,7 +223,9 @@ async def discover_available_models(provider: str = "gemini"):
                 for m in response.data
                 if "gpt" in m.id or "o1" in m.id or "o3" in m.id
             ]
-            return {"models": _attach_traits(models), "provider": provider}
+            payload = {"models": _attach_traits(models), "provider": provider}
+            _MODELS_CACHE[cache_key] = (_time.time(), payload)
+            return payload
 
         elif provider == "groq":
             from openai import OpenAI
@@ -219,7 +237,9 @@ async def discover_available_models(provider: str = "gemini"):
             models = [
                 {"id": m.id, "name": m.id, "description": ""} for m in response.data
             ]
-            return {"models": _attach_traits(models), "provider": provider}
+            payload = {"models": _attach_traits(models), "provider": provider}
+            _MODELS_CACHE[cache_key] = (_time.time(), payload)
+            return payload
 
         elif provider == "anthropic":
             # Single source of truth — same portfolio the resolver/validator use.
@@ -229,7 +249,9 @@ async def discover_available_models(provider: str = "gemini"):
                 {"id": mid, "name": mid, "description": ""}
                 for mid in ANTHROPIC_STATIC_PORTFOLIO
             ]
-            return {"models": _attach_traits(models), "provider": provider}
+            payload = {"models": _attach_traits(models), "provider": provider}
+            _MODELS_CACHE[cache_key] = (_time.time(), payload)
+            return payload
 
         return {"models": [], "error": f"Unknown provider: {provider}"}
 
