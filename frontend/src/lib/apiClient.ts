@@ -152,7 +152,8 @@ export async function runMultiAgentAnalysis(
     localMode: boolean = false,
     synthesisMode: boolean = false,
     customPrompt?: string,
-    projectFolder?: string
+    projectFolder?: string,
+    intensity: string = 'balanced'
 ) {
     // Keys live only in the backend vault; never sent from the browser.
     const apiKey = '';
@@ -171,7 +172,8 @@ export async function runMultiAgentAnalysis(
             analytic_scope: analyticScope,
             user_chapters: userChapters,
             synthesis_mode: synthesisMode,
-            custom_prompt: customPrompt
+            custom_prompt: customPrompt,
+            intensity
         }),
     });
 

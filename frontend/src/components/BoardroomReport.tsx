@@ -273,6 +273,26 @@ export default function BoardroomReport({ isOpen, onClose, arcData, chapters, ag
                                                     {isSpeakingCritique ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
                                                 </button>
                                             )}
+                                            {currentReport && (
+                                                <div className="flex items-center gap-1.5">
+                                                    <button
+                                                        onClick={() => window.dispatchEvent(new CustomEvent('tome-master-regenerate-agent', { detail: { agentId: activeAgent, intensity: 'soft' } }))}
+                                                        disabled={isAnalyzing}
+                                                        title="Re-run this critique with a gentler, more encouraging tone"
+                                                        className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                                                    >
+                                                        Soften
+                                                    </button>
+                                                    <button
+                                                        onClick={() => window.dispatchEvent(new CustomEvent('tome-master-regenerate-agent', { detail: { agentId: activeAgent, intensity: 'hard' } }))}
+                                                        disabled={isAnalyzing}
+                                                        title="Re-run this critique blunter, more rigorous and exhaustive"
+                                                        className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest bg-rose-500/10 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                                                    >
+                                                        Harden
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
                                         <div className="flex items-center gap-3">
                                             <span className="text-xs font-bold text-indigo-400 bg-indigo-500/10 px-3 py-1 rounded-full border border-indigo-500/20 tracking-wider">CRITIQUE COMPLETE</span>

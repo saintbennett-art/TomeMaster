@@ -324,6 +324,7 @@ async def run_boardroom_parallel(
     *,
     model: str = None,
     user_chapters: list = None,
+    intensity: str = "balanced",
     **kwargs,
 ):
     """
@@ -332,6 +333,7 @@ async def run_boardroom_parallel(
 
     Per-request `provider`/`api_key`/`model` override the role-based gateway
     resolved from the encrypted vault, so the UI's slot and key choices take effect.
+    `intensity` (soft|balanced|hard) hardens or softens the critique tone.
     """
     override = _build_override(provider, api_key, model)
 
@@ -339,7 +341,7 @@ async def run_boardroom_parallel(
         try:
             # [MODULAR ORCHESTRATION]: Delegate prompt building to the orchestrator
             prompt, is_json, role = prompt_orchestrator.build_industrial_prompt(
-                text, persona, user_chapters
+                text, persona, user_chapters, intensity=intensity
             )
             response = await _call_standard_gateway(role, prompt, is_json, override=override)
             return persona, response

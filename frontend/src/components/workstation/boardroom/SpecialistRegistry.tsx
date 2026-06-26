@@ -59,11 +59,15 @@ interface SpecialistRegistryProps {
     agentModels?: Record<string, { provider: string; model: string }>;
     setAgentModel?: (agentId: string, provider: string, model: string) => void;
     defaultEngine?: { provider: string; model: string } | null;
+    // [PER-AGENT TONE]: harden/soften each critique (absent = 'balanced').
+    agentIntensities?: Record<string, 'soft' | 'balanced' | 'hard'>;
+    setAgentIntensity?: (agentId: string, intensity: 'soft' | 'balanced' | 'hard') => void;
 }
 
 export const SpecialistRegistry: React.FC<SpecialistRegistryProps> = ({
     selectedAgents, setSelectedAgents, customAgents, setCustomAgents,
     engineOptions = [], agentModels = {}, setAgentModel, defaultEngine = null,
+    agentIntensities = {}, setAgentIntensity,
 }) => {
     const [newAgent, setNewAgent] = React.useState("");
     const toggleAgent = (id: string) => {
@@ -102,6 +106,29 @@ export const SpecialistRegistry: React.FC<SpecialistRegistryProps> = ({
         );
     };
 
+    // Per-agent critique tone: Gentle / Balanced / Blunt (absent = balanced).
+    const TONES: Array<{ key: 'soft' | 'balanced' | 'hard'; label: string }> = [
+        { key: 'soft', label: 'Gentle' }, { key: 'balanced', label: 'Balanced' }, { key: 'hard', label: 'Blunt' },
+    ];
+    const renderTonePicker = (agentId: string) => {
+        if (!setAgentIntensity) return null;
+        const cur = agentIntensities[agentId] || 'balanced';
+        return (
+            <div className="mt-1.5 flex items-center gap-0.5 bg-black/40 border border-white/10 rounded-lg p-0.5" onClick={(e) => e.stopPropagation()}>
+                {TONES.map(t => (
+                    <button
+                        key={t.key}
+                        onClick={(e) => { e.stopPropagation(); setAgentIntensity(agentId, t.key); }}
+                        title={t.key === 'soft' ? 'Encouraging, diplomatic' : t.key === 'hard' ? 'Blunt, rigorous, exhaustive' : 'Default professional tone'}
+                        className={`flex-1 py-1 rounded-md text-[7px] font-black uppercase tracking-widest transition-colors ${cur === t.key ? (t.key === 'hard' ? 'bg-rose-500/20 text-rose-300' : t.key === 'soft' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-indigo-500/20 text-indigo-300') : 'text-zinc-600 hover:text-zinc-300'}`}
+                    >
+                        {t.label}
+                    </button>
+                ))}
+            </div>
+        );
+    };
+
     return (
         <div className="space-y-4">
             <h4 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">Boardroom Specialists</h4>
@@ -118,6 +145,7 @@ export const SpecialistRegistry: React.FC<SpecialistRegistryProps> = ({
                                 </div>
                             </button>
                             {sel && renderAgentPicker(agent.id)}
+                            {sel && renderTonePicker(agent.id)}
                         </div>
                     );
                 })}
@@ -132,6 +160,7 @@ export const SpecialistRegistry: React.FC<SpecialistRegistryProps> = ({
                                 <button onClick={() => { setCustomAgents(customAgents.filter(a => a !== name)); setSelectedAgents(selectedAgents.filter(a => a !== name)); }} className="text-zinc-600 hover:text-rose-400 shrink-0"><XCircle size={13} /></button>
                             </div>
                             {renderAgentPicker(name)}
+                            {renderTonePicker(name)}
                         </div>
                     ))}
                 </div>

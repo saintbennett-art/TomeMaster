@@ -122,11 +122,16 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     // uses the global Boardroom Engine above. Per-project, so it lives in the project
     // file (agent_models), loaded on mount and saved on change.
     const [agentModels, setAgentModels] = useState<Record<string, { provider: string; model: string }>>({});
+    // [PER-AGENT TONE]: harden/soften each specialist's critique. Absent = 'balanced'.
+    const [agentIntensities, setAgentIntensities] = useState<Record<string, 'soft' | 'balanced' | 'hard'>>({});
     useEffect(() => {
         (async () => {
             const state = await loadProjectState(projectFolder || null);
             if (state.agent_models && typeof state.agent_models === 'object') {
                 setAgentModels(state.agent_models as Record<string, { provider: string; model: string }>);
+            }
+            if (state.agent_intensities && typeof state.agent_intensities === 'object') {
+                setAgentIntensities(state.agent_intensities as Record<string, 'soft' | 'balanced' | 'hard'>);
             }
         })();
     }, [projectFolder]);
@@ -136,6 +141,15 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
             if (!provider || !model) delete next[agentId];   // back to the default engine
             else next[agentId] = { provider, model };
             saveProjectState(projectFolder || null, { agent_models: next });
+            return next;
+        });
+    };
+    const setAgentIntensity = (agentId: string, intensity: 'soft' | 'balanced' | 'hard') => {
+        setAgentIntensities(prev => {
+            const next = { ...prev };
+            if (intensity === 'balanced') delete next[agentId];   // balanced is the default
+            else next[agentId] = intensity;
+            saveProjectState(projectFolder || null, { agent_intensities: next });
             return next;
         });
     };
@@ -172,6 +186,39 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
         : (rangeStartIdx === rangeEndIdx ? startTitle : `${startTitle} → ${endTitle}`);
     const startTimeRef = useRef(0);
 
+    // Scope the manuscript text exactly as the dispatch does (range vs full).
+    const getScopedContent = () => analyticScope === "range"
+        ? (chapters.slice(rangeStartIdx, rangeEndIdx + 1).filter((c) => !isFrontMatter(c))
+            .map((c) => c.content || "").join("\n\n").trim() || editorContent)
+        : editorContent;
+
+    // [PER-REPORT REGENERATE]: re-run a SINGLE agent at a new tone (from the report's
+    // Soften/Harden buttons via a CustomEvent). Persists the new tone so it sticks.
+    const regenerateAgent = async (agentId: string, intensity: 'soft' | 'balanced' | 'hard') => {
+        const scoped = getScopedContent();
+        if (!scoped || isAnalyzing) return;
+        setAgentIntensity(agentId, intensity);
+        setCurrentExpert(agentId);
+        setIsAnalyzing(true);
+        try {
+            const eng = agentModels[agentId] || boardroomEngine;
+            const result = await runMultiAgentAnalysis(scoped, [agentId], eng?.provider, eng?.model, analyticScope, chapters, undefined, false, false, undefined, projectFolder || undefined, intensity);
+            if (result && result[agentId]) setAgentReports(prev => ({ ...prev, [agentId]: result[agentId] }));
+        } catch { /* surfaced via report state */ }
+        finally { setIsAnalyzing(false); }
+    };
+    // Keep an always-fresh ref so the event listener never calls a stale closure.
+    const regenRef = useRef(regenerateAgent);
+    useEffect(() => { regenRef.current = regenerateAgent; });
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const d = (e as CustomEvent).detail || {};
+            if (d.agentId) regenRef.current(d.agentId, d.intensity || 'balanced');
+        };
+        window.addEventListener('tome-master-regenerate-agent', handler);
+        return () => window.removeEventListener('tome-master-regenerate-agent', handler);
+    }, []);
+
     // [LOGIC]: Analysis Dispatch
     const runAnalysis = async (forceNoAudit = false) => {
         if (!editorContent || isAnalyzing) return;
@@ -187,18 +234,14 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
         
         try {
             const allAgents = [...selectedAgents, ...customAgents];
-            // Full = the document as-is (a clean transfer of the editor text, so the payload
-            // matches the editor count and is never doubled). Range = the selected chapters'
-            // real text with front matter excluded. Falls back to editor text if empty.
-            const scopedContent = analyticScope === "range"
-                ? (chapters.slice(rangeStartIdx, rangeEndIdx + 1).filter((c) => !isFrontMatter(c))
-                    .map((c) => c.content || "").join("\n\n").trim() || editorContent)
-                : editorContent;
+            // Full = editor text as-is (matches the editor count, never doubled). Range =
+            // the selected chapters' real text with front matter excluded.
+            const scopedContent = getScopedContent();
             for (const agentId of allAgents) {
                 setCurrentExpert(agentId);
                 // Per-agent model override wins; otherwise the global Boardroom Engine.
                 const eng = agentModels[agentId] || boardroomEngine;
-                const result = await runMultiAgentAnalysis(scopedContent, [agentId], eng?.provider, eng?.model, analyticScope, chapters);
+                const result = await runMultiAgentAnalysis(scopedContent, [agentId], eng?.provider, eng?.model, analyticScope, chapters, undefined, false, false, undefined, projectFolder || undefined, agentIntensities[agentId] || 'balanced');
                 if (result && result[agentId]) {
                     setAgentReports(prev => ({ ...prev, [agentId]: result[agentId] }));
                 }
@@ -408,6 +451,7 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
                             customAgents={customAgents} setCustomAgents={setCustomAgents}
                             engineOptions={engineOptions} agentModels={agentModels} setAgentModel={setAgentModel}
                             defaultEngine={boardroomEngine}
+                            agentIntensities={agentIntensities} setAgentIntensity={setAgentIntensity}
                         />
                         {/* [SOVEREIGN LOCK]: real local-engine fidelity + lock toggle */}
                         <div className="p-4 bg-black/30 border border-white/5 rounded-2xl space-y-3">

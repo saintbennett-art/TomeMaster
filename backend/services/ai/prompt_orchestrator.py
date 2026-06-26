@@ -1,10 +1,29 @@
 from .specialist_registry import get_specialist_config
 from typing import Tuple, List, Dict
 
-def build_industrial_prompt(text: str, persona: str, user_chapters: List[Dict] = None) -> Tuple[str, bool, str]:
+# [CRITIQUE INTENSITY]: one reusable tone directive applied across every persona.
+# "balanced" is the prompt as authored (no directive) so default behavior is unchanged.
+TONE_DIRECTIVES = {
+    "soft": (
+        "TONE DIRECTIVE - GENTLE: Be encouraging and diplomatic. Lead with genuine "
+        "strengths, frame problems as opportunities, and use supportive language that "
+        "protects the author's confidence. Stay honest, but soften the delivery."
+    ),
+    "hard": (
+        "TONE DIRECTIVE - BLUNT: Be rigorous, direct, and exhaustive. Name every "
+        "weakness plainly and hold the work to a top-tier professional standard. No "
+        "flattery and no hedging - the author wants the unvarnished assessment."
+    ),
+}
+
+
+def build_industrial_prompt(text: str, persona: str, user_chapters: List[Dict] = None,
+                            intensity: str = "balanced") -> Tuple[str, bool, str]:
     """
     [PROMPT ORCHESTRATOR]: The bridge between the registry and the gateway.
     Handles dynamic logic (like pacing branch) and returns (prompt, is_json, role).
+    `intensity` (soft|balanced|hard) prepends a tone directive that hardens or
+    softens the critique without altering each persona's analytical job.
     """
     config = get_specialist_config(persona)
     template = config["template"]
@@ -33,9 +52,14 @@ def build_industrial_prompt(text: str, persona: str, user_chapters: List[Dict] =
     safe_text = text[:30000] if persona in ("Developmental Editor", "Structural Architect") else text[:15000]
     
     prompt = template.format(
-        text=safe_text, 
+        text=safe_text,
         branch_instruction=branch_instruction,
         persona=persona
     )
-    
+
+    # 3. Tone shaping — prepend the harden/soften directive (no-op when balanced).
+    directive = TONE_DIRECTIVES.get((intensity or "balanced").lower())
+    if directive:
+        prompt = f"{directive}\n\n{prompt}"
+
     return prompt, config["is_json"], config["role"]

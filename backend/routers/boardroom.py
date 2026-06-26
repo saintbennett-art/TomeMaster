@@ -79,6 +79,7 @@ class MultiAgentRequest(BaseModel):
     synthesis_mode: Optional[bool] = False
     custom_prompt: Optional[str] = None
     project_folder: Optional[str] = None
+    intensity: Optional[str] = "balanced"   # soft | balanced | hard — critique tone
 
 
 class BriefingRequest(BaseModel):
@@ -236,6 +237,7 @@ async def convene_boardroom(req: MultiAgentRequest):
             req.api_key,
             model=req.model,
             user_chapters=req.user_chapters,
+            intensity=req.intensity or "balanced",
         )
         if not payload:
             raise ValueError(
