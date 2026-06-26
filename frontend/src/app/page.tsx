@@ -78,6 +78,14 @@ export default function Home() {
                 setKeysState(masked);
             }
 
+            // [SETUP GATE]: if no cloud key is configured and the user isn't in local
+            // (Sovereign) mode, surface the startup setup screen so the app is usable.
+            const hasAnyKey = ['gemini', 'openai', 'anthropic', 'groq'].some(p => masked[p]);
+            await loadPreferences();
+            if (!hasAnyKey && getPref<boolean>('local_mode', false) !== true) {
+                setIsOnboardingOpen(true);
+            }
+
             // [REMOVED]: the background validate-and-prune deleted VALID keys
             // (the /models check false-negatives on some keys). SEALED now reflects
             // vault presence only; the user manages keys manually. Never auto-delete.
@@ -91,6 +99,15 @@ export default function Home() {
       const handleOpenSettings = () => setIsSettingsOpen(true);
       window.addEventListener('tome-master-open-settings', handleOpenSettings);
       return () => window.removeEventListener('tome-master-open-settings', handleOpenSettings);
+    }
+  }, []);
+
+  // Allow re-opening the AI setup / path-choice screen on demand.
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const handleOpenOnboarding = () => setIsOnboardingOpen(true);
+      window.addEventListener('tome-master-open-onboarding', handleOpenOnboarding);
+      return () => window.removeEventListener('tome-master-open-onboarding', handleOpenOnboarding);
     }
   }, []);
 

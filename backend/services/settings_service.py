@@ -48,7 +48,7 @@ _PERMITTED_PREF_KEYS = {
     # [FILES-ONLY MIGRATION]: global UI/app preferences moved off browser
     # localStorage into the vault. Non-secret; live in settings.enc preferences.
     "onboarded", "force_primary", "local_mode", "guide_voice", "greeted",
-    "boardroom_provider", "boardroom_model",
+    "boardroom_provider", "boardroom_model", "default_provider",
     "spell_custom_words", "spell_ignored_words", "spell_language",
     "ui_layout",        # { <dialogId>: { pos:{x,y}, locked:bool } } for draggable panels
     "last_project",     # Group 4: reopen the last book on launch
