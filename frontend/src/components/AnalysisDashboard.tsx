@@ -8,7 +8,7 @@ import { loadPreferences, getPref, setPref } from "@/lib/preferences";
 import { isVisionModel } from "@/lib/ai_config";
 
 // [BLACK BOX IMPORTS]
-import { SpecialistRegistry } from "./workstation/boardroom/SpecialistRegistry";
+import { SpecialistRegistry, recommendedModelFor } from "./workstation/boardroom/SpecialistRegistry";
 import { IntelligencePulse } from "./workstation/boardroom/IntelligencePulse";
 import { NarrativeRangePicker } from "./workstation/boardroom/NarrativeRangePicker";
 import { AuditBriefing } from "./workstation/boardroom/AuditBriefing";
@@ -109,7 +109,7 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     // [BOARDROOM ENGINE]: the USER picks which provider+model runs the boardroom,
     // from the models discovered on their own keys. Persisted so it sticks, and the
     // dispatch sends the prompt to exactly that model (provider follows the model).
-    const [engineOptions, setEngineOptions] = useState<{ provider: string; model: string; trait?: string }[]>([]);
+    const [engineOptions, setEngineOptions] = useState<{ provider: string; model: string; trait?: string; quality?: number }[]>([]);
     // Initialised null; hydrated from vault preferences in the mount effect above.
     const [boardroomEngine, setBoardroomEngine] = useState<{ provider: string; model: string } | null>(null);
     const selectBoardroomEngine = (provider: string, model: string) => {
@@ -165,9 +165,9 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
                 const perProvider = await Promise.all(keyed.map(async (p) => {
                     try {
                         const models = await fetchAvailableModels(p);
-                        return models.slice(0, 4).map((m: DiscoveredModel) => ({ provider: p, model: m.id, trait: m.trait }));
+                        return models.slice(0, 4).map((m: DiscoveredModel) => ({ provider: p, model: m.id, trait: m.trait, quality: m.quality }));
                     } catch {
-                        return [] as { provider: string; model: string; trait?: string }[];
+                        return [] as { provider: string; model: string; trait?: string; quality?: number }[];
                     }
                 }));
                 setEngineOptions(perProvider.flat());
@@ -206,7 +206,7 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
         setCurrentExpert(agentId);
         setIsAnalyzing(true);
         try {
-            const eng = agentModels[agentId] || boardroomEngine;
+            const eng = agentModels[agentId] || recommendedModelFor(agentId, engineOptions) || boardroomEngine;
             const result = await runMultiAgentAnalysis(scoped, [agentId], eng?.provider, eng?.model, analyticScope, chapters, undefined, false, false, undefined, projectFolder || undefined, intensity);
             if (result && result[agentId]) setAgentReports(prev => ({ ...prev, [agentId]: result[agentId] }));
         } catch { /* surfaced via report state */ }
@@ -244,8 +244,9 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
             const scopedContent = getScopedContent();
             for (const agentId of allAgents) {
                 setCurrentExpert(agentId);
-                // Per-agent model override wins; otherwise the global Boardroom Engine.
-                const eng = agentModels[agentId] || boardroomEngine;
+                // Explicit per-agent override wins, else the recommended best-for-role
+                // model, else the global Boardroom Engine.
+                const eng = agentModels[agentId] || recommendedModelFor(agentId, engineOptions) || boardroomEngine;
                 const result = await runMultiAgentAnalysis(scopedContent, [agentId], eng?.provider, eng?.model, analyticScope, chapters, undefined, false, false, undefined, projectFolder || undefined, agentIntensities[agentId] || 'balanced');
                 if (result && result[agentId]) {
                     setAgentReports(prev => ({ ...prev, [agentId]: result[agentId] }));

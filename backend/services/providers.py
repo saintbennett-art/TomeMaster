@@ -378,6 +378,42 @@ def _family_key(model_id: str) -> str:
     return m
 
 
+# ─── Self-service help links (turn a provider error into an actionable link) ──
+_PROVIDER_HELP = {
+    "anthropic": {"billing": "https://console.anthropic.com/settings/billing", "keys": "https://console.anthropic.com/settings/keys"},
+    "openai":    {"billing": "https://platform.openai.com/account/billing/overview", "keys": "https://platform.openai.com/api-keys"},
+    "gemini":    {"billing": "https://aistudio.google.com/app/billing", "keys": "https://aistudio.google.com/app/apikey"},
+    "google":    {"billing": "https://aistudio.google.com/app/billing", "keys": "https://aistudio.google.com/app/apikey"},
+    "groq":      {"billing": "https://console.groq.com/settings/billing", "keys": "https://console.groq.com/keys"},
+    "xai":       {"billing": "https://console.x.ai", "keys": "https://console.x.ai"},
+    "openrouter": {"billing": "https://openrouter.ai/credits", "keys": "https://openrouter.ai/keys"},
+}
+
+
+def provider_help_link(error_text: str, provider: str = None) -> str:
+    """Given a provider error, return a markdown 'Action' link to the page that
+    resolves it (billing for credit/quota issues, keys for auth issues). Returns ''
+    when no provider can be inferred. The raw error is never hidden — this is appended."""
+    text = (error_text or "").lower()
+    prov = (provider or "").lower()
+    if prov not in _PROVIDER_HELP:
+        prov = next((p for p in _PROVIDER_HELP if p in text), "")
+    if prov not in _PROVIDER_HELP:
+        return ""
+
+    if any(k in text for k in ("credit", "billing", "balance", "quota", "payment", "upgrade", "purchase", "insufficient")):
+        kind, label = "billing", "billing & credits"
+    elif any(k in text for k in ("rate limit", "429", "too many requests")):
+        kind, label = "billing", "usage & limits"
+    elif any(k in text for k in ("api key", "invalid", "unauthor", "401", "403", "authentication", "permission")):
+        kind, label = "keys", "API keys"
+    else:
+        kind, label = "keys", "account"
+
+    url = _PROVIDER_HELP[prov].get(kind) or _PROVIDER_HELP[prov].get("keys")
+    return f"\n\n**Action:** [Open {prov.title()} {label}]({url})"
+
+
 def curate_models(models: list) -> list:
     """Filter to chat models, dedupe snapshot families (keep the best representative),
     and sort best-first. Input/return: list of dicts with an 'id' key."""

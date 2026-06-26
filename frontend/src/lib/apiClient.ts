@@ -743,7 +743,8 @@ export interface DiscoveredModel {
     id: string;
     name: string;
     description: string;
-    trait?: string;   // primary-trait label (Thinking/Analysis/Fast/Visual/General)
+    trait?: string;     // primary-trait label (Thinking/Analysis/Fast/Visual/General)
+    quality?: number;   // coarse quality score (best-first ranking)
 }
 
 /**

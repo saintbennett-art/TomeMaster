@@ -346,7 +346,11 @@ async def run_boardroom_parallel(
             response = await _call_standard_gateway(role, prompt, is_json, override=override)
             return persona, response
         except Exception as e:
-            return persona, {"feedback": f"Expert {persona} Offline: {str(e)}"}
+            # Surface the raw provider error (governance: never swallow), then append a
+            # self-service resolution link (billing/keys) so the user can act on it.
+            msg = str(e)
+            link = providers.provider_help_link(msg, (override or {}).get("provider"))
+            return persona, {"feedback": f"Expert {persona} Offline: {msg}{link}"}
 
     # DISPATCH ALL SPECIALISTS CONCURRENTLY
     tasks = [_execute_expert(p) for p in personas]

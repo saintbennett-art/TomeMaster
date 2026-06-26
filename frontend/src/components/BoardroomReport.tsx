@@ -307,7 +307,11 @@ export default function BoardroomReport({ isOpen, onClose, arcData, chapters, ag
                                     {/* Left: Detailed Markdown Report */}
                                     <div className="lg:col-span-3">
                                         <div className="prose prose-invert prose-indigo max-w-none prose-headings:text-foreground prose-p:text-muted prose-p:leading-relaxed prose-strong:text-foreground prose-li:text-muted prose-blockquote:border-accent/50 prose-blockquote:bg-accent/5 prose-blockquote:py-1 prose-blockquote:rounded-r-lg">
-                                            <ReactMarkdown>{currentReport?.feedback || "Generating in-depth narrative audit..."}</ReactMarkdown>
+                                            <ReactMarkdown components={{
+                                                // Open action/resolution links (e.g. provider billing) in the
+                                                // system browser, not inside the app WebView.
+                                                a: ({ ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+                                            }}>{currentReport?.feedback || "Generating in-depth narrative audit..."}</ReactMarkdown>
                                         </div>
 
                                         {/* Sovereign Accounting Seal: Visible Transparency for Failover logic */}

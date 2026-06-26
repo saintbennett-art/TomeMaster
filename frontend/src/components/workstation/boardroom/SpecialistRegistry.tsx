@@ -47,7 +47,35 @@ export const STANDARD_AGENTS = [
     }
 ];
 
-interface EngineOption { provider: string; model: string; trait?: string }
+interface EngineOption { provider: string; model: string; trait?: string; quality?: number }
+
+// [SMART DEFAULTS]: the trait tier best suited to each specialist's analysis, in
+// priority order. We auto-pick the highest-quality discovered model matching the
+// first available tier, so each board member defaults to the right kind of model.
+export const AGENT_TRAIT_PREFERENCE: Record<string, string[]> = {
+    "Developmental Editor": ['Thinking', 'Analysis'],          // deep structural reasoning
+    "Copy Editor": ['Analysis', 'Fast'],                       // precise line work
+    "Sensitivity Reader": ['Thinking', 'Analysis'],            // nuanced judgment
+    "Marketing Executive": ['Analysis', 'Thinking'],           // strong creative judgment
+    "Cinematic Screenplay Specialist": ['Thinking', 'Analysis'],
+    "Directorial Bridge": ['Thinking', 'Analysis'],            // top-tier synthesis
+};
+const DEFAULT_PREF = ['Analysis', 'Thinking', 'Visual', 'Fast', 'General'];
+
+/** The recommended model for an agent: highest-quality discovered model whose trait
+ *  matches the agent's preferred tier (falling through the full trait order). */
+export function recommendedModelFor(agentId: string, engineOptions: EngineOption[]): EngineOption | null {
+    if (!engineOptions || engineOptions.length === 0) return null;
+    const prefs = AGENT_TRAIT_PREFERENCE[agentId] || DEFAULT_PREF;
+    const order = [...prefs, ...DEFAULT_PREF.filter(t => !prefs.includes(t))];
+    for (const trait of order) {
+        const matches = engineOptions.filter(o => o.trait === trait);
+        if (matches.length) {
+            return matches.reduce((best, o) => ((o.quality ?? 0) > (best.quality ?? 0) ? o : best));
+        }
+    }
+    return engineOptions[0];
+}
 
 interface SpecialistRegistryProps {
     selectedAgents: string[];
@@ -88,20 +116,29 @@ export const SpecialistRegistry: React.FC<SpecialistRegistryProps> = ({
     const renderAgentPicker = (agentId: string) => {
         if (!setAgentModel) return null;
         const cur = agentModels[agentId];
+        const rec = recommendedModelFor(agentId, engineOptions);
+        // When the user hasn't overridden, the recommended best-for-role model is what
+        // runs — surface it as the selected default so they only change it deliberately.
+        const recommendedLabel = rec
+            ? `★ Recommended: ${rec.model}${rec.trait ? `  [${rec.trait}]` : ''}`
+            : defaultLabel;
         return (
             <select
                 value={cur ? `${cur.provider}|${cur.model}` : ''}
                 onClick={(e) => e.stopPropagation()}
                 onChange={(e) => { e.stopPropagation(); const [p, m] = e.target.value.split('|'); setAgentModel(agentId, p || '', m || ''); }}
-                title="Model for this specialist (falls back to the Boardroom Engine)"
-                className="mt-2 w-full bg-black/60 border border-white/10 rounded-lg py-1 px-2 text-[8px] text-zinc-300 font-mono focus:border-amber-500/40 outline-none cursor-pointer"
+                title="Model for this specialist. Defaults to the best model for its analysis; change only if you prefer another."
+                className={`mt-2 w-full bg-black/60 border rounded-lg py-1 px-2 text-[8px] font-mono focus:border-amber-500/40 outline-none cursor-pointer ${cur ? 'border-amber-500/30 text-amber-300' : 'border-white/10 text-zinc-300'}`}
             >
-                <option value="">{defaultLabel}</option>
-                {engineOptions.map((o) => (
-                    <option key={`${o.provider}|${o.model}`} value={`${o.provider}|${o.model}`}>
-                        {o.model}{o.trait ? `  [${o.trait}]` : ''}
-                    </option>
-                ))}
+                <option value="">{recommendedLabel}</option>
+                {engineOptions.map((o) => {
+                    const isRec = rec && o.provider === rec.provider && o.model === rec.model;
+                    return (
+                        <option key={`${o.provider}|${o.model}`} value={`${o.provider}|${o.model}`}>
+                            {isRec ? '★ ' : ''}{o.model}{o.trait ? `  [${o.trait}]` : ''}
+                        </option>
+                    );
+                })}
             </select>
         );
     };

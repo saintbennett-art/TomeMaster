@@ -158,6 +158,7 @@ def _attach_traits(models):
     curated = providers.curate_models(models)
     for m in curated:
         m["trait"] = providers.model_trait(m.get("id", ""))
+        m["quality"] = providers.model_quality(m.get("id", ""))
     return curated
 
 
