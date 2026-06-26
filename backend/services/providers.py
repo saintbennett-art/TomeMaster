@@ -315,6 +315,83 @@ def model_trait(model_id: str, base: str = None) -> str:
     return "General"
 
 
+# ─── Curation (chat-only, ranked best-first — pattern-based, no name tables) ───
+import re as _re
+
+# Non-text-generation families that should never appear in a chat/critique picker.
+_NON_CHAT_HINTS = (
+    "embed", "embedding", "whisper", "tts", "text-to-speech", "moderation", "guard",
+    "rerank", "realtime", "audio", "transcribe", "dall-e", "dalle", "imagen",
+    "image-generation", "stable-diffusion", "diffusion", "sora", "clip", "-search",
+    # media-generation / speech models that aren't text-chat (per-provider offenders)
+    "lyria", "orpheus", "veo", "music", "speech", "voice", "playai", "canopy",
+)
+
+
+def is_chat_model(model_id: str) -> bool:
+    """True for text-generation models suitable for analysis/critique; filters out
+    embeddings, audio, image, moderation and other non-chat endpoints."""
+    m = (model_id or "").lower()
+    return not any(h in m for h in _NON_CHAT_HINTS)
+
+
+def model_quality(model_id: str) -> int:
+    """A coarse, pattern-based quality score so the BEST models sort first. Not a
+    name table — broad family/tier patterns that survive new versions."""
+    m = (model_id or "").lower()
+    s = 0
+    if any(h in m for h in ("o3", "o1", "-r1", "r1-", "reasoning", "qwq", "deepseek-r")):
+        s += 60
+    if any(h in m for h in ("opus", "ultra", "-max")):
+        s += 55
+    if "pro" in m:
+        s += 50
+    if any(h in m for h in ("sonnet", "405b", "-70b", "-72b", "gpt-4.5")):
+        s += 35
+    if any(h in m for h in ("gpt-4o", "gpt-4.1")):
+        s += 30
+    elif "gpt-4" in m:
+        s += 22
+    for ver, pts in (("4.5", 16), ("3.1", 16), ("4.1", 12), ("4o", 10), ("3.0", 12),
+                     ("2.5", 12), ("2.0", 8), ("1.5", 4), ("3.5", -40)):
+        if ver in m:
+            s += pts
+    if any(h in m for h in ("flash", "mini", "haiku", "instant", "lite", "nano", "-8b", "small")):
+        s -= 6
+    if any(h in m for h in ("0301", "0314", "0613", "davinci", "babbage", "curie", "-ada", "turbo-instruct")):
+        s -= 50
+    # Prefer the canonical undated id over a dated snapshot of the same family.
+    if _re.search(r"\d{4}-\d{2}-\d{2}|-\d{6,8}$|-\d{3,4}$", m):
+        s -= 8
+    return s
+
+
+def _family_key(model_id: str) -> str:
+    """Collapse dated/numbered snapshots to their family so duplicates dedupe
+    (e.g. gpt-4o-2024-05-13 and gpt-4o-2024-08-06 -> gpt-4o)."""
+    m = (model_id or "").lower()
+    m = _re.sub(r"[-_]\d{4}-\d{2}-\d{2}", "", m)        # -2024-05-13
+    m = _re.sub(r"[-_]\d{6,8}", "", m)                   # -20241022
+    for tok in ("preview", "customtools", "exp", "latest", "tuning"):
+        m = m.replace("-" + tok, "").replace("_" + tok, "")
+    m = _re.sub(r"[-_](001|002)$", "", m)
+    return m
+
+
+def curate_models(models: list) -> list:
+    """Filter to chat models, dedupe snapshot families (keep the best representative),
+    and sort best-first. Input/return: list of dicts with an 'id' key."""
+    best = {}
+    for m in models:
+        mid = m.get("id", "")
+        if not is_chat_model(mid):
+            continue
+        fam = _family_key(mid)
+        if fam not in best or model_quality(mid) > model_quality(best[fam].get("id", "")):
+            best[fam] = m
+    return sorted(best.values(), key=lambda x: model_quality(x.get("id", "")), reverse=True)
+
+
 def probe_local_engines(timeout: float = 0.4) -> list:
     """[LOCAL DISCOVERY]: Ping the known localhost engine ports and return those
     that answer ``/models``. Safe by construction — localhost only, keyless,

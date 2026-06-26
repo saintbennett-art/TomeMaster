@@ -150,13 +150,15 @@ async def validate_and_prune_vault():
 
 
 def _attach_traits(models):
-    """Tag each discovered model with a short primary-trait label for the UI
-    (Thinking/Analysis/Fast/Visual/General) — pattern-based, no name tables."""
+    """Curate the discovered list to chat-only, dedupe snapshot families, sort
+    best-first, then tag each with a short primary-trait label for the UI. Keeps
+    the picker clean (no embeddings/whisper/dated dupes) — pattern-based, no name tables."""
     from services import providers
 
-    for m in models:
+    curated = providers.curate_models(models)
+    for m in curated:
         m["trait"] = providers.model_trait(m.get("id", ""))
-    return models
+    return curated
 
 
 @router.get("/models")

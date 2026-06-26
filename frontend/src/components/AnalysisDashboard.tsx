@@ -158,14 +158,19 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
             try {
                 const presence = await fetchVaultSync();
                 const keyed = ['gemini', 'openai', 'anthropic', 'groq'].filter((p) => presence && presence[p]);
-                const opts: { provider: string; model: string; trait?: string }[] = [];
-                for (const p of keyed) {
+                // Fetch every keyed provider IN PARALLEL so a slow one (e.g. Gemini's
+                // live SDK list) is never dropped by a sequential loop. The backend
+                // returns chat-only models ranked best-first; keep the top 4 per
+                // provider so the picker stays short and useful.
+                const perProvider = await Promise.all(keyed.map(async (p) => {
                     try {
                         const models = await fetchAvailableModels(p);
-                        models.forEach((m: DiscoveredModel) => opts.push({ provider: p, model: m.id, trait: m.trait }));
-                    } catch { /* skip a provider whose discovery fails */ }
-                }
-                setEngineOptions(opts);
+                        return models.slice(0, 4).map((m: DiscoveredModel) => ({ provider: p, model: m.id, trait: m.trait }));
+                    } catch {
+                        return [] as { provider: string; model: string; trait?: string }[];
+                    }
+                }));
+                setEngineOptions(perProvider.flat());
             } catch { /* leave empty; dispatch falls back to defaults */ }
         })();
     }, []);

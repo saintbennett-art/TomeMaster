@@ -137,10 +137,15 @@ export const SpecialistRegistry: React.FC<SpecialistRegistryProps> = ({
                     const sel = selectedAgents.includes(agent.id);
                     return (
                         <div key={agent.id} className={`flex flex-col gap-2 p-3 rounded-2xl border transition-all text-left ${sel ? "bg-indigo-500/10 border-indigo-500/30" : "bg-black/40 border-white/5 hover:border-white/10"}`}>
-                            <button onClick={() => toggleAgent(agent.id)} className="flex flex-col gap-2 text-left w-full">
-                                <agent.icon className={`w-4 h-4 ${sel ? "text-indigo-400" : "text-zinc-600"}`} />
+                            <button onClick={() => toggleAgent(agent.id)} title={sel ? 'Active — click to turn off' : 'Inactive — click to turn on'} className="flex flex-col gap-2 text-left w-full">
+                                <div className="flex items-center justify-between w-full">
+                                    <agent.icon className={`w-4 h-4 ${sel ? "text-indigo-400" : "text-zinc-600"}`} />
+                                    <span className={`px-2 py-0.5 rounded-full text-[7px] font-black uppercase tracking-widest border ${sel ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40' : 'bg-zinc-800/60 text-zinc-500 border-white/10'}`}>
+                                        {sel ? 'On' : 'Off'}
+                                    </span>
+                                </div>
                                 <div>
-                                    <p className="text-[10px] font-black text-white uppercase tracking-tighter leading-none">{agent.id}</p>
+                                    <p className={`text-[10px] font-black uppercase tracking-tighter leading-none ${sel ? 'text-white' : 'text-zinc-400'}`}>{agent.id}</p>
                                     <p className="text-[7px] text-zinc-500 font-bold uppercase mt-1 leading-tight">{agent.desc}</p>
                                 </div>
                             </button>
