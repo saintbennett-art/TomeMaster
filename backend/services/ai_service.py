@@ -355,7 +355,7 @@ async def run_boardroom_parallel(
 
 async def run_structural_analysis_async(text: str, provider: str = None, api_key: str = None, *, model: str = None, local_mode: bool = False):
     """Routes the 'Architect' audit to the NARRATIVE_ARCHITECT slot."""
-    prompt, _is_json = _build_prompt(text, "Developmental Editor")
+    prompt, _is_json = _build_prompt(text, "Structural Architect")
     return await _call_standard_gateway("NARRATIVE_ARCHITECT", prompt, is_json=True,
                                         override=_build_override(provider, api_key, model))
 

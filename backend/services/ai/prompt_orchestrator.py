@@ -10,8 +10,10 @@ def build_industrial_prompt(text: str, persona: str, user_chapters: List[Dict] =
     template = config["template"]
     
     # 1. Specialized Branching Logic (extracted from legacy)
+    # The chapter-pacing branch belongs to the Structural Architect (chapterization),
+    # not the Developmental Editor critique.
     branch_instruction = ""
-    if persona == "Developmental Editor":
+    if persona == "Structural Architect":
         if not user_chapters or len(user_chapters) == 0:
             branch_instruction = """
             [MANUSCRIPT HAS NO EXISTING STRUCTURE - BLANK STATE] 
@@ -28,7 +30,7 @@ def build_industrial_prompt(text: str, persona: str, user_chapters: List[Dict] =
             
     # 2. Template Injection
     # Truncate text to stay within safe context limits for the specific specialist
-    safe_text = text[:30000] if persona == "Developmental Editor" else text[:15000]
+    safe_text = text[:30000] if persona in ("Developmental Editor", "Structural Architect") else text[:15000]
     
     prompt = template.format(
         text=safe_text, 
