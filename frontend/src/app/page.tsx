@@ -23,9 +23,9 @@ export default function Home() {
 
   const { chapters, arcData } = useEditorState();
 
-  const { 
-    setIsFocusMode, setBookTitle, setAuthorName, 
-    setCoverImage, notify, establishProject
+  const {
+    setIsFocusMode, setBookTitle, setAuthorName,
+    setCoverImage, notify, establishProject, setIsReportOpen
   } = useWorkstationActions();
 
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(true);
@@ -174,7 +174,7 @@ export default function Home() {
         <Sidebar
           chapters={chapters}
           onChapterClick={handleChapterClick}
-          onAnalysisClick={() => setAnalysisTrigger(prev => prev + 1)}
+          onAnalysisClick={() => setIsReportOpen(true)}
           onSyncClick={() => setSyncTrigger(prev => prev + 1)}
           isOfflineMode={localMode}
           coverImage={coverImage}
