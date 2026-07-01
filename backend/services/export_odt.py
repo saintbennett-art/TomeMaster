@@ -33,8 +33,10 @@ import io
 from bs4 import BeautifulSoup, NavigableString, Tag
 
 from odf.opendocument import OpenDocumentText
-from odf.style import Style, TextProperties, ParagraphProperties, FontFace
+from odf.style import Style, TextProperties, ParagraphProperties, FontFace, TabStops, TabStop
 from odf.text import H, P, Span, LineBreak
+from odf.text import (TableOfContent, TableOfContentSource, TableOfContentEntryTemplate,
+                      IndexEntryText, IndexEntryTabStop, IndexEntryPageNumber, IndexBody)
 from odf.draw import Frame, Image
 
 
@@ -306,7 +308,9 @@ def _build_styles(doc, output_format: str):
          {"textalign": "center", "breakbefore": "page",
           "margintop": "0.2in", "marginbottom": "0.2in"},
          {"fontsize": "16pt", "fontweight": "bold"})
-    para("title", "TMTitle", {"textalign": "center"}, {"fontsize": "28pt", "fontweight": "bold"})
+    # 2" top margin drops the title ~1/3 down the page, matching generate_docx.
+    para("title", "TMTitle", {"textalign": "center", "margintop": "2in"},
+         {"fontsize": "28pt", "fontweight": "bold"})
     para("author", "TMAuthor", {"textalign": "center"}, {"fontsize": "16pt"})
     para("center", "TMCenter", {"textalign": "center"}, {"fontsize": "12pt"})
     para("center_break", "TMCenterBreak", {"textalign": "center", "breakbefore": "page"},
@@ -320,7 +324,15 @@ def _build_styles(doc, output_format: str):
     para("toc_heading", "TMContentsHeading",
          {"textalign": "center", "breakbefore": "page", "marginbottom": "0.2in"},
          {"fontsize": "18pt", "fontweight": "bold"})
-    para("toc_entry", "TMTocEntry", {"lineheight": "150%"}, {"fontsize": "12pt"})
+    # TOC entries carry a right-aligned dot-leader tab so refreshed page numbers
+    # align at the margin (chapter title . . . . N).
+    toc_entry = para("toc_entry", "TMTocEntry", {"lineheight": "150%"}, {"fontsize": "12pt"})
+    toc_tabs = TabStops()
+    toc_tabs.addElement(TabStop(position=f"{_PAGE_W_IN}in", type="right", leadertext="."))
+    for el in toc_entry.childNodes:
+        if el.qname[1] == "paragraph-properties":
+            el.addElement(toc_tabs)
+            break
     para("watermark", "TMWatermark", {"textalign": "center"},
          {"fontsize": "10pt", "color": "#808080"})
 
@@ -491,19 +503,37 @@ def generate_odt(content: str, chapters: list = None, title: str = "Manuscript T
     heading_nodes = [n for n in soup.find_all(['h1', 'h2', 'h3'])
                      if not _is_nested_block(n) and _clean_text(n)]
 
-    # --- Static Contents page (its heading starts a new page) ---
+    # --- Contents page: a real text:table-of-content over outline level 1 ---
+    # (chapter headings are emitted as text:h outline-level 1 below, so Word /
+    # LibreOffice fill in page numbers on index refresh; the index-body is
+    # pre-populated with the chapter titles so the page reads before a refresh).
     toc_titles = [_clean_text(n) for n in heading_nodes]
     if not toc_titles and chapters:
         toc_titles = [str(c.get("suggested_title") or c.get("title") or "").strip()
                       for c in chapters if isinstance(c, dict)]
         toc_titles = [t for t in toc_titles if t]
+    # The "Contents" heading lives OUTSIDE the table-of-content element: word
+    # processors regenerate the index-body wholesale on field update, and a
+    # heading inside it (index-title) gets discarded — taking its page break
+    # with it. Outside, both the heading and the break survive refreshes.
     toc_h = P(stylename=styles["toc_heading"])
     toc_h.addText("Contents")
     doc.text.addElement(toc_h)
+    toc = TableOfContent(name="Contents")
+    toc_src = TableOfContentSource(outlinelevel=1, useoutlinelevel="true")
+    entry_tpl = TableOfContentEntryTemplate(outlinelevel=1, stylename=styles["toc_entry"])
+    entry_tpl.addElement(IndexEntryText())
+    entry_tpl.addElement(IndexEntryTabStop(type="right", leaderchar="."))
+    entry_tpl.addElement(IndexEntryPageNumber())
+    toc_src.addElement(entry_tpl)
+    toc.addElement(toc_src)
+    toc_body = IndexBody()
     for t in toc_titles:
         entry = P(stylename=styles["toc_entry"])
         entry.addText(t)
-        doc.text.addElement(entry)
+        toc_body.addElement(entry)
+    toc.addElement(toc_body)
+    doc.text.addElement(toc)
 
     # --- Body ---
     body_started = False  # first non-heading block after the Contents page
