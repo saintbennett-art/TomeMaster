@@ -174,7 +174,17 @@ export default function MainEditor({
   }, []);
 
   const handleExportDocx = async () => {
-    try { await exportDocx(htmlContent, chapters, bookTitle || "Manuscript", authorName, "chicago"); }
+    try { await exportDocx(htmlContent, chapters, bookTitle || "Manuscript", authorName, "chicago", coverImage || undefined); }
+    catch (err) { alert("Export failed"); }
+  };
+
+  const handleExportPdf = async () => {
+    try { await exportPdf(htmlContent, chapters, bookTitle || "Manuscript", authorName, "chicago", coverImage || undefined); }
+    catch (err) { alert("Export failed"); }
+  };
+
+  const handleExportEpub = async () => {
+    try { await exportEpub(htmlContent, chapters, bookTitle || "Manuscript", authorName, "chicago", coverImage || undefined); }
     catch (err) { alert("Export failed"); }
   };
 
@@ -219,8 +229,10 @@ export default function MainEditor({
     <main className="flex flex-col h-screen bg-background overflow-hidden relative selection:bg-indigo-500/30">
       <div className="flex-1 flex overflow-hidden min-w-0 relative">
         <div className="flex-1 flex flex-col min-w-0 relative">
-          <WorkstationHeader 
+          <WorkstationHeader
             onExportDocx={handleExportDocx}
+            onExportPdf={handleExportPdf}
+            onExportEpub={handleExportEpub}
             onClearFailedReports={() => {}}
             isLiaisonSpeaking={isLiaisonSpeaking}
             isRightSidebarOpen={isRightSidebarOpen}

@@ -13,14 +13,16 @@ import { API_BASE_HOLDER } from "@/lib/apiClient";
 
 interface MenuBarProps {
     onExport?: () => void;
+    onExportPdf?: () => void;
+    onExportEpub?: () => void;
     onGrammarCheck?: () => void;
     onUndo?: () => void;
     onRedo?: () => void;
     onTakeSnapshot?: () => void;
 }
 
-const MenuBar: React.FC<MenuBarProps> = ({ 
-    onExport, onGrammarCheck, onUndo, onRedo, onTakeSnapshot 
+const MenuBar: React.FC<MenuBarProps> = ({
+    onExport, onExportPdf, onExportEpub, onGrammarCheck, onUndo, onRedo, onTakeSnapshot
 }) => {
     const [openMenu, setOpenMenu] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
@@ -76,7 +78,9 @@ const MenuBar: React.FC<MenuBarProps> = ({
             { label: "Load Sealed Manuscript", icon: ShieldCheck, action: loadSealedManuscript },
             { label: "Save Project", icon: Save, shortcut: "Ctrl+S", action: onTakeSnapshot || (() => notify("No project to save yet.")) },
             { type: "separator" },
-            { label: "Export Manuscript", icon: FileOutput, action: onExport || (() => notify("Opening Export bridge...")) },
+            { label: "Export as Word (.docx)", icon: FileOutput, action: onExport || (() => notify("Opening Export bridge...")) },
+            { label: "Export as PDF (.pdf)", icon: FileOutput, action: onExportPdf || (() => notify("PDF export unavailable.")) },
+            { label: "Export as EPUB (.epub)", icon: FileOutput, action: onExportEpub || (() => notify("EPUB export unavailable.")) },
         ],
         Edit: [
             { label: "Undo", icon: Undo2, shortcut: "Ctrl+Z", action: onUndo || (() => {}) },

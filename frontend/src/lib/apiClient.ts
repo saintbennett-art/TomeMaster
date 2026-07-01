@@ -267,6 +267,79 @@ export async function exportEpub(content: string, chapters: Chapter[] = [], titl
     await saveBlobWithSovereignty(blob, `${title || "Manuscript"}.epub`, "Manuscript (ePUB)");
 }
 
+export async function exportMarkdown(content: string, chapters: Chapter[] = [], title?: string, author?: string, format: string = "chicago", coverImage?: string) {
+    const res = await fetch(`${API_BASE_HOLDER.current}/document/export/md`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, chapters, title, author, format, cover_image: coverImage }),
+    });
+    if (!res.ok) throw new Error("Export failed");
+    const blob = await res.blob();
+    await saveBlobWithSovereignty(blob, `${title || "Manuscript"}.md`, "Manuscript (Markdown)");
+}
+
+export async function exportRtf(content: string, chapters: Chapter[] = [], title?: string, author?: string, format: string = "chicago", coverImage?: string) {
+    const res = await fetch(`${API_BASE_HOLDER.current}/document/export/rtf`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, chapters, title, author, format, cover_image: coverImage }),
+    });
+    if (!res.ok) throw new Error("Export failed");
+    const blob = await res.blob();
+    await saveBlobWithSovereignty(blob, `${title || "Manuscript"}.rtf`, "Manuscript (Rich Text)");
+}
+
+export async function exportHtml(content: string, chapters: Chapter[] = [], title?: string, author?: string, format: string = "chicago", coverImage?: string) {
+    const res = await fetch(`${API_BASE_HOLDER.current}/document/export/html`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, chapters, title, author, format, cover_image: coverImage }),
+    });
+    if (!res.ok) throw new Error("Export failed");
+    const blob = await res.blob();
+    await saveBlobWithSovereignty(blob, `${title || "Manuscript"}.html`, "Manuscript (HTML)");
+}
+
+export async function exportTxt(content: string, chapters: Chapter[] = [], title?: string, author?: string, format: string = "chicago", coverImage?: string) {
+    const res = await fetch(`${API_BASE_HOLDER.current}/document/export/txt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, chapters, title, author, format, cover_image: coverImage }),
+    });
+    if (!res.ok) throw new Error("Export failed");
+    const blob = await res.blob();
+    await saveBlobWithSovereignty(blob, `${title || "Manuscript"}.txt`, "Manuscript (Plain text)");
+}
+
+/** Signature shared by every single-format export function. */
+export type ExportFn = (
+    content: string,
+    chapters?: Chapter[],
+    title?: string,
+    author?: string,
+    format?: string,
+    coverImage?: string,
+) => Promise<void>;
+
+export interface ExportFormat {
+    id: string;        // stable key
+    label: string;     // menu label, e.g. "Word (.docx)"
+    ext: string;       // file extension
+    run: ExportFn;     // the client export function
+}
+
+/** Data-driven list of every export format. Add a format = one entry here
+ *  (the multi-select ribbon + any menu render from this list). */
+export const EXPORT_FORMATS: ExportFormat[] = [
+    { id: "docx", label: "Word (.docx)",        ext: "docx", run: exportDocx },
+    { id: "pdf",  label: "PDF (.pdf)",          ext: "pdf",  run: exportPdf },
+    { id: "epub", label: "EPUB (.epub)",        ext: "epub", run: exportEpub },
+    { id: "md",   label: "Markdown (.md)",      ext: "md",   run: exportMarkdown },
+    { id: "rtf",  label: "Rich Text (.rtf)",    ext: "rtf",  run: exportRtf },
+    { id: "html", label: "HTML (.html)",        ext: "html", run: exportHtml },
+    { id: "txt",  label: "Plain text (.txt)",   ext: "txt",  run: exportTxt },
+];
+
 export async function startTranscription(
     folderPath: string,
     mode: 'batch' | 'live' = 'batch',

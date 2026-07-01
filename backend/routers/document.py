@@ -201,6 +201,62 @@ async def export_epub(req: ExportRequest):
         logger.error("EPUB export error:\n%s", traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ─── Lightweight text formats: Markdown / RTF / HTML / Plain text ─────────────
+# Same ExportRequest payload as docx/pdf/epub; each delegates to exporter.generate_*.
+# A small table keeps the route bodies identical so adding a format is one entry.
+_TEXT_EXPORTS = {
+    "md":   (lambda req: exporter.generate_markdown(req.content, req.chapters, req.title, req.author, req.format, req.cover_image),
+             "text/markdown; charset=utf-8", "md", "Markdown"),
+    "html": (lambda req: exporter.generate_html(req.content, req.chapters, req.title, req.author, req.format, req.cover_image),
+             "text/html; charset=utf-8", "html", "HTML"),
+    "rtf":  (lambda req: exporter.generate_rtf(req.content, req.chapters, req.title, req.author, req.format, req.cover_image),
+             "application/rtf", "rtf", "RTF"),
+    "txt":  (lambda req: exporter.generate_txt(req.content, req.chapters, req.title, req.author, req.format, req.cover_image),
+             "text/plain; charset=utf-8", "txt", "Plain text"),
+}
+
+
+def _run_text_export(kind: str, req: "ExportRequest"):
+    if not req.content:
+        raise HTTPException(status_code=400, detail="Content is required")
+    generate, media_type, ext, label = _TEXT_EXPORTS[kind]
+    try:
+        stream = generate(req)
+        safe_title = str(req.title).replace('"', '').replace('\n', '').replace('\r', '')
+        return StreamingResponse(
+            stream,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{safe_title}.{ext}"'},
+        )
+    except Exception as e:
+        logger.error("%s export error:\n%s", label, traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/export/md")
+async def export_md(req: ExportRequest):
+    """Exports the manuscript to CommonMark Markdown (.md)."""
+    return _run_text_export("md", req)
+
+
+@router.post("/export/html")
+async def export_html(req: ExportRequest):
+    """Exports the manuscript to a self-contained HTML file (.html)."""
+    return _run_text_export("html", req)
+
+
+@router.post("/export/rtf")
+async def export_rtf(req: ExportRequest):
+    """Exports the manuscript to Rich Text Format (.rtf)."""
+    return _run_text_export("rtf", req)
+
+
+@router.post("/export/txt")
+async def export_txt(req: ExportRequest):
+    """Exports the manuscript to plain UTF-8 text (.txt)."""
+    return _run_text_export("txt", req)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # [CONSOLIDATED]: The /transcribe/* endpoints that used to live here (start,
 # clear, resolve, offset, status, resort, ingest) were duplicates of
