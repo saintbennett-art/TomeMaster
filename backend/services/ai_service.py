@@ -532,9 +532,10 @@ async def run_boardroom_parallel(
                 except Exception:
                     pass  # fall through to the honest error below
             # Surface the raw provider error (governance: never swallow), then append a
-            # self-service resolution link (billing/keys) so the user can act on it.
+            # self-service resolution link (billing/keys). Tagged error=True so the UI
+            # shows it as in-situ status, NOT as a report.
             link = providers.provider_help_link(msg, (override or {}).get("provider"))
-            return persona, {"feedback": f"Expert {persona} Offline: {msg}{link}"}
+            return persona, {"feedback": f"Expert {persona} Offline: {msg}{link}", "error": True}
 
     # DISPATCH ALL SPECIALISTS CONCURRENTLY
     tasks = [_execute_expert(p) for p in personas]

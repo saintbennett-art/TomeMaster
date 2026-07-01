@@ -64,6 +64,7 @@ export interface AgentReport {
     content: string;
     feedback: string;
     suggestions: Suggestion[];
+    error?: boolean;   // backend signalled a failure (route to in-situ status, not the report)
     verdict?: 'pass' | 'fail' | 'needs_revision';
     _accounting?: {
         processing_time?: number;
