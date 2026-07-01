@@ -311,6 +311,52 @@ export async function exportTxt(content: string, chapters: Chapter[] = [], title
     await saveBlobWithSovereignty(blob, `${title || "Manuscript"}.txt`, "Manuscript (Plain text)");
 }
 
+export async function exportOdt(content: string, chapters: Chapter[] = [], title?: string, author?: string, format: string = "chicago", coverImage?: string) {
+    const res = await fetch(`${API_BASE_HOLDER.current}/document/export/odt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, chapters, title, author, format, cover_image: coverImage }),
+    });
+    if (!res.ok) throw new Error("Export failed");
+    const blob = await res.blob();
+    await saveBlobWithSovereignty(blob, `${title || "Manuscript"}.odt`, "Manuscript (OpenDocument)");
+}
+
+export async function exportFountain(content: string, chapters: Chapter[] = [], title?: string, author?: string, format: string = "chicago", coverImage?: string) {
+    const res = await fetch(`${API_BASE_HOLDER.current}/document/export/fountain`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, chapters, title, author, format, cover_image: coverImage }),
+    });
+    if (!res.ok) throw new Error("Export failed");
+    const blob = await res.blob();
+    await saveBlobWithSovereignty(blob, `${title || "Manuscript"}.fountain`, "Screenplay (Fountain)");
+}
+
+export async function exportFdx(content: string, chapters: Chapter[] = [], title?: string, author?: string, format: string = "chicago", coverImage?: string) {
+    const res = await fetch(`${API_BASE_HOLDER.current}/document/export/fdx`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, chapters, title, author, format, cover_image: coverImage }),
+    });
+    if (!res.ok) throw new Error("Export failed");
+    const blob = await res.blob();
+    await saveBlobWithSovereignty(blob, `${title || "Manuscript"}.fdx`, "Screenplay (Final Draft)");
+}
+
+/** Shunn Standard Manuscript Format — a DOCX with format forced to "submission".
+ *  Distinct filename so a batch export alongside the regular DOCX never collides. */
+export async function exportDocxSubmission(content: string, chapters: Chapter[] = [], title?: string, author?: string, _format?: string, coverImage?: string) {
+    const res = await fetch(`${API_BASE_HOLDER.current}/document/export/docx`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, chapters, title, author, format: "submission", cover_image: coverImage }),
+    });
+    if (!res.ok) throw new Error("Export failed");
+    const blob = await res.blob();
+    await saveBlobWithSovereignty(blob, `${title || "Manuscript"} (Submission).docx`, "Manuscript (Shunn Submission)");
+}
+
 /** Signature shared by every single-format export function. */
 export type ExportFn = (
     content: string,
@@ -338,6 +384,10 @@ export const EXPORT_FORMATS: ExportFormat[] = [
     { id: "rtf",  label: "Rich Text (.rtf)",    ext: "rtf",  run: exportRtf },
     { id: "html", label: "HTML (.html)",        ext: "html", run: exportHtml },
     { id: "txt",  label: "Plain text (.txt)",   ext: "txt",  run: exportTxt },
+    { id: "odt",  label: "OpenDocument (.odt)", ext: "odt",  run: exportOdt },
+    { id: "shunn", label: "Submission — Shunn (.docx)", ext: "docx", run: exportDocxSubmission },
+    { id: "fountain", label: "Screenplay — Fountain (.fountain)", ext: "fountain", run: exportFountain },
+    { id: "fdx",  label: "Screenplay — Final Draft (.fdx)", ext: "fdx", run: exportFdx },
 ];
 
 export async function startTranscription(

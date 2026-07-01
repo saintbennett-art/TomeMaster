@@ -6,6 +6,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 from services import exporter, transcriber_service
+from services import export_fountain, export_fdx, export_odt
 from services.parsers import (
     parse_txt,
     parse_docx,
@@ -214,6 +215,12 @@ _TEXT_EXPORTS = {
              "application/rtf", "rtf", "RTF"),
     "txt":  (lambda req: exporter.generate_txt(req.content, req.chapters, req.title, req.author, req.format, req.cover_image),
              "text/plain; charset=utf-8", "txt", "Plain text"),
+    "fountain": (lambda req: export_fountain.generate_fountain(req.content, req.chapters, req.title, req.author, req.format, req.cover_image),
+             "text/plain; charset=utf-8", "fountain", "Fountain"),
+    "fdx":  (lambda req: export_fdx.generate_fdx(req.content, req.chapters, req.title, req.author, req.format, req.cover_image),
+             "application/xml; charset=utf-8", "fdx", "Final Draft"),
+    "odt":  (lambda req: export_odt.generate_odt(req.content, req.chapters, req.title, req.author, req.format, req.cover_image),
+             "application/vnd.oasis.opendocument.text", "odt", "OpenDocument"),
 }
 
 
@@ -256,6 +263,24 @@ async def export_rtf(req: ExportRequest):
 async def export_txt(req: ExportRequest):
     """Exports the manuscript to plain UTF-8 text (.txt)."""
     return _run_text_export("txt", req)
+
+
+@router.post("/export/fountain")
+async def export_fountain_route(req: ExportRequest):
+    """Exports the manuscript to Fountain screenplay plain text (.fountain)."""
+    return _run_text_export("fountain", req)
+
+
+@router.post("/export/fdx")
+async def export_fdx_route(req: ExportRequest):
+    """Exports the manuscript to Final Draft XML (.fdx)."""
+    return _run_text_export("fdx", req)
+
+
+@router.post("/export/odt")
+async def export_odt_route(req: ExportRequest):
+    """Exports the manuscript to OpenDocument Text (.odt)."""
+    return _run_text_export("odt", req)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # [CONSOLIDATED]: The /transcribe/* endpoints that used to live here (start,

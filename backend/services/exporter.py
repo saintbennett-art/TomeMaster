@@ -443,7 +443,142 @@ def _add_docx_plate(doc, img_tag):
         cr.font.size = Pt(10)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SUBMISSION PRESET — William Shunn Standard Manuscript Format
+# (https://www.shunn.net/format/story/)
+#
+# A dedicated DOCX layout for agent/editor submissions: Times New Roman 12pt,
+# double-spaced, 1" margins, 0.5" first-line indent, ragged right (left-
+# aligned), NO inter-paragraph spacing, no cover, no title-page section, no
+# Contents page. Page 1 carries the contact block (author name, top-left) and
+# the approximate word count (top-right); the title + byline sit roughly a
+# third of the way down. Pages 2+ carry a top-right running header
+# "Lastname / TITLE / page#". Chapters open on a fresh page about a third of
+# the way down; scene breaks render as a centered "#". Modern Shunn: italics
+# stay italics (no underlining).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _approximate_word_count(content: str) -> int:
+    """Approximate manuscript word count from the plain text of the HTML
+    content, rounded to the nearest 500 (Shunn: "about 85,000 words"). When
+    rounding to 500 would collapse a short piece to zero, the exact count is
+    returned instead (an honest number beats a fabricated zero)."""
+    text = BeautifulSoup(content, 'html.parser').get_text()
+    n = len(text.split())
+    rounded = int(round(n / 500.0)) * 500
+    return rounded if rounded > 0 else n
+
+
+def _generate_docx_submission(content: str, chapters: list, title: str, author: str) -> io.BytesIO:
+    """Render the manuscript in Shunn Standard Manuscript Format (see the
+    preset banner above). ``cover_image`` is deliberately not accepted —
+    submission manuscripts are plain typescript pages."""
+    from docx.enum.text import WD_TAB_ALIGNMENT
+
+    doc = Document()
+    section = doc.sections[0]
+    section.top_margin = section.bottom_margin = section.left_margin = section.right_margin = Inches(1)
+
+    # Normal style: TNR 12, double-spaced, ragged right, zero paragraph spacing.
+    style_normal = doc.styles['Normal']
+    font = style_normal.font
+    font.name = 'Times New Roman'
+    font.size = Pt(12)
+    pf = style_normal.paragraph_format
+    pf.line_spacing = 2.0
+    pf.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    pf.space_before = Pt(0)
+    pf.space_after = Pt(0)
+
+    title_text = (title or "").strip() or "Untitled Manuscript"
+    author_text = (author or "").strip()
+
+    # ── Page 1: contact block (author name, top-left) + word count (top-right)
+    #    on the same line via a right tab stop at the right margin. ──
+    head_p = doc.add_paragraph()
+    head_p.paragraph_format.line_spacing = 1.0
+    head_p.paragraph_format.tab_stops.add_tab_stop(Inches(6.5), WD_TAB_ALIGNMENT.RIGHT)
+    head_p.add_run(author_text)
+    head_p.add_run(f"\tabout {_approximate_word_count(content):,} words")
+
+    # ── Title + byline, centered roughly a third of the way down page 1
+    #    (5 empty double-spaced lines ≈ 3" of the 9" text block). ──
+    for _ in range(5):
+        doc.add_paragraph()
+    tp = doc.add_paragraph()
+    tp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    tp.add_run(title_text)
+    if author_text:
+        bp = doc.add_paragraph()
+        bp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        bp.add_run(f"by {author_text}")
+
+    # ── Running header, pages 2+ only (different-first-page suppresses it on
+    #    page 1): "Lastname / TITLE / page#", top-right, live PAGE field. ──
+    section.different_first_page_header_footer = True
+    # Materialise an explicitly blank first-page header so page 1 stays clean.
+    section.first_page_header.is_linked_to_previous = False
+    hp = section.header.paragraphs[0] if section.header.paragraphs else section.header.add_paragraph()
+    hp.text = ""
+    hp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    lastname = author_text.split()[-1] if author_text.split() else ""
+    slug = " / ".join(part for part in (lastname, title_text.upper()) if part)
+    hp.add_run(f"{slug} / ")
+    _add_simple_field(hp, 'PAGE \\* MERGEFORMAT', "2")
+
+    # ── Body ──
+    soup = BeautifulSoup(content, 'html.parser')
+    _strip_toc(soup)
+    _strip_frontmatter_blocks(soup, title, author)
+
+    for node in soup.find_all(_BLOCK_TAGS):
+        if node.name == 'div' and node.get('id') == 'toc-placeholder':
+            # A submission manuscript carries no Contents page.
+            continue
+        if _is_nested_block(node):
+            continue
+
+        # Standalone plate block: still embedded (never silently dropped).
+        if _block_has_only_images(node):
+            for img in _block_images(node):
+                _add_docx_plate(doc, img)
+            continue
+
+        text = node.get_text().replace('​', '').replace('\xa0', ' ').strip()
+        if not text:
+            continue
+
+        if node.name in ['h1', 'h2', 'h3']:
+            # Every chapter opens on a fresh page (page 1 always holds the
+            # title block), heading centered about a third of the way down.
+            doc.add_page_break()
+            for _ in range(4):
+                doc.add_paragraph()
+            hpara = doc.add_paragraph()
+            hpara.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            hpara.add_run(text)
+        elif node.name == 'p':
+            if text in ['***', '* * *', '#']:
+                doc.add_paragraph('#').alignment = WD_ALIGN_PARAGRAPH.CENTER
+                continue
+            p_obj = doc.add_paragraph()
+            p_obj.paragraph_format.first_line_indent = Inches(0.5)
+            _add_inline_runs(p_obj, node)
+            for img in _block_images(node):
+                _add_docx_plate(doc, img)
+
+    _add_docx_beta_watermark(doc)
+    _set_update_fields_on_open(doc)
+
+    file_stream = io.BytesIO(); doc.save(file_stream); file_stream.seek(0); return file_stream
+
+
 def generate_docx(content: str, chapters: list = None, title: str = "Manuscript Title", author: str = "Author Name", output_format: str = "chicago", cover_image: str = None) -> io.BytesIO:
+    if output_format == 'submission':
+        # Shunn Standard Manuscript Format is a wholly different page layout
+        # (no cover, no title-page section, no TOC) — dispatch to its own
+        # renderer so the chicago/penguin paths below stay untouched.
+        return _generate_docx_submission(content, chapters, title, author)
     doc = Document()
 
     for section in doc.sections:

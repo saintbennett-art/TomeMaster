@@ -16,6 +16,7 @@ python-dotenv
 pymupdf
 httpx
 psutil
+odfpy
 # --- OPTIONAL: CrewAI experimental pipeline (/transcribe/start-pipeline) ---
 # The boardroom endpoints use the direct gateway dispatcher and do NOT need
 # crewai. Install only if you want the experimental pipeline:
