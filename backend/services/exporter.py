@@ -69,10 +69,12 @@ def _start_new_section(doc, restart_numbering: bool = False, start_at: int = 1):
     starts at page 1 while the front matter carries no numbering at all)."""
     from docx.enum.section import WD_SECTION
     section = doc.add_section(WD_SECTION.NEW_PAGE)
+    sectPr = section._sectPr
+    # add_section CLONES the previous section's properties — always drop any
+    # inherited pgNumType so numbering only restarts when explicitly requested.
+    for existing in sectPr.findall(qn('w:pgNumType')):
+        sectPr.remove(existing)
     if restart_numbering:
-        sectPr = section._sectPr
-        for existing in sectPr.findall(qn('w:pgNumType')):
-            sectPr.remove(existing)
         pgNumType = OxmlElement('w:pgNumType')
         pgNumType.set(qn('w:start'), str(start_at))
         sectPr.append(pgNumType)
@@ -107,6 +109,25 @@ def _add_running_header_and_footer(section):
     run.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
 
     fp = section.footer.paragraphs[0] if section.footer.paragraphs else section.footer.add_paragraph()
+    fp.text = ""
+    fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    frun = _add_simple_field(fp, 'PAGE \\* MERGEFORMAT', "1")
+    frun.font.size = Pt(10)
+
+
+def _suppress_header_on_first_page(section):
+    """Chapter-opener convention: the opening page shows NO running head (the
+    big chapter heading is already on the page body) but keeps the centered
+    folio; pages 2+ of the chapter inherit the STYLEREF running header."""
+    section.different_first_page_header_footer = True
+    # Materialise an explicitly blank first-page header so nothing is inherited.
+    section.first_page_header.is_linked_to_previous = False
+    for p in list(section.first_page_header.paragraphs):
+        p.clear()
+    # Keep the centered PAGE folio on the opener.
+    section.first_page_footer.is_linked_to_previous = False
+    fp = (section.first_page_footer.paragraphs[0]
+          if section.first_page_footer.paragraphs else section.first_page_footer.add_paragraph())
     fp.text = ""
     fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
     frun = _add_simple_field(fp, 'PAGE \\* MERGEFORMAT', "1")
@@ -398,16 +419,27 @@ def _extract_frontmatter(soup, default_title, default_author):
 def _add_docx_beta_watermark(doc):
     """Adds a prominent Beta watermark disclaimer to the header of every section."""
     if not get_protection_status(): return
-    for section in doc.sections:
-        header = section.header
-        header.is_linked_to_previous = False
+
+    def _stamp(hdr):
         # Append as a SEPARATE paragraph so we never overwrite a STYLEREF field
         # paragraph that may already occupy header.paragraphs[0].
-        p = header.add_paragraph()
+        p = hdr.add_paragraph()
         run = p.add_run(f"--- {BETA_LABEL} ---")
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         run.font.size = Pt(10)
         run.font.color.rgb = RGBColor(128, 128, 128)
+
+    for section in doc.sections:
+        # Sections whose header is linked-to-previous INHERIT an earlier
+        # (already stamped) header — unlinking them here would strip the
+        # inherited STYLEREF running head, so leave those alone.
+        if not section.header.is_linked_to_previous:
+            _stamp(section.header)
+        # Chapter openers carry their own (blank) first-page header — stamp it
+        # too so the watermark appears on every page.
+        if (section.different_first_page_header_footer
+                and not section.first_page_header.is_linked_to_previous):
+            _stamp(section.first_page_header)
 
 def _add_docx_plate(doc, img_tag):
     """Embed one inline plate <img> into the DOCX in place: picture centered and
@@ -657,6 +689,8 @@ def generate_docx(content: str, chapters: list = None, title: str = "Manuscript 
     body_section.top_margin = body_section.bottom_margin = Inches(1)
     body_section.left_margin = body_section.right_margin = Inches(1)
     _add_running_header_and_footer(body_section)
+    # The body's first page is the first chapter's opener — no running head there.
+    _suppress_header_on_first_page(body_section)
 
     has_content = False
     for node in soup.find_all(_BLOCK_TAGS):
@@ -678,7 +712,14 @@ def generate_docx(content: str, chapters: list = None, title: str = "Manuscript 
         if not text: continue
 
         if node.name in ['h1', 'h2', 'h3']:
-            if has_content: doc.add_page_break()
+            if has_content:
+                # Each chapter opens its own section (new page) so its FIRST
+                # page suppresses the running head; the default header/footer
+                # stay linked-to-previous and inherit STYLEREF + PAGE.
+                ch_section = _start_new_section(doc)
+                ch_section.top_margin = ch_section.bottom_margin = Inches(1)
+                ch_section.left_margin = ch_section.right_margin = Inches(1)
+                _suppress_header_on_first_page(ch_section)
             doc.add_heading(text, level=1).alignment = WD_ALIGN_PARAGRAPH.CENTER
             has_content = True
         elif node.name == 'p':
@@ -792,8 +833,11 @@ class BookmarkFlowable(Flowable):
         display_page = abs_page - body_start + 1 if body_start else abs_page
         # Feed ReportLab's TableOfContents (two-pass): (level, text, pageNum, key).
         dt.notify('TOCEntry', (self.level, self.title, display_page, self.key))
-        # Record the chapter title so the running header reflects it.
+        # Record the chapter title so the running header reflects it, and the
+        # page it opened on so the opener page draws NO running head (the big
+        # chapter heading is already on that page).
         dt.current_chapter = self.title
+        dt.chapter_open_page = abs_page
 
 def draw_watermark(canvas, doc):
     if not get_protection_status(): return
@@ -827,6 +871,7 @@ class ManuscriptDocTemplate(BaseDocTemplate):
         BaseDocTemplate.__init__(self, *args, **kwargs)
         self.current_chapter = ""
         self.body_start_page = None
+        self.chapter_open_page = None
 
 
 def _append_pdf_plate(story, img_tag, avail_w, avail_h, cap_style):
@@ -868,8 +913,9 @@ def generate_pdf(content: str, chapters: list = None, title: str = "Manuscript T
     def draw_body(canvas, doc):
         draw_watermark(canvas, doc)
         canvas.saveState()
-        # Running header: current chapter title, centered at the top.
-        if doc.current_chapter:
+        # Running header: current chapter title, centered at the top — but NOT
+        # on the chapter's opening page, where the heading is already in the body.
+        if doc.current_chapter and canvas.getPageNumber() != doc.chapter_open_page:
             canvas.setFont('Times-Italic', 9)
             canvas.setFillColor(gray)
             canvas.drawCentredString(TRADE_PAPERBACK[0] / 2.0, TRADE_PAPERBACK[1] - margin / 1.5, doc.current_chapter)

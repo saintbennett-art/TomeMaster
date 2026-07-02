@@ -111,18 +111,25 @@ def test_docx_running_header_and_centered_footer(client):
 
 
 def test_docx_front_matter_unnumbered(client):
-    """Two sections: front matter (no pgNumType) and body (restart at 1)."""
+    """Front matter (no pgNumType) + one section per chapter (first restarts at 1;
+    later chapter sections continue numbering). Chapter sections use a different
+    first page so the opener shows no running head."""
     from docx import Document
     from docx.oxml.ns import qn
 
     r = client.post("/api/v1/document/export/docx", json={**_BOOK_BODY, "cover_image": _tiny_cover()})
     assert r.status_code == 200, r.text[:200]
     d = Document(io.BytesIO(r.content))
-    assert len(d.sections) == 2, "expected a front-matter section and a body section"
+    # _BOOK_BODY carries two chapters → front matter + 2 chapter sections.
+    assert len(d.sections) == 3, "expected front matter + one section per chapter"
     pg0 = d.sections[0]._sectPr.find(qn("w:pgNumType"))
     pg1 = d.sections[1]._sectPr.find(qn("w:pgNumType"))
+    pg2 = d.sections[2]._sectPr.find(qn("w:pgNumType"))
     assert pg0 is None, "front-matter section must not declare page numbering"
     assert pg1 is not None and pg1.get(qn("w:start")) == "1", "body must restart numbering at 1"
+    assert pg2 is None, "later chapters must continue numbering, not restart"
+    for s in d.sections[1:]:
+        assert s.different_first_page_header_footer, "chapter opener must suppress the running head"
     heads = [p.text for p in d.paragraphs if p.style.name.startswith("Heading 1")]
     assert "Chapter One: The Arrival" in heads, "chapters must use real Heading 1 style"
 

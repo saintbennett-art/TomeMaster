@@ -164,7 +164,8 @@ def test_chicago_structure_unaffected(client):
     assert 'w:jc w:val="center"' in footers, "chicago footer page number not centered"
 
     d = Document(io.BytesIO(raw))
-    assert len(d.sections) == 2, "chicago must keep front-matter + body sections"
+    # Front matter + one section per chapter (chapter openers suppress the running head).
+    assert len(d.sections) == 3, "chicago must keep front matter + a section per chapter"
     pg0 = d.sections[0]._sectPr.find(qn("w:pgNumType"))
     pg1 = d.sections[1]._sectPr.find(qn("w:pgNumType"))
     assert pg0 is None, "chicago front matter must stay unnumbered"
@@ -185,4 +186,4 @@ def test_penguin_structure_unaffected(client):
     normal = d.styles["Normal"]
     assert normal.font.name == "Garamond", "penguin must keep Garamond"
     assert normal.paragraph_format.line_spacing == 1.5, "penguin must keep 1.5 spacing"
-    assert len(d.sections) == 2, "penguin must keep front-matter + body sections"
+    assert len(d.sections) == 3, "penguin must keep front matter + a section per chapter"
