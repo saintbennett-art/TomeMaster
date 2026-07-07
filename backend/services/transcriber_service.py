@@ -102,6 +102,8 @@ def start_transcription_background(
     model: str = None,
     fallback_provider: str = None,
     fallback_model: str = None,
+    base_url: str = None,
+    fallback_base_url: str = None,
 ):
     """Dispatcher: Spawns the folder picker and launches the direct OCR job.
 
@@ -171,6 +173,8 @@ def start_transcription_background(
         kwargs={
             "fallback_provider": fallback_provider,
             "fallback_model": fallback_model,
+            "base_url": base_url,
+            "fallback_base_url": fallback_base_url,
         },
         daemon=True,
     )

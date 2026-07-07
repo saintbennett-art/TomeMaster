@@ -60,8 +60,19 @@ Output the transcription within XML-style <page> and <text> tags.
 
 # ─── CLIENT FACTORY ───────────────────────────────────────────────
 
-def _get_ai_client(provider: str, api_key: str):
-    """Sovereign Handshake Factory: Generates the requested AI client with prioritized credential resolution."""
+# Local/self-hosted engines all speak the OpenAI-compatible dialect; the model
+# resolver (settings_service._resolve_local_or_custom_endpoint) tags them with
+# these provider names and supplies the engine's base URL.
+LOCAL_PROVIDERS = ("local", "custom", "ollama", "lmstudio", "vllm", "llamacpp", "bitnet")
+
+
+def _get_ai_client(provider: str, api_key: str, base_url: str = None):
+    """Sovereign Handshake Factory: Generates the requested AI client with prioritized credential resolution.
+
+    Local/custom engines (Ollama, llama.cpp, BitNet, user endpoints) get an
+    OpenAI-compatible client pointed at ``base_url`` — the same dialect the
+    vision payload below already speaks, so sovereign OCR dispatches for real.
+    """
     if provider == "gemini":
         from google import genai
         return genai.Client(api_key=api_key or os.environ.get("GEMINI_API_KEY", ""))
@@ -73,6 +84,20 @@ def _get_ai_client(provider: str, api_key: str):
     elif provider == "anthropic":
         import anthropic
         return anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY", ""))
+    elif provider in LOCAL_PROVIDERS:
+        from openai import OpenAI
+        if not base_url and provider == "bitnet":
+            from services import providers as _providers
+            base_url = f"{_providers.bitnet_host()}/v1/"
+        if not base_url:
+            # Resolver supplies the URL for local/custom targets; without it we
+            # cannot guess which engine — surface the reason, never skip silently.
+            print(f"[LOCAL DISPATCH]: provider '{provider}' selected but no engine base_url "
+                  f"was supplied by the resolver — cannot construct a client.")
+            return None
+        # Local engines are keyless; the OpenAI SDK requires a non-empty token.
+        return OpenAI(api_key=api_key or "local", base_url=base_url)
+    print(f"[LOCAL DISPATCH]: unknown provider '{provider}' — no client factory for it.")
     return None
 
 
@@ -80,19 +105,27 @@ def _get_ai_client(provider: str, api_key: str):
 
 async def _call_ai_with_failover(
     img, primary_provider, primary_model, primary_key,
-    fallback_provider=None, fallback_model=None
+    fallback_provider=None, fallback_model=None,
+    primary_base_url=None, fallback_base_url=None,
 ):
-    """Spectrum Failover Protocol: Attempts execution with primary engine, gears-down to fallback on failure."""
+    """Spectrum Failover Protocol: Attempts execution with primary engine, gears-down to fallback on failure.
+
+    ``primary_base_url`` / ``fallback_base_url`` carry the engine endpoint for
+    local/custom providers (resolved upstream by settings_service) so sovereign
+    OCR can dispatch to Ollama/llama.cpp/user endpoints on EITHER tier. Cloud
+    providers (gemini/openai/groq/anthropic) self-supply their endpoint in the
+    client factory and ignore these.
+    """
 
     max_retries = 3
     last_err = None
 
     for attempt in range(max_retries):
-        providers = [(primary_provider, primary_model, primary_key)]
+        providers = [(primary_provider, primary_model, primary_key, primary_base_url)]
         if fallback_provider and fallback_model:
-            providers.append((fallback_provider, fallback_model, None))
+            providers.append((fallback_provider, fallback_model, None, fallback_base_url))
 
-        for prov, mod, key in providers:
+        for prov, mod, key, base_url in providers:
             try:
                 # [VISION GUARD]: Skip known non-vision models
                 blind_keywords = ["versatile", "instant", "text", "instruct", "preview-text"]
@@ -100,8 +133,11 @@ async def _call_ai_with_failover(
                     continue
 
                 print(f"BOARDROOM PULSE: Engaging {prov}:{mod} (Attempt {attempt + 1}/{max_retries})...")
-                client = _get_ai_client(prov, key)
+                client = _get_ai_client(prov, key, base_url=base_url)
                 if not client:
+                    # Never a silent skip: record why this engine was unusable.
+                    last_err = f"no client for provider '{prov}' (unsupported or missing endpoint)"
+                    print(f"[FAILOVER ALERT]: {prov}:{mod} skipped -> {last_err}")
                     continue
 
                 if prov == "gemini":

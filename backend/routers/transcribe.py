@@ -84,6 +84,9 @@ def start_transcription(req: TranscribeRequestSchema):
     provider      = vision_config.get("provider", "gemini")
     api_key       = vision_config.get("key", "")
     model         = vision_config.get("model", vision_model)
+    # Engine endpoint for local/custom providers (Ollama, llama.cpp, user URLs) —
+    # without it the OCR dispatcher cannot reach a local vision model.
+    base_url      = vision_config.get("url", "")
 
     # [SOVEREIGN LOCK]: locked to local but no local VISION engine for OCR — tell
     # the user plainly (the UI can offer install / switch-to-Industrial from this).
@@ -103,10 +106,15 @@ def start_transcription(req: TranscribeRequestSchema):
     fallback_provider = "groq"
     fallback_key      = settings_service.get_api_key("groq")
     fallback_model    = settings_service.get_preferred_model("logic")
+    # Groq is cloud and self-supplies its endpoint in the client factory, so no
+    # base_url is needed here. The arg is threaded through anyway so a future
+    # LOCAL fallback engine would keep its endpoint instead of silently losing it.
+    fallback_base_url = ""
 
     success, used_folder = transcriber_service.start_transcription_background(
         api_key, provider, req.folder_path, req.reset_cache, req.mode, model,
-        fallback_provider=fallback_provider, fallback_model=fallback_model
+        fallback_provider=fallback_provider, fallback_model=fallback_model,
+        base_url=base_url, fallback_base_url=fallback_base_url,
     )
     if not success:
         return {"status": "cancelled"}

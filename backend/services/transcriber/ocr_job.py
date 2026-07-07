@@ -77,6 +77,8 @@ def run_transcription_job(
     model_override: str = None,
     fallback_provider: str = None,
     fallback_model: str = None,
+    base_url: str = None,
+    fallback_base_url: str = None,
 ):
     """Blocking worker — run in a daemon thread by start_transcription_background."""
     try:
@@ -241,6 +243,8 @@ def run_transcription_job(
                                     img, provider, model_override, api_key,
                                     fallback_provider=fallback_provider,
                                     fallback_model=fallback_model,
+                                    primary_base_url=base_url,
+                                    fallback_base_url=fallback_base_url,
                                 )
                                 with TRANSCRIPTION_LOCK:
                                     _update_active_agent("TRANSCRIBER_LEAD", used_mod, used_prov, "working")
