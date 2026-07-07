@@ -50,6 +50,44 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# [SESSION AUTH]: When TOME_SESSION_TOKEN is set — which the packaged app
+# (desktop_app.py) and run.py always do at launch — every /api/v1/* request must
+# present it, via 'Authorization: Bearer <token>' or a '?token=' query param
+# (EventSource cannot set headers). This stops OTHER local processes and stray
+# browser tabs from reaching the loopback API, which CORS alone does not prevent.
+# When the var is unset (bare dev run / pytest / the cross-origin .bat dev flow),
+# auth is open so those workflows are unaffected.
+import secrets as _secrets
+
+_SESSION_TOKEN = os.environ.get("TOME_SESSION_TOKEN", "").strip()
+# Health endpoints stay public so the launchers' startup probes work token-free
+# (they expose no sensitive data — status + timestamp only).
+_AUTH_EXEMPT_PATHS = {"/api/v1/ai/status"}
+
+
+@app.middleware("http")
+async def _enforce_session_token(request, call_next):
+    path = request.url.path
+    if (
+        _SESSION_TOKEN
+        and request.method != "OPTIONS"          # never block CORS preflight
+        and path.startswith("/api/v1/")
+        and path not in _AUTH_EXEMPT_PATHS
+    ):
+        supplied = ""
+        auth = request.headers.get("authorization", "")
+        if auth.startswith("Bearer "):
+            supplied = auth[7:].strip()
+        if not supplied:
+            supplied = (request.query_params.get("token") or "").strip()
+        if not _secrets.compare_digest(supplied, _SESSION_TOKEN):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Invalid or missing session token."},
+            )
+    return await call_next(request)
+
+
 app.include_router(boardroom.router, prefix="/api/v1/analysis", tags=["AI Boardroom"])
 app.include_router(vault.router, prefix="/api/v1/analysis", tags=["Vault & Settings"])
 app.include_router(system.router, prefix="/api/v1/analysis", tags=["System & Telemetry"])

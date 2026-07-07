@@ -27,6 +27,53 @@ export async function getLiveApiBase(): Promise<string> {
 // Global root that always reflects the current successful interface
 export const API_BASE_HOLDER = { current: `/api/v1` };
 
+// [SESSION AUTH]: The launcher passes a per-launch token in the page URL
+// (?token=…). We attach it to every backend API call so other local processes
+// or stray browser tabs — which never received the token — cannot reach the
+// loopback API. Captured once here on load. Empty in dev mode (no lock) → the
+// wrapper below is a no-op, so nothing changes for the .bat dev workflow.
+let SESSION_TOKEN = '';
+if (typeof window !== 'undefined') {
+    SESSION_TOKEN = new URLSearchParams(window.location.search).get('token') || '';
+}
+
+export function getSessionToken(): string { return SESSION_TOKEN; }
+
+/** Append the session token as a query param. Used for EventSource, which
+ *  cannot send an Authorization header. No-op when there is no token. */
+export function withSessionToken(url: string): string {
+    if (!SESSION_TOKEN) return url;
+    return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(SESSION_TOKEN);
+}
+
+// Wrap window.fetch ONCE so every call site (there are ~8 files that fetch
+// directly) carries the token — without touching each one. Strictly scoped to
+// backend/loopback URLs so the token is never attached to an external host.
+if (typeof window !== 'undefined' && SESSION_TOKEN
+    && !(window as unknown as { __tomeFetchPatched?: boolean }).__tomeFetchPatched) {
+    const _origFetch = window.fetch.bind(window);
+    const _isApiUrl = (u: string) =>
+        u.includes('/api/v1') || u.startsWith('/') || /^https?:\/\/(127\.0\.0\.1|localhost)/.test(u);
+    window.fetch = (input: RequestInfo | URL, init: RequestInit = {}) => {
+        try {
+            const url = typeof input === 'string' ? input
+                : input instanceof URL ? input.toString()
+                : (input as Request).url;
+            if (_isApiUrl(url)) {
+                const headers = new Headers(
+                    init.headers || (input instanceof Request ? input.headers : undefined)
+                );
+                if (!headers.has('Authorization')) {
+                    headers.set('Authorization', `Bearer ${SESSION_TOKEN}`);
+                }
+                init = { ...init, headers };
+            }
+        } catch { /* fall through with original args */ }
+        return _origFetch(input as RequestInfo | URL, init);
+    };
+    (window as unknown as { __tomeFetchPatched?: boolean }).__tomeFetchPatched = true;
+}
+
 // Initialize the bridge immediately upon module load
 if (typeof window !== 'undefined') {
     getLiveApiBase().then(base => {

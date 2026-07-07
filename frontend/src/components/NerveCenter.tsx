@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Cpu, Lock, LockOpen, Zap } from 'lucide-react';
-import { API_BASE_HOLDER } from '@/lib/apiClient';
+import { API_BASE_HOLDER, withSessionToken } from '@/lib/apiClient';
 import { loadPreferences, getLayout, setLayout } from '@/lib/preferences';
 
 const MOVED_THRESHOLD = 20;
@@ -90,7 +90,7 @@ export default function NerveCenter({ isLeftSidebarOpen = true }: { isLeftSideba
     }, [isDragging, rel]);
 
     useEffect(() => {
-        const eventSource = new EventSource(`${API_BASE_HOLDER.current}/analysis/pulse`);
+        const eventSource = new EventSource(withSessionToken(`${API_BASE_HOLDER.current}/analysis/pulse`));
         eventSource.onmessage = (event) => {
             const data = JSON.parse(event.data);
             if (data.pulse === 'active') {

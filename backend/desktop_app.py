@@ -14,6 +14,13 @@ def get_free_port():
 # [ZERO HARDCODING]: The OS dictates the port at runtime.
 PORT = get_free_port()
 
+# [SESSION AUTH]: Mint a per-launch token BEFORE importing main, so the backend
+# reads it and locks /api/v1/* to callers that present it. Injected into the
+# WebView URL below — our own window has it; other local processes/tabs do not.
+import secrets
+SESSION_TOKEN = secrets.token_urlsafe(32)
+os.environ["TOME_SESSION_TOKEN"] = SESSION_TOKEN
+
 _server_ready = threading.Event()
 
 def cleanup_stale_instances():
@@ -78,7 +85,9 @@ if __name__ == '__main__':
         print("BOARDROOM WARNING: Server did not respond within 15s. Launching viewport anyway.")
 
     # [UNIFIED ORIGIN]: Target the backend directly. The static frontend will be served from here.
-    target_url = f'http://127.0.0.1:{PORT}'
+    # The session token rides in the query string; the SPA (served token-free from
+    # '/') reads it on load and attaches it to every /api/v1/* call.
+    target_url = f'http://127.0.0.1:{PORT}?token={SESSION_TOKEN}'
     window = webview.create_window('Tome-Master Boardroom', target_url, width=1400, height=900)
     
     # [SOVEREIGN BRIDGE]: Link the window to the services for native dialog support

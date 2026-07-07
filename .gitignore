@@ -28,6 +28,9 @@ project_ledger.json
 .env
 .env.*
 backend/.env
+# Per-launch loopback handshake signals (session token / claimed port)
+.sovereign_session
+.sovereign_port
 backend/*.lic
 *.lic
 backend/settings.json
