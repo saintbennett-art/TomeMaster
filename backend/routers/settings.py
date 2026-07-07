@@ -53,11 +53,12 @@ def update_settings(req: SettingsUpdateRequest):
 
 @router.get("/keys/{provider}")
 def get_key(provider: str):
-    """[VAULT]: Retrieves a masked or full key for a specific provider."""
+    """[VAULT]: Returns a last-4 masked preview so the UI can confirm WHICH key is
+    sealed — never the prefix (a constant provider tag for cloud keys, real
+    entropy for custom ones) and never the raw value."""
     key = settings_service.get_api_key(provider)
-    if key and len(key) > 8:
-        # Return masked key for UI security
-        return {"provider": provider, "key_masked": f"{key[:4]}...{key[-4:]}"}
+    if key:
+        return {"provider": provider, "key_masked": _mask_key(key)}
     return {"provider": provider, "key_masked": "NOT_FOUND"}
 
 

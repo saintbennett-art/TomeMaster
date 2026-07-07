@@ -18,8 +18,13 @@ from services.parsers import (
 
 logger = logging.getLogger(__name__)
 
-# [SHARED GUARDRAIL]: One canonical path validator for every router.
-from services.security import validate_project_path as _safe_folder
+# [SHARED GUARDRAIL]: One canonical path validator + upload-size guard for every router.
+from services.security import (
+    validate_project_path as _safe_folder,
+    read_upload_capped,
+    read_upload_capped_sync,
+    MAX_UPLOAD_BYTES,
+)
 
 router = APIRouter()
 
@@ -29,7 +34,7 @@ async def upload_document(file: UploadFile = File(...), api_key: str = "", is_de
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file uploaded")
     
-    content = await file.read()
+    content = await read_upload_capped(file)
     text = ""
     html = ""
     toc = []
@@ -89,7 +94,7 @@ async def upload_document_stream(file: UploadFile = File(...), api_key: str = ""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file uploaded")
     
-    content = await file.read()
+    content = await read_upload_capped(file)
 
     # If it's a Txt or Docx we just return it immediately as a single 'done' packet because they resolve in milliseconds anyway!
     if not file.filename.lower().endswith(".pdf"):
@@ -355,7 +360,7 @@ def upload_to_project(file: UploadFile = File(...)):
     safe_name = os.path.basename(file.filename)
     dest = os.path.join(base, safe_name)
 
-    data = file.file.read()           # sync read of the spooled upload
+    data = read_upload_capped_sync(file)   # sync, size-capped read of the spooled upload
     with open(dest, "wb") as fh:
         fh.write(data)
 
@@ -403,15 +408,36 @@ def load_project(project_path: Optional[str] = None):
     return {"state": persistence_service.load_project_state(safe), "folder_path": safe.replace("\\", "/")}
 
 
+# [READ GUARD]: /read is a text-file viewer, not a general file-read primitive.
+# Session auth (main.py) already gates it against other local processes; this
+# also confines it to the manuscript/text formats it actually serves so it can't
+# be used to siphon arbitrary files under $HOME.
+_READABLE_EXTS = {".txt", ".md", ".rtf", ".html", ".htm", ".json", ".fountain"}
+
+
 @router.get("/read")
 async def read_local_file(path: str):
-    """Reads a local file and returns its content (text or html)."""
+    """Reads a local text/manuscript file and returns its content (text or html)."""
     safe_path = _safe_folder(os.path.dirname(path))
     full_path = os.path.join(safe_path, os.path.basename(path))
-    
+
+    ext = os.path.splitext(full_path)[1].lower()
+    if ext not in _READABLE_EXTS:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported file type '{ext or '(none)'}'. /read serves text formats only: "
+                   f"{', '.join(sorted(_READABLE_EXTS))}.",
+        )
+
     if not os.path.exists(full_path):
         raise HTTPException(status_code=404, detail="File not found")
-        
+
+    if os.path.getsize(full_path) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB read limit.",
+        )
+
     try:
         with open(full_path, "r", encoding="utf-8") as f:
             content = f.read()

@@ -51,8 +51,12 @@ class ForecastRequest(BaseModel):
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 
-# [SHARED GUARDRAIL]: One canonical path validator for every router.
-from services.security import validate_project_path as _validate_project_path
+# [SHARED GUARDRAIL]: One canonical path validator + upload-size guard for every router.
+from services.security import (
+    validate_project_path as _validate_project_path,
+    read_upload_capped,
+    enforce_decoded_size,
+)
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
@@ -103,8 +107,9 @@ async def save_recording_endpoint(
         filename = f"TomeMaster_Demo_{timestamp}.webm"
         file_path = os.path.join(safe_path, filename)
 
+        data = await read_upload_capped(file)   # size-capped read (413 past the limit)
         with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            buffer.write(data)
 
         return {"success": True, "path": file_path, "filename": filename}
     except HTTPException:
@@ -125,6 +130,9 @@ async def save_snapshot_endpoint(req: SnapshotRequest):
         if "," not in req.data_url:
             raise HTTPException(status_code=400, detail="Invalid data URL format.")
         _, encoded = req.data_url.split(",", 1)
+        # Reject an oversized data-URL before allocating the decoded bytes
+        # (base64 decodes to ~3/4 of its length).
+        enforce_decoded_size(len(encoded) * 3 // 4)
         data = base64.b64decode(encoded)
 
         timestamp = int(time.time())
