@@ -17,6 +17,7 @@ export interface Provider {
     description: string;
     nomenclatureNote: string;
     defaultModel: string;
+    freeTier?: boolean;   // true = provider offers a genuinely free API tier (Gemini, Groq)
 }
 
 export const MASTER_PROVIDER_LIBRARY: Provider[] = [
@@ -30,7 +31,8 @@ export const MASTER_PROVIDER_LIBRARY: Provider[] = [
         linkLabel: 'Get Gemini Key',
         description: 'Primary Narrative Apex. Hard-bound to the 3.1 Pro architecture for directorial fidelity.',
         nomenclatureNote: 'Absolute Synchrony: Backend technical ID securely maps to public Directorial Standards.',
-        defaultModel: 'gemini-3.1-pro-preview'
+        defaultModel: 'gemini-3.1-pro-preview',
+        freeTier: true
     },
     {
         id: 'openai',
@@ -66,7 +68,8 @@ export const MASTER_PROVIDER_LIBRARY: Provider[] = [
         linkLabel: 'Get Groq Key',
         description: 'LPU Acceleration Engine. Processes 400-page audits in seconds via Llama-3.3.',
         nomenclatureNote: 'Velocity Lock: Ultra-low latency LPU inference for real-time directorial feedback.',
-        defaultModel: 'meta-llama/llama-4-scout-17b-16e-instruct'
+        defaultModel: 'meta-llama/llama-4-scout-17b-16e-instruct',
+        freeTier: true
     },
     {
         id: 'ollama',

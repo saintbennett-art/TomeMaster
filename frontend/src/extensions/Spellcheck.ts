@@ -2,6 +2,8 @@ import { Extension } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import nspell from 'nspell';
+// [FILES-ONLY]: the user dictionary + language live in the vault, not localStorage.
+import { getPref, setPref } from '@/lib/preferences';
 
 export interface SpellcheckOptions {}
 
@@ -112,9 +114,7 @@ export const Spellcheck = Extension.create<SpellcheckOptions>({
         const norm = word.replace(/[\u2018-\u201b\u02bc\u0060\u00b4]/g, "'").toLowerCase();
         if (storage && !storage.customWords.has(norm)) {
           storage.customWords.add(norm);
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('tome_master_custom_words', JSON.stringify(Array.from(storage.customWords)));
-          }
+          setPref('spell_custom_words', Array.from(storage.customWords));
           if (storage.spell) storage.spell.add(norm);
           editor.view.dispatch(editor.state.tr.setMeta('spellcheck_refresh', true));
         }
@@ -132,9 +132,7 @@ export const Spellcheck = Extension.create<SpellcheckOptions>({
           }
         });
         if (changed) {
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('tome_master_custom_words', JSON.stringify(Array.from(storage.customWords)));
-          }
+          setPref('spell_custom_words', Array.from(storage.customWords));
           editor.view.dispatch(editor.state.tr.setMeta('spellcheck_refresh', true));
         }
         return true;
@@ -144,9 +142,7 @@ export const Spellcheck = Extension.create<SpellcheckOptions>({
         const norm = word.replace(/[\u2018-\u201b\u02bc\u0060\u00b4]/g, "'").toLowerCase();
         if (storage && !storage.ignoredWords.has(norm)) {
           storage.ignoredWords.add(norm);
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('tome_master_ignored_words', JSON.stringify(Array.from(storage.ignoredWords)));
-          }
+          setPref('spell_ignored_words', Array.from(storage.ignoredWords));
           editor.view.dispatch(editor.state.tr.setMeta('spellcheck_refresh', true));
         }
         return true;
@@ -199,7 +195,7 @@ export const Spellcheck = Extension.create<SpellcheckOptions>({
         const storage = (editor.storage as any).spellcheck as SpellcheckStorage;
         if (storage.language === lang && storage.spell) return true;
         storage.language = lang;
-        if (typeof window !== 'undefined') localStorage.setItem('tome_master_language', lang);
+        setPref('spell_language', lang);
         loadSpellEngine(lang, storage, editor);
         if (typeof window !== "undefined") {
           window.dispatchEvent(new CustomEvent("tome_master-toast", { detail: { feature: `Linguistic Region: ${lang.split("-")[1]}` } }));
@@ -212,14 +208,13 @@ export const Spellcheck = Extension.create<SpellcheckOptions>({
   onCreate() {
     if (typeof window !== 'undefined') {
       try {
-        const savedLang = localStorage.getItem('tome_master_language');
-        if (savedLang && (savedLang === 'en-US' || savedLang === 'en-GB' || savedLang === 'en-CA')) {
+        // [FILES-ONLY]: hydrate the dictionary from vault preferences (cached).
+        const savedLang = getPref<string>('spell_language', '');
+        if (savedLang === 'en-US' || savedLang === 'en-GB' || savedLang === 'en-CA') {
           (this.storage as { language?: string }).language = savedLang;
         }
-        const savedCustom = localStorage.getItem('tome_master_custom_words');
-        if (savedCustom) JSON.parse(savedCustom).forEach((w: string) => this.storage.customWords.add(w));
-        const savedIgnored = localStorage.getItem('tome_master_ignored_words');
-        if (savedIgnored) JSON.parse(savedIgnored).forEach((w: string) => this.storage.ignoredWords.add(w));
+        getPref<string[]>('spell_custom_words', []).forEach((w) => this.storage.customWords.add(w));
+        getPref<string[]>('spell_ignored_words', []).forEach((w) => this.storage.ignoredWords.add(w));
       } catch (e) {
       }
     }

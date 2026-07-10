@@ -13,14 +13,16 @@ import { API_BASE_HOLDER } from "@/lib/apiClient";
 
 interface MenuBarProps {
     onExport?: () => void;
+    onExportPdf?: () => void;
+    onExportEpub?: () => void;
     onGrammarCheck?: () => void;
     onUndo?: () => void;
     onRedo?: () => void;
     onTakeSnapshot?: () => void;
 }
 
-const MenuBar: React.FC<MenuBarProps> = ({ 
-    onExport, onGrammarCheck, onUndo, onRedo, onTakeSnapshot 
+const MenuBar: React.FC<MenuBarProps> = ({
+    onExport, onExportPdf, onExportEpub, onGrammarCheck, onUndo, onRedo, onTakeSnapshot
 }) => {
     const [openMenu, setOpenMenu] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
@@ -29,13 +31,25 @@ const MenuBar: React.FC<MenuBarProps> = ({
         activeFolderPath, isFocusMode, isOfflineMode
     } = useWorkstationState();
     
-    const { 
-        setIsFocusMode, establishProject, loadManuscript, loadSealedManuscript, setIsLedgerOpen, setIsAuditOpen,
+    const {
+        setIsFocusMode, establishProject, loadManuscript, loadManuscriptFromUpload, loadSealedManuscript, setIsLedgerOpen, setIsAuditOpen,
         setIsStructuralModalOpen, invokeTranscription, notify
     } = useWorkstationActions();
 
     const { content } = useEditorState();
-    const { setContent, setHtmlContent } = useEditorActions();
+    const { setContent, setHtmlContent, setWordCount, setChapters } = useEditorActions();
+
+    // [BROWSER LOAD]: the backend native picker can't show a dialog in browser
+    // mode (headless process → no desktop). Use the browser's own file input,
+    // upload it, and hydrate the editor. Works consistently, every time.
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const handleManuscriptFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (e.target) e.target.value = '';   // allow re-picking the same file
+        if (!file) return;
+        // Reuse the FULL native load pipeline (every format, legacy included).
+        await loadManuscriptFromUpload(file);
+    };
 
     // Close menu when clicking outside
     useEffect(() => {
@@ -50,11 +64,23 @@ const MenuBar: React.FC<MenuBarProps> = ({
 
     const menuItems: Record<string, any[]> = {
         File: [
-            { label: "Load Manuscript...", icon: FileText, action: loadManuscript },
+            { label: "Load Manuscript...", icon: FileText, action: () => {
+                // Desktop app (PyWebView) → native OS picker works (UI_WINDOW is set,
+                // desktop_app.py). Plain browser → no desktop for a native dialog, so
+                // use the browser's own file input. Detect via window.pywebview.
+                const isDesktop = typeof window !== 'undefined' && Boolean((window as unknown as { pywebview?: unknown }).pywebview);
+                if (isDesktop) {
+                    loadManuscript();
+                } else {
+                    fileInputRef.current?.click();
+                }
+            }},
             { label: "Load Sealed Manuscript", icon: ShieldCheck, action: loadSealedManuscript },
-            { label: "Save Snapshot", icon: Save, shortcut: "Ctrl+S", action: onTakeSnapshot || (() => notify("Snapshot saved to local vault.")) },
+            { label: "Save Project", icon: Save, shortcut: "Ctrl+S", action: onTakeSnapshot || (() => notify("No project to save yet.")) },
             { type: "separator" },
-            { label: "Export Manuscript", icon: FileOutput, action: onExport || (() => notify("Opening Export bridge...")) },
+            { label: "Export as Word (.docx)", icon: FileOutput, action: onExport || (() => notify("Opening Export bridge...")) },
+            { label: "Export as PDF (.pdf)", icon: FileOutput, action: onExportPdf || (() => notify("PDF export unavailable.")) },
+            { label: "Export as EPUB (.epub)", icon: FileOutput, action: onExportEpub || (() => notify("EPUB export unavailable.")) },
         ],
         Edit: [
             { label: "Undo", icon: Undo2, shortcut: "Ctrl+Z", action: onUndo || (() => {}) },
@@ -65,6 +91,8 @@ const MenuBar: React.FC<MenuBarProps> = ({
                 if (confirm("Clear all prose and wipe the manuscript state? This cannot be undone.")) {
                     setContent("");
                     setHtmlContent("");
+                    setWordCount(0);      // reset the Lexical Mass counter
+                    setChapters([]);      // clear the TOC / chapter structure
                     localStorage.removeItem('tome_master_shadow_path');
                     try {
                         await fetch(`${API_BASE_HOLDER.current}/transcribe/clear`, { method: "POST" });
@@ -91,6 +119,13 @@ const MenuBar: React.FC<MenuBarProps> = ({
 
     return (
         <div className="flex items-center gap-1 ml-4" ref={menuRef}>
+            <input
+                ref={fileInputRef}
+                type="file"
+                accept=".txt,.md,.markdown,.rtf,.doc,.docx,.wpd,.wps,.odt,.pdf"
+                onChange={handleManuscriptFile}
+                className="hidden"
+            />
             {Object.keys(menuItems).map((menu) => (
                 <div key={menu} className="relative">
                     <button

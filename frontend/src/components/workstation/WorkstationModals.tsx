@@ -6,9 +6,10 @@ import { useEditorState } from "@/context/EditorContext";
 import BoardroomReport from "@/components/BoardroomReport";
 import ProjectLedger from "@/components/ProjectLedger";
 import { Mic, Sparkles, XCircle, ListOrdered, ShieldCheck, RefreshCw } from "lucide-react";
+import { Suggestion } from "@/types/industrial";
 
 interface WorkstationModalsProps {
-    onApplySuggestion: (suggestion: string) => void;
+    onApplySuggestion: (suggestion: string | Suggestion) => void;
     isAnalyzing: boolean;
     localAnalysisTrigger: number;
     setLocalAnalysisTrigger: React.Dispatch<React.SetStateAction<number>>;

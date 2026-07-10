@@ -14,6 +14,7 @@ two-way handshake with zero assumptions about port numbers.
 import socket
 import os
 import sys
+import secrets
 import uvicorn
 
 # ─── Locate Project Root ──────────────────────────────────────────────────────
@@ -21,6 +22,7 @@ import uvicorn
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
 PORT_SIGNAL_FILE = os.path.join(PROJECT_ROOT, ".sovereign_port")
+SESSION_SIGNAL_FILE = os.path.join(PROJECT_ROOT, ".sovereign_session")
 
 
 def _claim_free_port() -> int:
@@ -42,10 +44,11 @@ def _write_port_signal(port: int) -> None:
 
 
 def _cleanup_port_signal() -> None:
-    """Removes the port signal on clean shutdown to prevent stale reads."""
-    if os.path.exists(PORT_SIGNAL_FILE):
-        os.remove(PORT_SIGNAL_FILE)
-        print("[SOVEREIGN HANDSHAKE]: Port signal cleaned up.")
+    """Removes the port/session signals on clean shutdown to prevent stale reads."""
+    for f in (PORT_SIGNAL_FILE, SESSION_SIGNAL_FILE):
+        if os.path.exists(f):
+            os.remove(f)
+    print("[SOVEREIGN HANDSHAKE]: Port + session signals cleaned up.")
 
 
 if __name__ == "__main__":
@@ -54,6 +57,14 @@ if __name__ == "__main__":
 
     port = _claim_free_port()
     _write_port_signal(port)
+
+    # [SESSION AUTH]: Mint a per-launch token, hand it to the backend via env
+    # (main.py reads it and locks /api/v1/*), and broadcast it beside the port so
+    # a launcher can inject it into the UI URL as it already does with the port.
+    session_token = secrets.token_urlsafe(32)
+    os.environ["TOME_SESSION_TOKEN"] = session_token
+    with open(SESSION_SIGNAL_FILE, "w") as f:
+        f.write(session_token)
 
     print(f"[SOVEREIGN ENGINE]: Starting TomeMaster on http://127.0.0.1:{port}")
 

@@ -50,8 +50,8 @@ export const ProviderSettingsCard: React.FC<ProviderSettingsCardProps> = ({
     const isLocalProvider = provider.id === 'ollama' || provider.id === 'bitnet';
     const isOllama = provider.id === 'ollama';
     const isBitnet = provider.id === 'bitnet';
-    const hasEnoughRam = systemAudit?.ram_total >= 15.5; // 16GB threshold for Ollama
-    const hasEnoughRamBitnet = systemAudit?.ram_total >= 1.5; // BitNet needs <1GB for 2B model
+    const hasEnoughRam = (systemAudit?.ram_total ?? 0) >= 15.5; // 16GB threshold for Ollama
+    const hasEnoughRamBitnet = (systemAudit?.ram_total ?? 0) >= 1.5; // BitNet needs <1GB for 2B model
     const isGated = isOllama ? !hasEnoughRam : isBitnet ? !hasEnoughRamBitnet : false;
     
     const status = valStatus[provider.id] || 'idle';

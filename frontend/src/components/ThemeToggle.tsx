@@ -1,26 +1,26 @@
 "use client";
 import { useState, useEffect } from 'react';
 import { Sun, Moon } from 'lucide-react';
+import { loadPreferences, getPref, setPref } from '@/lib/preferences';
 
 export default function ThemeToggle() {
     const [theme, setTheme] = useState<'light' | 'dark'>('dark');
 
     useEffect(() => {
-        const savedTheme = localStorage.getItem('tome-master-theme') as 'light' | 'dark' | null;
-        if (savedTheme) {
+        // [FILES-ONLY]: theme comes from the vault preferences, not localStorage.
+        (async () => {
+            await loadPreferences();
+            const savedTheme = getPref<'light' | 'dark'>('theme', 'dark');
             setTheme(savedTheme);
             document.documentElement.setAttribute('data-theme', savedTheme);
-        } else {
-            // Default to Night (No attribute needed as :root is dark, but for consistency we attribute it)
-            document.documentElement.setAttribute('data-theme', 'dark');
-        }
+        })();
     }, []);
 
     const toggleTheme = () => {
         const newTheme = theme === 'light' ? 'dark' : 'light';
         setTheme(newTheme);
         document.documentElement.setAttribute('data-theme', newTheme);
-        localStorage.setItem('tome-master-theme', newTheme);
+        setPref('theme', newTheme);
     };
 
     return (

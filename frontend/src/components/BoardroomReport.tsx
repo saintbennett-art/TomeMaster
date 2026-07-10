@@ -1,17 +1,17 @@
 "use client";
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { LucideIcon, X, CheckCircle, RefreshCcw, Save, Maximize2, Minimize2, LayoutList, Pen, Users, Megaphone, Film, Sparkles, AlertTriangle, ArrowRight, Volume2, VolumeX, BookOpen } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import ReactMarkdown from 'react-markdown';
 import { useTextToSpeech } from '@/hooks/useTextToSpeech';
-import { exportDocx } from '@/lib/apiClient';
+import { exportAnalysisReport } from '@/lib/apiClient';
 
-import { Chapter, AgentReport, Suggestion } from "@/types/industrial";
+import { Chapter, AgentReport, Suggestion, ArcPoint } from "@/types/industrial";
 
 interface BoardroomReportProps {
     isOpen: boolean;
     onClose: () => void;
-    arcData: unknown[]; 
+    arcData: ArcPoint[];
     chapters: Chapter[];
     agentReports: Record<string, AgentReport>;
     onApplySuggestion: (suggestion: Suggestion) => void;
@@ -36,6 +36,14 @@ export default function BoardroomReport({ isOpen, onClose, arcData, chapters, ag
     const [viewMode, setViewMode] = useState<'critique' | 'audit'>('critique');
     const [isMaximized, setIsMaximized] = useState(false);
     const { speak, stop, isPlaying: isSpeakingCritique } = useTextToSpeech();
+
+    // Esc closes the report (deliberate close), since a background click no longer does.
+    useEffect(() => {
+        if (!isOpen) return;
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [isOpen, onClose]);
 
     // Update active agent if reports change and current one is gone
     const agents = Object.keys(agentReports);
@@ -124,7 +132,7 @@ export default function BoardroomReport({ isOpen, onClose, arcData, chapters, ag
             });
 
             // Use the centralized, hardened export bridge (now with native OS Picker support)
-            await exportDocx(md, [], `Tome-Master_Audit_Report_${new Date().toISOString().split('T')[0]}`, "Tome-Master AI");
+            await exportAnalysisReport(md, `Tome-Master_Audit_Report_${new Date().toISOString().split('T')[0]}`);
         } catch (err) {
             // Silent Navigation Bypass
             alert("Failed to connect to the Sovereign Engine for export. Is the backend running?");
@@ -135,8 +143,9 @@ export default function BoardroomReport({ isOpen, onClose, arcData, chapters, ag
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-8">
-            {/* Backdrop */}
-            <div className="absolute inset-0 bg-background/90 backdrop-blur-xl transition-opacity animate-in fade-in duration-500" onClick={onClose} />
+            {/* Backdrop — intentionally NOT click-to-close: a stray background click
+                must not dismiss a generated report. Close via the X button or Esc. */}
+            <div className="absolute inset-0 bg-background/90 backdrop-blur-xl transition-opacity animate-in fade-in duration-500" />
             
             {/* Main Dashboard */}
             <div className={`relative z-10 bg-background border border-border rounded-3xl shadow-2xl flex flex-col overflow-hidden transition-all duration-500 ease-in-out ${isMaximized ? 'w-full h-full' : 'w-full h-full max-w-7xl max-h-[90vh]'} animate-in zoom-in-95 fade-in`}>
@@ -273,6 +282,26 @@ export default function BoardroomReport({ isOpen, onClose, arcData, chapters, ag
                                                     {isSpeakingCritique ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
                                                 </button>
                                             )}
+                                            {currentReport && (
+                                                <div className="flex items-center gap-1.5">
+                                                    <button
+                                                        onClick={() => window.dispatchEvent(new CustomEvent('tome-master-regenerate-agent', { detail: { agentId: activeAgent, intensity: 'soft' } }))}
+                                                        disabled={isAnalyzing}
+                                                        title="Re-run this critique with a gentler, more encouraging tone"
+                                                        className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                                                    >
+                                                        Soften
+                                                    </button>
+                                                    <button
+                                                        onClick={() => window.dispatchEvent(new CustomEvent('tome-master-regenerate-agent', { detail: { agentId: activeAgent, intensity: 'hard' } }))}
+                                                        disabled={isAnalyzing}
+                                                        title="Re-run this critique blunter, more rigorous and exhaustive"
+                                                        className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest bg-rose-500/10 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                                                    >
+                                                        Harden
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
                                         <div className="flex items-center gap-3">
                                             <span className="text-xs font-bold text-indigo-400 bg-indigo-500/10 px-3 py-1 rounded-full border border-indigo-500/20 tracking-wider">CRITIQUE COMPLETE</span>
@@ -287,7 +316,13 @@ export default function BoardroomReport({ isOpen, onClose, arcData, chapters, ag
                                     {/* Left: Detailed Markdown Report */}
                                     <div className="lg:col-span-3">
                                         <div className="prose prose-invert prose-indigo max-w-none prose-headings:text-foreground prose-p:text-muted prose-p:leading-relaxed prose-strong:text-foreground prose-li:text-muted prose-blockquote:border-accent/50 prose-blockquote:bg-accent/5 prose-blockquote:py-1 prose-blockquote:rounded-r-lg">
-                                            <ReactMarkdown>{currentReport?.feedback || "Generating in-depth narrative audit..."}</ReactMarkdown>
+                                            <ReactMarkdown components={{
+                                                // Open action/resolution links (e.g. provider billing) in the
+                                                // system browser, not inside the app WebView.
+                                                a: ({ ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+                                            }}>{currentReport?.feedback || (agents.length === 0
+                                                ? "No analysis yet. Open the Boardroom panel, choose your specialists, and run an analysis — the report will appear here."
+                                                : "Generating in-depth narrative audit...")}</ReactMarkdown>
                                         </div>
 
                                         {/* Sovereign Accounting Seal: Visible Transparency for Failover logic */}

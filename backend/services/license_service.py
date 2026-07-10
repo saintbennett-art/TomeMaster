@@ -1,10 +1,27 @@
 import os
+import sys
 import uuid
 import hashlib
 import json
 import platform
 
-LICENSE_FILE = "tome_master.lic"
+
+def _resolve_license_path() -> str:
+    """[STABLE ANCHOR]: The license file must NOT depend on the working directory.
+
+    Frozen (.exe) → next to the executable (persists across runs). Source run →
+    the project root (alongside settings.enc). This fixes the 'reverted to a new
+    install' bug, where a stale tome_master.lic sitting in whatever folder the
+    app happened to launch from masked a perfectly valid activation.
+    """
+    if getattr(sys, "frozen", False):
+        base = os.path.dirname(sys.executable)
+    else:
+        base = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    return os.path.join(base, "tome_master.lic")
+
+
+LICENSE_FILE = _resolve_license_path()
 
 def get_machine_fingerprint() -> str:
     """Combines hostname and OS to create a stable machine footprint."""
@@ -47,7 +64,7 @@ def activate(key: str) -> bool:
 
 def is_activated() -> bool:
     # Migration Logic: Check for legacy proeditor.lic and rename to tome_master.lic
-    legacy_file = "proeditor.lic"
+    legacy_file = os.path.join(os.path.dirname(LICENSE_FILE), "proeditor.lic")
     if os.path.exists(legacy_file) and not os.path.exists(LICENSE_FILE):
         try:
             os.rename(legacy_file, LICENSE_FILE)

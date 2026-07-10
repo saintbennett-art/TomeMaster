@@ -1,5 +1,28 @@
 # Government Education Certification: Architectural Gap Analysis
 
+> **STATUS — DEFERRED FUTURE-SERVER ROADMAP (not the current product).**
+> Tome-Master ships as a **single-user, local-first desktop application**. This
+> document is the design brief for a **separate, future server-based edition**
+> (multi-tenant SaaS for institutional Gov/Edu deployment) and is retained
+> deliberately — **it is not abandoned, and its scaffolding is not dead code.**
+>
+> Several flaws it lists are **server-architecture problems the desktop app does
+> not have**; where they applied to the desktop app they have already been closed
+> with desktop-appropriate equivalents:
+>
+> | Roadmap concern (server) | Desktop equivalent already shipped |
+> |---|---|
+> | AWS KMS / HashiCorp Vault secret storage | **DPAPI-encrypted vault** (`settings.enc`, per-user, FIPS-backed CNG) |
+> | JWT / SSO / MFA API gateway | **Per-session loopback bearer token** (no network surface) |
+> | Celery + Redis distributed task queue | **Threaded transcription** (single-user, no multi-tenant load) |
+> | Browser `LocalStorage` key leak (XSS) | **Files-only storage** — nothing persisted to the browser |
+> | Presidio PII redaction before public LLMs | Retained as **opt-in** for the sovereign/offline path |
+>
+> **Retained-for-future scaffolding** (intentionally kept, not pruned): the
+> `celery` / `redis` / `PyJWT` / `presidio-*` dependencies and
+> `Dockerfile.govcloud` seed the server edition. They are inert in the desktop
+> build. When the server edition is picked up, start here.
+
 This document provides a critical review of the TomeMaster architecture evaluated against stringent Government Education Certification standards (such as FERPA, FedRAMP Moderate/High, NIST 800-53, and Section 508). 
 
 It highlights architectural flaws, security vulnerabilities, and design inefficiencies that would prevent certification, along with diagrams illustrating these gaps and proposed remediations.

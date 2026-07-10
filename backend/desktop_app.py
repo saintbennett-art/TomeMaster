@@ -14,7 +14,33 @@ def get_free_port():
 # [ZERO HARDCODING]: The OS dictates the port at runtime.
 PORT = get_free_port()
 
+# [SESSION AUTH]: Mint a per-launch token BEFORE importing main, so the backend
+# reads it and locks /api/v1/* to callers that present it. Injected into the
+# WebView URL below — our own window has it; other local processes/tabs do not.
+import secrets
+SESSION_TOKEN = secrets.token_urlsafe(32)
+os.environ["TOME_SESSION_TOKEN"] = SESSION_TOKEN
+
 _server_ready = threading.Event()
+
+def cleanup_stale_instances():
+    """[ACTUAL RESTART]: kill any prior TomeMaster servers (full process tree, incl.
+    uvicorn --reload spawn-workers and previous desktop_app instances) BEFORE starting,
+    so a restart never runs alongside orphans. Shares the launcher's cleanup script;
+    excludes our own PID. Best-effort — never blocks startup."""
+    try:
+        import subprocess
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        script = os.path.join(project_root, "scripts", "cleanup_tomemaster.ps1")
+        if not os.path.exists(script):
+            return
+        subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script,
+             "-ProjectRoot", project_root, "-ExcludePid", str(os.getpid())],
+            timeout=20, check=False,
+        )
+    except Exception as e:
+        print(f"BOARDROOM: pre-start cleanup skipped: {e}")
 
 def start_server():
     global PORT
@@ -49,6 +75,7 @@ def _wait_for_server(timeout: int = 15) -> bool:
     return False
 
 if __name__ == '__main__':
+    cleanup_stale_instances()   # restart = cleanup first, then start
     t = threading.Thread(target=start_server, name="TomeMaster-Engine", daemon=True)
     t.start()
 
@@ -58,7 +85,9 @@ if __name__ == '__main__':
         print("BOARDROOM WARNING: Server did not respond within 15s. Launching viewport anyway.")
 
     # [UNIFIED ORIGIN]: Target the backend directly. The static frontend will be served from here.
-    target_url = f'http://127.0.0.1:{PORT}'
+    # The session token rides in the query string; the SPA (served token-free from
+    # '/') reads it on load and attaches it to every /api/v1/* call.
+    target_url = f'http://127.0.0.1:{PORT}?token={SESSION_TOKEN}'
     window = webview.create_window('Tome-Master Boardroom', target_url, width=1400, height=900)
     
     # [SOVEREIGN BRIDGE]: Link the window to the services for native dialog support

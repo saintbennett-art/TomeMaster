@@ -2,6 +2,12 @@
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
 import { Chapter, AgentReport, ArcPoint } from "@/types/industrial";
+import { useWorkstationState } from "./WorkstationContext";
+import { saveProjectState, loadProjectState } from "@/lib/apiClient";
+// [LEGACY RECOVERY]: read-only access to the old IndexedDB draft store so an
+// existing user's manuscript is migrated into the project file, never lost.
+import { get as idbGet } from "idb-keyval";
+import { loadCompressed } from "@/lib/storage_utils";
 
 // --- [STRICT DOMAIN INTERFACES] ---
 export interface EditorState {
@@ -49,6 +55,13 @@ export const EditorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const [misspelledCount, setMisspelledCount] = useState(0);
     const [selectedText, setSelectedText] = useState("");
 
+    // [FILES-ONLY]: the draft persists to tome_master_project.json in the active
+    // project folder (or the backend default workspace when none is open).
+    const { activeFolderPath, activeFilePath } = useWorkstationState();
+    // Gate autosave until the first restore completes, so empty initial state can't
+    // overwrite a saved draft before it's loaded.
+    const draftHydratedRef = useRef(false);
+
     const workerRef = useRef<Worker | null>(null);
 
     useEffect(() => {
@@ -70,6 +83,96 @@ export const EditorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             workerRef.current.postMessage({ type: 'PROCESS_TEXT', content: rawText });
         }
     }, []);
+
+    // [AUTOSAVE]: Silent, debounced persistence of the live draft to the project
+    // file (tome_master_project.json). Merged server-side with the metadata slice.
+    useEffect(() => {
+        if (!draftHydratedRef.current) return;
+        if (!htmlContent && !content) return;
+        const timeout = setTimeout(() => {
+            saveProjectState(activeFolderPath, {
+                draft_html: htmlContent,
+                draft_text: content,
+                draft_toc: chapters,
+                draft_reports: agentReports,
+                draft_arc: arcData,
+                draft_ts: Date.now(),
+            });
+        }, 2500);
+        return () => clearTimeout(timeout);
+    }, [htmlContent, content, chapters, agentReports, arcData, activeFolderPath]);
+
+    // [RESTORE]: Rehydrate the draft from the project file whenever the active
+    // folder resolves/changes. An opened active TEXT file wins (its content is
+    // hydrated by WorkstationContext), so skip the draft restore then.
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const ext = activeFilePath?.split('.').pop()?.toLowerCase();
+                if (activeFilePath && ['md', 'markdown', 'txt'].includes(ext || '')) {
+                    draftHydratedRef.current = true;
+                    return;
+                }
+                const state = await loadProjectState(activeFolderPath);
+                if (cancelled) return;
+                let html = (state.draft_html as string) || "";
+                let text = (state.draft_text as string) || "";
+                let toc = (Array.isArray(state.draft_toc) ? state.draft_toc : null) as Chapter[] | null;
+                let reports = (state.draft_reports as Record<string, AgentReport>) || null;
+                let arc = (Array.isArray(state.draft_arc) ? state.draft_arc : null) as ArcPoint[] | null;
+                let migratedFromLegacy = false;
+
+                // [LEGACY RECOVERY]: project file empty → fall back to the old
+                // IndexedDB draft so a pre-migration manuscript is never lost.
+                if (!html && !text) {
+                    try {
+                        const lh = await loadCompressed<string>('tome_master_draft_html');
+                        const lt = await loadCompressed<string>('tome_master_draft_text');
+                        if (cancelled) return;
+                        if (lh || lt) {
+                            html = lh || "";
+                            text = lt || "";
+                            const ltoc = await idbGet('tome_master_draft_toc');
+                            if (Array.isArray(ltoc) && ltoc.length) toc = ltoc as Chapter[];
+                            const lrep = await idbGet('tome_master_draft_reports');
+                            if (lrep) reports = lrep as Record<string, AgentReport>;
+                            const larc = await idbGet('tome_master_draft_arc');
+                            if (Array.isArray(larc) && larc.length) arc = larc as ArcPoint[];
+                            migratedFromLegacy = true;
+                        }
+                    } catch { /* old store unreadable — nothing to recover */ }
+                }
+
+                if (cancelled) return;
+                if (html || text) {
+                    setHtmlContent(html);
+                    setContent(text);
+                    window.dispatchEvent(new CustomEvent('tome-master-editor-hydrate', {
+                        detail: { content: text, html }
+                    }));
+                    if (toc && toc.length) setChapters(toc);
+                    if (reports) setAgentReports(reports);
+                    if (arc && arc.length) setArcData(arc);
+
+                    // Persist the recovered draft into the project file so the
+                    // migration is permanent and the legacy store can be retired.
+                    if (migratedFromLegacy) {
+                        saveProjectState(activeFolderPath, {
+                            draft_html: html, draft_text: text,
+                            draft_toc: toc || [], draft_reports: reports || {},
+                            draft_arc: arc || [], draft_ts: Date.now(),
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error("Draft hydration failed:", err);
+            } finally {
+                if (!cancelled) draftHydratedRef.current = true;
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [activeFolderPath, activeFilePath]);
 
     const editorState: EditorState = {
         content, htmlContent, wordCount, chapters, agentReports, arcData, activePage, currentChapterId,

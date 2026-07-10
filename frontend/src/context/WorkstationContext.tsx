@@ -1,11 +1,14 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { get, set } from "idb-keyval";
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
+// [LEGACY RECOVERY ONLY]: read old IndexedDB pointers during migration; no new writes.
+import { get } from "idb-keyval";
 import {
     checkTranscriptionStatus, targetFolder, pickManuscript, readLocalFile,
-    API_BASE_HOLDER, startTranscription
+    API_BASE_HOLDER, startTranscription, resolveAudit, uploadToProject, uploadManuscript,
+    saveProjectState, loadProjectState
 } from "@/lib/apiClient";
+import { loadPreferences, getPref, setPref } from "@/lib/preferences";
 import { TranscriptionStatus } from "@/types/industrial";
 
 // --- [STRICT WORKSTATION INTERFACES] ---
@@ -14,6 +17,7 @@ export interface WorkstationState {
     authorName: string;
     coverImage: string | null;
     activeFolderPath: string | null;
+    activeFilePath: string | null;
     isTranscribing: boolean;
     transcriptionStatus: TranscriptionStatus | null;
     processedPageCount: number;
@@ -28,6 +32,7 @@ export interface WorkstationState {
     isReportOpen: boolean;
     isStructuralModalOpen: boolean;
     isFocusMode: boolean;
+    isOfflineMode: boolean;
     activeEnhancements: string[];
 }
 
@@ -36,6 +41,7 @@ export interface WorkstationActions {
     setAuthorName: (val: string) => void;
     setCoverImage: (val: string | null) => void;
     setActiveFolderPath: (val: string | null) => void;
+    setActiveFilePath: (val: string | null) => void;
     setIsTranscribing: (val: boolean) => void;
     setTranscriptionStatus: React.Dispatch<React.SetStateAction<TranscriptionStatus | null>>;
     setProcessedPageCount: React.Dispatch<React.SetStateAction<number>>;
@@ -50,15 +56,14 @@ export interface WorkstationActions {
     setIsReportOpen: (val: boolean) => void;
     setIsStructuralModalOpen: (val: boolean) => void;
     setIsFocusMode: (val: boolean) => void;
+    setIsOfflineMode: (val: boolean) => void;
     loadManuscript: () => Promise<void>;
+    loadManuscriptFromUpload: (file: File) => Promise<void>;
     loadSealedManuscript: () => Promise<void>;
     establishProject: () => Promise<void>;
     invokeTranscription: () => Promise<void>;
-    confirmInjection: () => Promise<void>;
-    cancelInjection: () => Promise<void>;
     abortTranscription: (mode: 'current' | 'all') => Promise<void>;
     resolveAuditInput: (val: string) => Promise<void>;
-    resolveInjection: (decision: 'accept' | 'reject' | 'quit') => Promise<void>;
     notify: (message: string) => void;
     hydrate: () => Promise<void>;
     toggleEnhancement: (id: string) => void;
@@ -71,7 +76,10 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [bookTitle, setBookTitle] = useState("Manuscript");
     const [authorName, setAuthorName] = useState("Author");
     const [coverImage, setCoverImage] = useState<string | null>(null);
+    // Gates metadata persistence until hydrate() runs, so defaults can't clobber saved values.
+    const metadataHydratedRef = useRef(false);
     const [activeFolderPath, setActiveFolderPath] = useState<string | null>(null);
+    const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
     const [isTranscribing, setIsTranscribing] = useState(false);
     const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus | null>(null);
     const [processedPageCount, setProcessedPageCount] = useState(0);
@@ -86,6 +94,7 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [isReportOpen, setIsReportOpen] = useState(false);
     const [isStructuralModalOpen, setIsStructuralModalOpen] = useState(false);
     const [isFocusMode, setIsFocusMode] = useState(false);
+    const [isOfflineMode, setIsOfflineMode] = useState(false);
     const [activeEnhancements, setActiveEnhancements] = useState<string[]>([]);
 
     const notify = useCallback((message: string) => {
@@ -97,7 +106,8 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
             const result = await targetFolder();
             if ((result.status === 'success' || result.status === 'established' || result.status === 'targeted') && result.folder_path) {
                 setActiveFolderPath(result.folder_path);
-                await set('tome_master_active_folder', result.folder_path);
+                // [FILES-ONLY]: remember the last project in the vault (reopen on launch).
+                setPref('last_project', { folder: result.folder_path, file: null });
                     notify(`Project Established: ${result.folder_path}`);
             }
         } catch (err) {
@@ -105,52 +115,88 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
     };
 
+    // [SHARED LOAD LOGIC]: handles a picker/upload result identically — text
+    // formats hydrate immediately; .docx/.doc/.wpd/.wps/.odt/text-pdf route to the
+    // full backend parser via transcription; scanned docs prompt OCR. Both the
+    // native picker AND the browser upload feed through here → zero format loss.
+    const applyPickResult = async (result: { status: string; file_path?: string | null; folder_path?: string | null; filename?: string | null; is_parseable?: boolean }) => {
+        if (result.status !== 'loaded' || !result.file_path) return;
+        setActiveFolderPath(result.folder_path || null);
+        setActiveFilePath(result.file_path || null);
+        setPref('last_project', { folder: result.folder_path || null, file: result.file_path || null });
+
+        const ext = result.file_path.split('.').pop()?.toLowerCase();
+        if (['md', 'markdown', 'txt'].includes(ext || '')) {
+            notify(`Recovering prose from: ${result.filename}...`);
+            const data = await readLocalFile(result.file_path);
+            if (data.content) {
+                window.dispatchEvent(new CustomEvent('tome-master-editor-hydrate', {
+                    detail: {
+                        content: data.content,
+                        html: data.html || `<p>${data.content.replace(/\n/g, '<br>')}</p>`
+                    }
+                }));
+                notify(`Manuscript Ingested & Hydrated: ${result.filename}`);
+            }
+        } else {
+            notify(`Manuscript Ingested: ${result.filename}`);
+            notify(`Command set to: ${result.folder_path}`);
+            if (['pdf', 'docx', 'doc', 'wpd', 'wps', 'odt'].includes(ext || '')) {
+                // [SMART ROUTE]: parseable (digital PDF / Word doc / legacy) → the
+                // backend text-parses (legacy via legacy_parser); else it's a scan → OCR.
+                if (result.is_parseable) {
+                    const legacy = ['doc', 'wpd', 'wps', 'odt'].includes(ext || '');
+                    notify(legacy
+                        ? "Legacy document detected — resurrecting manuscript text..."
+                        : "Digital document detected — extracting text (no OCR needed)...");
+                    await invokeTranscription();
+                } else {
+                    notify("ACTION REQUIRED: This is a scanned document. Click 'Transcribe' to OCR the manuscript.");
+                }
+            } else {
+                notify("Ready for Structural Audit.");
+            }
+        }
+    };
+
     const loadManuscript = async () => {
         try {
-            const result = await pickManuscript();
-            if (result.status === 'loaded' && result.file_path) {
-                setActiveFolderPath(result.folder_path);
-                await set('tome_master_active_folder', result.folder_path);
-                await set('tome_master_active_file', result.file_path);
-                
-                // [AUTO-HYDRATION]: If it's a markdown or text file, load it immediately
-                const ext = result.file_path.split('.').pop()?.toLowerCase();
-                if (['md', 'markdown', 'txt'].includes(ext || '')) {
-                    notify(`Recovering prose from: ${result.filename}...`);
-                    const data = await readLocalFile(result.file_path);
-                    if (data.content) {
-                        window.dispatchEvent(new CustomEvent('tome-master-editor-hydrate', { 
-                            detail: { 
-                                content: data.content,
-                                html: data.html || `<p>${data.content.replace(/\n/g, '<br>')}</p>`
-                            } 
-                        }));
-                        notify(`Manuscript Ingested & Hydrated: ${result.filename}`);
-                    }
-                } else {
-                    notify(`Manuscript Ingested: ${result.filename}`);
-                    notify(`Command set to: ${result.folder_path}`);
-                    if (['pdf', 'docx', 'doc', 'wpd', 'wps', 'odt'].includes(ext || '')) {
-                        // [SMART ROUTE]: If the backend says this file is parseable
-                        // (digital PDF with text layer, Word doc, or legacy format), auto-start
-                        // transcription — the backend will text-parse instead of OCR.
-                        if (result.is_parseable) {
-                            const legacy = ['doc', 'wpd', 'wps', 'odt'].includes(ext || '');
-                            notify(legacy
-                                ? "Legacy document detected — resurrecting manuscript text..."
-                                : "Digital document detected — extracting text (no OCR needed)...");
-                            // Auto-trigger transcription; backend smart-routes to text parser
-                            await invokeTranscription();
-                        } else {
-                            notify("ACTION REQUIRED: This is a scanned document. Click 'Transcribe' to OCR the manuscript.");
-                        }
-                    } else {
-                        notify("Ready for Structural Audit.");
-                    }
-                }
-            }
+            const result = await pickManuscript();   // desktop native picker
+            await applyPickResult(result);
         } catch (err) {
             notify("Sovereign Ingestion Failed: Engine is unreachable.");
+        }
+    };
+
+    // [BROWSER LOAD]: feed a browser-picked File through the SAME pipeline as the
+    // native picker — every format the desktop app supports, none dropped.
+    const loadManuscriptFromUpload = async (file: File) => {
+        try {
+            const ext = file.name.split('.').pop()?.toLowerCase() || '';
+            // [STRUCTURED LOAD]: .docx is a finished manuscript — parse it with
+            // mammoth (real <h1>/<h2> headings + TOC) and hydrate the editor
+            // directly. The editor rebuilds the TOC sidebar from the headings.
+            // Do NOT route it through transcription (that flattens the structure).
+            if (ext === 'docx') {
+                notify(`Loading ${file.name}…`);
+                const parsed = await uploadManuscript(file);
+                if (parsed && (parsed.content || parsed.raw_text)) {
+                    window.dispatchEvent(new CustomEvent('tome-master-editor-hydrate', {
+                        detail: { html: parsed.content || '', content: parsed.raw_text || '' }
+                    }));
+                    const words = typeof parsed.word_count === 'number' ? parsed.word_count.toLocaleString() : '?';
+                    notify(`Loaded: ${file.name} (${words} words — chapter headings + TOC preserved)`);
+                    return;
+                }
+                notify(`Could not parse ${file.name}.`);
+                return;
+            }
+            // Legacy (.doc/.wpd/.wps/.odt), scanned PDF, etc. → full pipeline.
+            notify(`Uploading ${file.name}…`);
+            const result = await uploadToProject(file);
+            await applyPickResult(result);
+        } catch (err) {
+            notify(`Load failed: ${err instanceof Error ? err.message : String(err)}`);
         }
     };
 
@@ -162,8 +208,9 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
             if (result.status === 'loaded' && result.file_path) {
                 notify(`Accessing: ${result.filename}...`);
                 setActiveFolderPath(result.folder_path);
-                await set('tome_master_active_folder', result.folder_path);
-                
+                setActiveFilePath(result.file_path || null);
+                setPref('last_project', { folder: result.folder_path || null, file: result.file_path || null });
+
                 // Read the content
                 const data = await readLocalFile(result.file_path);
                 if (data.content) {
@@ -201,43 +248,52 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
     };
 
-    const confirmInjection = async () => {
-        try { await fetch(`${API_BASE_HOLDER.current}/transcribe/confirm`, { method: 'POST' }); notify("Injected."); } catch (err) {}
-    };
-
-    const cancelInjection = async () => {
-        try { await fetch(`${API_BASE_HOLDER.current}/transcribe/cancel`, { method: 'POST' }); notify("Aborted."); } catch (err) {}
-    };
+    // [REMOVED]: confirmInjection / cancelInjection / resolveInjection — they
+    // posted to endpoints that never existed and were wired to no UI element.
 
     const abortTranscription = async (mode: 'current' | 'all') => {
         try {
-            await fetch(`${API_BASE_HOLDER.current}/transcribe/abort?mode=${mode}`, { method: 'POST' });
+            const res = await fetch(`${API_BASE_HOLDER.current}/transcribe/abort?mode=${mode}`, { method: 'POST' });
+            if (!res.ok) {
+                notify(`Abort request refused by engine (HTTP ${res.status}).`);
+                return;
+            }
+            const data = await res.json();
             setIsTranscribing(false);
-            notify(`Abort Sequence Initiated: ${mode}`);
-        } catch (err) {}
+            notify(data.was_active
+                ? "Transcription halted. In-flight work stops at the next safe point."
+                : "No transcription was running — state reset.");
+        } catch (err) {
+            notify("Abort failed: engine unreachable.");
+        }
     };
 
     const resolveAuditInput = async (val: string) => {
-        try { await fetch(`${API_BASE_HOLDER.current}/transcribe/resolve_audit?value=${encodeURIComponent(val)}`, { method: 'POST' }); } catch (err) {}
-    };
-
-    const resolveInjection = async (decision: 'accept' | 'reject' | 'quit') => {
-        try { await fetch(`${API_BASE_HOLDER.current}/transcribe/resolve_injection?decision=${decision}`, { method: 'POST' }); } catch (err) {}
+        const ok = await resolveAudit(val, false);
+        notify(ok
+            ? `Audit resolved: page ${val} committed.`
+            : "Audit resolution refused — no audit is awaiting input.");
     };
 
     const toggleEnhancement = (id: string) => {
         setActiveEnhancements(prev => {
             const next = prev.includes(id) ? prev.filter(e => e !== id) : [...prev, id];
-            set('tome_master_active_enhancements', next);
+            // [FILES-ONLY]: enhancements are per-project → persist into the project file.
+            saveProjectState(activeFolderPath, { active_enhancements: next });
             return next;
         });
     };
 
     const hydrate = useCallback(async () => {
-        const folder = await get<string>('tome_master_active_folder');
+        // [FILES-ONLY]: the last project (folder + file) lives in vault preferences;
+        // fall back to the legacy IndexedDB pointers so an existing user isn't reset.
+        await loadPreferences();
+        const last = getPref<{ folder?: string | null; file?: string | null }>('last_project', {});
+        const folder = last.folder || await get<string>('tome_master_active_folder') || null;
         if (folder) setActiveFolderPath(folder);
 
-        const filePath = await get<string>('tome_master_active_file');
+        const filePath = last.file || await get<string>('tome_master_active_file') || null;
+        if (filePath) setActiveFilePath(filePath);
         if (filePath) {
             const ext = filePath.split('.').pop()?.toLowerCase();
             if (['md', 'markdown', 'txt'].includes(ext || '')) {
@@ -255,8 +311,22 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
             }
         }
 
-        const enhancements = await get<string[]>('tome_master_active_enhancements');
-        if (enhancements) setActiveEnhancements(enhancements);
+        // [FILES-ONLY]: project metadata + enhancements live in tome_master_project.json.
+        // [LEGACY RECOVERY]: fall back to the old IndexedDB values so an existing user's
+        // title/author/cover/enhancements are never lost (then re-saved into the file).
+        const project = await loadProjectState(folder || null);
+
+        const enhancements = (Array.isArray(project.active_enhancements) ? project.active_enhancements : null)
+            || await get<string[]>('tome_master_active_enhancements');
+        if (enhancements) setActiveEnhancements(enhancements as string[]);
+
+        const title = (project.draft_title as string) || await get<string>('tome_master_draft_title') || "";
+        const author = (project.draft_author as string) || await get<string>('tome_master_draft_author') || "";
+        const cover = (project.draft_cover as string) || await get<string>('tome_master_draft_cover') || "";
+        if (title) setBookTitle(title);
+        if (author) setAuthorName(author);
+        if (cover) setCoverImage(cover);
+        metadataHydratedRef.current = true;
 
         try {
             const res = await fetch(`${API_BASE_HOLDER.current}/license/status`);
@@ -266,6 +336,18 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }, []);
 
     useEffect(() => { hydrate(); }, [hydrate]);
+
+    // [PERSIST]: project metadata survives reload; skip until hydrate restored saved
+    // values. Writes the metadata slice into tome_master_project.json (merged
+    // server-side with the editor's draft slice).
+    useEffect(() => {
+        if (!metadataHydratedRef.current) return;
+        saveProjectState(activeFolderPath, {
+            draft_title: bookTitle,
+            draft_author: authorName,
+            ...(coverImage ? { draft_cover: coverImage } : {}),
+        });
+    }, [bookTitle, authorName, coverImage, activeFolderPath]);
 
     useEffect(() => {
         const pulse = setInterval(async () => {
@@ -281,20 +363,21 @@ export const WorkstationProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }, []);
 
     const workstationState: WorkstationState = {
-        bookTitle, authorName, coverImage, activeFolderPath,
+        bookTitle, authorName, coverImage, activeFolderPath, activeFilePath,
         isTranscribing, transcriptionStatus, processedPageCount, transcriptionMode,
         isActivated, language, isSettingsOpen, isHelpOpen, isEnhancementHubOpen,
         isAuditOpen, isLedgerOpen, isReportOpen, isStructuralModalOpen, isFocusMode,
-        activeEnhancements
+        isOfflineMode, activeEnhancements
     };
 
     const workstationActions: WorkstationActions = {
-        setBookTitle, setAuthorName, setCoverImage, setActiveFolderPath,
+        setBookTitle, setAuthorName, setCoverImage, setActiveFolderPath, setActiveFilePath,
         setIsTranscribing, setTranscriptionStatus, setProcessedPageCount, setTranscriptionMode,
         setIsActivated, setLanguage, setIsSettingsOpen, setIsHelpOpen, setIsEnhancementHubOpen,
         setIsAuditOpen, setIsLedgerOpen, setIsReportOpen, setIsStructuralModalOpen, setIsFocusMode,
-        loadManuscript, loadSealedManuscript, establishProject, invokeTranscription, confirmInjection, cancelInjection, abortTranscription,
-        resolveAuditInput, resolveInjection, notify, hydrate,
+        setIsOfflineMode,
+        loadManuscript, loadManuscriptFromUpload, loadSealedManuscript, establishProject, invokeTranscription, abortTranscription,
+        resolveAuditInput, notify, hydrate,
         toggleEnhancement
     };
 

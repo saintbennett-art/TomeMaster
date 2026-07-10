@@ -1,11 +1,14 @@
 "use client";
-import React, { useState, useEffect, useRef } from "react";
-import { Maximize2, Minimize2, Save, Eye, Zap, RefreshCw, ExternalLink, ShieldAlert, ShieldCheck } from "lucide-react";
-import { runMultiAgentAnalysis, validateAiKey, API_BASE_HOLDER } from "@/lib/apiClient";
-import { secureVault } from "@/lib/vault";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { Maximize2, Minimize2, Save, Eye, Zap, RefreshCw, ExternalLink, ShieldAlert, ShieldCheck, Lock, LockOpen } from "lucide-react";
+import { useDraggableDialog } from "@/components/workstation/DraggableDialog";
+import { isFrontMatter } from "@/lib/chapters";
+import { runMultiAgentAnalysis, validateAiKey, API_BASE_HOLDER, fetchLocalEngines, fetchVaultSync, fetchAvailableModels, saveProjectState, loadProjectState, type LocalEngine, type DiscoveredModel } from "@/lib/apiClient";
+import { loadPreferences, getPref, setPref } from "@/lib/preferences";
+import { isVisionModel } from "@/lib/ai_config";
 
 // [BLACK BOX IMPORTS]
-import { SpecialistRegistry } from "./workstation/boardroom/SpecialistRegistry";
+import { SpecialistRegistry, recommendedModelFor } from "./workstation/boardroom/SpecialistRegistry";
 import { IntelligencePulse } from "./workstation/boardroom/IntelligencePulse";
 import { NarrativeRangePicker } from "./workstation/boardroom/NarrativeRangePicker";
 import { AuditBriefing } from "./workstation/boardroom/AuditBriefing";
@@ -65,6 +68,34 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     const [auditData, setAuditData] = useState({weight: 0, assignments: [] as Assignment[]});
     const [currentExpert, setCurrentExpert] = useState<string | null>(null);
     const [handshakeStatus, setHandshakeStatus] = useState("ok");
+    // [SOVEREIGN LOCK]: real local-engine fidelity + the Sovereign/Industrial lock.
+    const [localEngines, setLocalEngines] = useState<LocalEngine[]>([]);
+    const [sovereignLock, setSovereignLock] = useState(false);
+    const lock = useDraggableDialog(); // position-lock state from the DraggableDialog wrapper
+    useEffect(() => {
+        fetchLocalEngines().then(setLocalEngines);
+        // [FILES-ONLY]: derive lock + saved boardroom engine from vault preferences.
+        (async () => {
+            await loadPreferences();
+            setSovereignLock(getPref<boolean>('local_mode', false));
+            const p = getPref<string>('boardroom_provider', '');
+            const m = getPref<string>('boardroom_model', '');
+            if (p && m) setBoardroomEngine({ provider: p, model: m });
+        })();
+    }, []);
+    const _sovModels = localEngines.flatMap(e => e.models);
+    const localReady = localEngines.length > 0 && _sovModels.length > 0;
+    const localVisionReady = _sovModels.some(m => isVisionModel(m));
+    const toggleSovereignLock = () => {
+        const next = !sovereignLock;
+        setSovereignLock(next);
+        // [FILES-ONLY]: both flags persist to the vault. sovereign_lock drives the
+        // BACKEND's forced-local resolution; local_mode is the UI mirror.
+        setPref('local_mode', next);
+        setPref('sovereign_lock', next);
+        window.dispatchEvent(new CustomEvent('tome-master-settings-changed'));
+        notify(next ? "Sovereign Lock ON — local engines only." : "Industrial mode — cloud AI enabled.");
+    };
     const [isInterventionMode, setIsInterventionMode] = useState(true);
     const [isDeepAnalysis, setIsDeepAnalysis] = useState(false);
     const [authModal, setAuthModal] = useState({ isOpen: false, persona: "", prompt: "", model: "" });
@@ -74,7 +105,143 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     const [analyticScope, setAnalyticScope] = useState("full");
     const [rangeStartIdx, setRangeStartIdx] = useState(0);
     const [rangeEndIdx, setRangeEndIdx] = useState(0);
+
+    // [BOARDROOM ENGINE]: the USER picks which provider+model runs the boardroom,
+    // from the models discovered on their own keys. Persisted so it sticks, and the
+    // dispatch sends the prompt to exactly that model (provider follows the model).
+    const [engineOptions, setEngineOptions] = useState<{ provider: string; model: string; trait?: string; quality?: number }[]>([]);
+    // Initialised null; hydrated from vault preferences in the mount effect above.
+    const [boardroomEngine, setBoardroomEngine] = useState<{ provider: string; model: string } | null>(null);
+    const selectBoardroomEngine = (provider: string, model: string) => {
+        setBoardroomEngine({ provider, model });
+        setPref('boardroom_provider', provider);
+        setPref('boardroom_model', model);
+    };
+
+    // [PER-AGENT MODEL]: optional per-specialist model override. Absent → the agent
+    // uses the global Boardroom Engine above. Per-project, so it lives in the project
+    // file (agent_models), loaded on mount and saved on change.
+    const [agentModels, setAgentModels] = useState<Record<string, { provider: string; model: string }>>({});
+    // [PER-AGENT TONE]: harden/soften each specialist's critique. Absent = 'balanced'.
+    const [agentIntensities, setAgentIntensities] = useState<Record<string, 'soft' | 'balanced' | 'hard'>>({});
+    useEffect(() => {
+        (async () => {
+            const state = await loadProjectState(projectFolder || null);
+            if (state.agent_models && typeof state.agent_models === 'object') {
+                setAgentModels(state.agent_models as Record<string, { provider: string; model: string }>);
+            }
+            if (state.agent_intensities && typeof state.agent_intensities === 'object') {
+                setAgentIntensities(state.agent_intensities as Record<string, 'soft' | 'balanced' | 'hard'>);
+            }
+        })();
+    }, [projectFolder]);
+    const setAgentModel = (agentId: string, provider: string, model: string) => {
+        setAgentModels(prev => {
+            const next = { ...prev };
+            if (!provider || !model) delete next[agentId];   // back to the default engine
+            else next[agentId] = { provider, model };
+            saveProjectState(projectFolder || null, { agent_models: next });
+            return next;
+        });
+    };
+    const setAgentIntensity = (agentId: string, intensity: 'soft' | 'balanced' | 'hard') => {
+        setAgentIntensities(prev => {
+            const next = { ...prev };
+            if (intensity === 'balanced') delete next[agentId];   // balanced is the default
+            else next[agentId] = intensity;
+            saveProjectState(projectFolder || null, { agent_intensities: next });
+            return next;
+        });
+    };
+    // Load the boardroom model picker: every keyed provider fetched IN PARALLEL so a
+    // slow one (e.g. Gemini's live SDK list) is never dropped; backend returns chat-only
+    // models ranked best-first; keep the top 4 per provider so the picker stays short.
+    const loadEngineOptions = useCallback(async () => {
+        try {
+            const presence = await fetchVaultSync();
+            const keyed = ['gemini', 'openai', 'anthropic', 'groq'].filter((p) => presence && presence[p]);
+            const perProvider = await Promise.all(keyed.map(async (p) => {
+                try {
+                    const models = await fetchAvailableModels(p);
+                    return models.slice(0, 4).map((m: DiscoveredModel) => ({ provider: p, model: m.id, trait: m.trait, quality: m.quality }));
+                } catch {
+                    return [] as { provider: string; model: string; trait?: string; quality?: number }[];
+                }
+            }));
+            setEngineOptions(perProvider.flat());
+        } catch { /* leave empty; dispatch falls back to defaults */ }
+    }, []);
+
+    useEffect(() => {
+        loadEngineOptions();
+        // Re-read the model list whenever keys change (e.g. after onboarding/Settings
+        // saves a new key) so the dropdowns populate without a manual reload.
+        if (typeof window === 'undefined') return;
+        const onChanged = () => loadEngineOptions();
+        window.addEventListener('tome-master-settings-changed', onChanged);
+        return () => window.removeEventListener('tome-master-settings-changed', onChanged);
+    }, [loadEngineOptions]);
+
+    // [SCOPE READOUT]: keep the picker's "Targeting" + "Payload Weight" honest about the
+    // actual selection (front matter excluded), instead of always saying "Full Scope".
+    // Full = the editor's actual word count (a direct transfer, matches the editor exactly).
+    // Range = words in the selected chapters' real text — counted from content, not the
+    // unreliable chapter_word_count field (which was summing to ~2x the document).
+    const scopeWordCount = analyticScope === "range"
+        ? (chapters.slice(rangeStartIdx, rangeEndIdx + 1).filter((c) => !isFrontMatter(c))
+            .map((c) => c.content || "").join(" ").trim().split(/\s+/).filter(Boolean).length)
+        : (editorContent.trim() ? editorContent.trim().split(/\s+/).length : 0);
+    const startTitle = chapters[rangeStartIdx]?.suggested_title || `Chapter ${rangeStartIdx + 1}`;
+    const endTitle = chapters[rangeEndIdx]?.suggested_title || `Chapter ${rangeEndIdx + 1}`;
+    const scopeLabel = analyticScope !== "range"
+        ? "Full Document"
+        : (rangeStartIdx === rangeEndIdx ? startTitle : `${startTitle} → ${endTitle}`);
     const startTimeRef = useRef(0);
+
+    // Scope the manuscript text exactly as the dispatch does (range vs full).
+    const getScopedContent = () => analyticScope === "range"
+        ? (chapters.slice(rangeStartIdx, rangeEndIdx + 1).filter((c) => !isFrontMatter(c))
+            .map((c) => c.content || "").join("\n\n").trim() || editorContent)
+        : editorContent;
+
+    // [PER-REPORT REGENERATE]: re-run a SINGLE agent at a new tone (from the report's
+    // Soften/Harden buttons via a CustomEvent). Persists the new tone so it sticks.
+    const regenerateAgent = async (agentId: string, intensity: 'soft' | 'balanced' | 'hard') => {
+        const scoped = getScopedContent();
+        if (!scoped || isAnalyzing) return;
+        setAgentIntensity(agentId, intensity);
+        setCurrentExpert(agentId);
+        setIsAnalyzing(true);
+        try {
+            const eng = agentModels[agentId] || recommendedModelFor(agentId, engineOptions) || boardroomEngine;
+            const result = await runMultiAgentAnalysis(scoped, [agentId], eng?.provider, eng?.model, analyticScope, chapters, undefined, false, false, undefined, projectFolder || undefined, intensity);
+            const report = result && result[agentId];
+            if (report && !report.error && report.feedback) {
+                setAgentReports(prev => ({ ...prev, [agentId]: report }));
+            } else {
+                // Re-run failed — keep the existing report, report the failure in situ.
+                const m = (report?.feedback ? String(report.feedback) : 're-run returned no analysis').replace(/\*\*/g, '');
+                showToast(`${agentId}: ${m}`.slice(0, 180));
+                notify(`${agentId} re-run did not complete — see status; previous report kept.`);
+            }
+        } catch (e) {
+            const m = e instanceof Error ? e.message : String(e);
+            showToast(`${agentId}: ${m}`.slice(0, 180));
+            notify(`${agentId} re-run did not complete — see status; previous report kept.`);
+        }
+        finally { setIsAnalyzing(false); }
+    };
+    // Keep an always-fresh ref so the event listener never calls a stale closure.
+    const regenRef = useRef(regenerateAgent);
+    useEffect(() => { regenRef.current = regenerateAgent; });
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const d = (e as CustomEvent).detail || {};
+            if (d.agentId) regenRef.current(d.agentId, d.intensity || 'balanced');
+        };
+        window.addEventListener('tome-master-regenerate-agent', handler);
+        return () => window.removeEventListener('tome-master-regenerate-agent', handler);
+    }, []);
 
     // [LOGIC]: Analysis Dispatch
     const runAnalysis = async (forceNoAudit = false) => {
@@ -91,16 +258,41 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
         
         try {
             const allAgents = [...selectedAgents, ...customAgents];
+            // Full = editor text as-is (matches the editor count, never doubled). Range =
+            // the selected chapters' real text with front matter excluded.
+            const scopedContent = getScopedContent();
+            let produced = 0;   // count of specialists that returned real analysis
             for (const agentId of allAgents) {
                 setCurrentExpert(agentId);
-                // Sovereign Dispatch: Trust the backend role mappings
-                const result = await runMultiAgentAnalysis(editorContent, [agentId], undefined, undefined, 'full', chapters);
-                if (result && result[agentId]) {
-                    setAgentReports(prev => ({ ...prev, [agentId]: result[agentId] }));
+                // Explicit per-agent override wins, else the recommended best-for-role
+                // model, else the global Boardroom Engine.
+                const eng = agentModels[agentId] || recommendedModelFor(agentId, engineOptions) || boardroomEngine;
+                // [STATUS vs REPORT]: failures are operational messaging — surface them
+                // IN SITU (panel toast + notify), never as a "report". Only real analysis
+                // goes into agentReports. The loop never aborts.
+                try {
+                    const result = await runMultiAgentAnalysis(scopedContent, [agentId], eng?.provider, eng?.model, analyticScope, chapters, undefined, false, false, undefined, projectFolder || undefined, agentIntensities[agentId] || 'balanced');
+                    const report = result && result[agentId];
+                    if (report && !report.error && report.feedback) {
+                        setAgentReports(prev => ({ ...prev, [agentId]: report }));
+                        produced++;
+                    } else {
+                        const m = (report?.feedback ? String(report.feedback) : `${agentId} returned no analysis.`).replace(/\*\*/g, '');
+                        showToast(`${agentId}: ${m}`.slice(0, 180));
+                        notify(`${agentId} did not complete — see status.`);
+                    }
+                } catch (e) {
+                    const m = e instanceof Error ? e.message : String(e);
+                    showToast(`${agentId}: ${m}`.slice(0, 180));
+                    notify(`${agentId} did not complete — see status.`);
                 }
             }
-            onCompletion();
-        } catch (err) { }
+            // Open the report only if at least one specialist produced real analysis.
+            if (produced > 0) onCompletion();
+            else notify("No specialist returned analysis — check the status messages, model, key, or quota.");
+        } catch (err) {
+            notify(`Boardroom error: ${err instanceof Error ? err.message : String(err)}`);
+        }
         finally { setIsAnalyzing(false); }
     };
 
@@ -157,10 +349,12 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
                 input.click();
             }},
             { type: "separator" },
-            { label: "Save State", icon: Save, action: () => {
-                const state = { selectedAgents, customAgents, activeTab };
-                localStorage.setItem("tm_boardroom_state", JSON.stringify(state));
-                showToast("Boardroom state cached.");
+            { label: "Save State", icon: Save, action: async () => {
+                // [FILES-ONLY]: boardroom selection persists into the project file.
+                const ok = await saveProjectState(projectFolder, {
+                    boardroom_state: { selectedAgents, customAgents, activeTab },
+                });
+                showToast(ok ? "Boardroom state saved to project." : "Save failed.");
             }}
         ],
         Edit: [
@@ -239,7 +433,7 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
                                                                 }}
                                                                 className="w-full flex items-center gap-3 px-4 py-2 hover:bg-amber-500/10 text-zinc-400 hover:text-amber-500 text-[10px] font-black uppercase tracking-tighter transition-all"
                                                             >
-                                                                <item.icon className="w-3 h-3 opacity-50 text-amber-500" />
+                                                                {item.icon && <item.icon className="w-3 h-3 opacity-50 text-amber-500" />}
                                                                 <span>{item.label}</span>
                                                             </button>
                                                         )
@@ -259,6 +453,15 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
                         )}
                     </div>
                     <div className="flex items-center gap-2">
+                        {lock?.hasMoved && (
+                            <button
+                                onClick={lock.toggleLock}
+                                title={lock.isLocked ? 'Unlock panel to move' : 'Lock panel in place'}
+                                className={`p-2 rounded-lg border transition-all ${lock.isLocked ? 'bg-emerald-500/90 hover:bg-emerald-400 text-black border-emerald-400' : 'bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 border-white/5'}`}
+                            >
+                                {lock.isLocked ? <Lock className="w-4 h-4" /> : <LockOpen className="w-4 h-4" />}
+                            </button>
+                        )}
                         <button onClick={() => setIsMinimized(!isMinimized)} className="p-2 bg-zinc-800/50 hover:bg-zinc-700/50 text-zinc-400 rounded-lg border border-white/5 transition-all">
                             {isMinimized ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
                         </button>
@@ -273,23 +476,61 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
                             analyticScope={analyticScope} setAnalyticScope={setAnalyticScope} userChapters={chapters} 
                             rangeStartIdx={rangeStartIdx} setRangeStartIdx={setRangeStartIdx} 
                             rangeEndIdx={rangeEndIdx} setRangeEndIdx={setRangeEndIdx} 
-                            visibilityMap={new Map()} displacement={editorContent.split(/\s+/).length} tacticalSummary="Full Scope"
+                            visibilityMap={new Map(chapters.map((c) => [c.id, !isFrontMatter(c)] as [string, boolean]))} displacement={scopeWordCount} tacticalSummary={scopeLabel}
                         />
-                        <SpecialistRegistry 
-                            selectedAgents={selectedAgents} setSelectedAgents={setSelectedAgents} 
-                            customAgents={customAgents} setCustomAgents={setCustomAgents} 
+                        <div className="flex flex-col gap-1.5 px-1">
+                            <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Boardroom Engine</span>
+                            <select
+                                value={boardroomEngine ? `${boardroomEngine.provider}|${boardroomEngine.model}` : ''}
+                                onChange={(e) => { const [p, m] = e.target.value.split('|'); if (p && m) selectBoardroomEngine(p, m); }}
+                                className="w-full bg-black/60 border border-white/10 rounded-xl py-2 px-3 text-[10px] text-zinc-300 font-bold font-mono focus:border-amber-500/40 outline-none cursor-pointer"
+                            >
+                                <option value="" disabled>{engineOptions.length ? 'Choose model…' : 'Add + verify a key to list models'}</option>
+                                {engineOptions.map((o) => (
+                                    <option key={`${o.provider}|${o.model}`} value={`${o.provider}|${o.model}`}>{o.provider} — {o.model}{o.trait ? `  [${o.trait}]` : ''}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <SpecialistRegistry
+                            selectedAgents={selectedAgents} setSelectedAgents={setSelectedAgents}
+                            customAgents={customAgents} setCustomAgents={setCustomAgents}
+                            engineOptions={engineOptions} agentModels={agentModels} setAgentModel={setAgentModel}
+                            defaultEngine={boardroomEngine}
+                            agentIntensities={agentIntensities} setAgentIntensity={setAgentIntensity}
                         />
-                        {handshakeStatus === "ok" && (
-                            <div className="p-4 bg-emerald-500/5 border border-emerald-500/10 rounded-2xl flex items-center gap-3">
-                                <div className="p-2 bg-emerald-500/10 rounded-lg">
-                                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                        {/* [SOVEREIGN LOCK]: real local-engine fidelity + lock toggle */}
+                        <div className="p-4 bg-black/30 border border-white/5 rounded-2xl space-y-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-3 min-w-0">
+                                    <div className={`p-2 rounded-lg shrink-0 ${localReady ? 'bg-emerald-500/10' : 'bg-amber-500/10'}`}>
+                                        {localReady ? <ShieldCheck className="w-4 h-4 text-emerald-400" /> : <ShieldAlert className="w-4 h-4 text-amber-400" />}
+                                    </div>
+                                    <div className="min-w-0">
+                                        <p className={`text-[10px] font-black uppercase leading-none ${localReady ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                            {localReady ? 'Sovereign Fidelity Verified' : 'No Local Engine Detected'}
+                                        </p>
+                                        <p className="text-[8px] text-zinc-500 font-bold uppercase mt-1 truncate">
+                                            {localReady
+                                                ? `${localEngines.length} engine(s) · ${localVisionReady ? 'OCR + text capable' : 'text only — no vision/OCR'}`
+                                                : 'Sovereign mode needs a local engine'}
+                                        </p>
+                                    </div>
                                 </div>
-                                <div>
-                                    <p className="text-[10px] font-black text-emerald-400 uppercase leading-none">Sovereign Fidelity Verified</p>
-                                    <p className="text-[8px] text-zinc-500 font-bold uppercase mt-1">Optimal Engines Established for Analysis</p>
-                                </div>
+                                <button
+                                    onClick={toggleSovereignLock}
+                                    title={sovereignLock ? 'Sovereign Lock is ON (local only) — click to allow cloud (Industrial)' : 'Click to lock to local-only (Sovereign)'}
+                                    className={`shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all ${sovereignLock ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300' : 'bg-black/40 border-white/10 text-zinc-400 hover:text-white hover:border-white/20'}`}
+                                >
+                                    {sovereignLock ? <Lock className="w-3 h-3" /> : <Zap className="w-3 h-3" />}
+                                    {sovereignLock ? 'Sovereign' : 'Industrial'}
+                                </button>
                             </div>
-                        )}
+                            {sovereignLock && !localVisionReady && (
+                                <p className="text-[8px] text-amber-500/80 font-bold leading-relaxed">
+                                    ⚠ No local VISION model — OCR / transcription will ask before using cloud, or you can install one.
+                                </p>
+                            )}
+                        </div>
                         <button 
                             onClick={() => runAnalysis()} 
                             disabled={isAnalyzing} 

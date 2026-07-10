@@ -3,6 +3,8 @@ import json
 import time
 import threading
 
+from . import providers
+
 # [SOVEREIGN SETTINGS]: All persistent configuration is now routed through
 # the hardware-encrypted vault (src/tomemaster/vault_loader.py -> settings.enc).
 # The legacy plaintext settings.json has been permanently retired.
@@ -27,7 +29,13 @@ DEFAULT_SETTINGS = {
         "MARKETING_ANALYST": "auto",
         "SOVEREIGN_LIAISON": "auto",
     },
-    "preferences": {"theme": "dark", "auto_stitch": True, "language": "en", "pii_scrub": False},
+    # sovereign_lock=True → force LOCAL engines for every role, ignoring cloud
+    # keys ("Think Sovereign in all cases"). The UI asks before any cloud fallback.
+    "preferences": {"theme": "dark", "auto_stitch": True, "language": "en", "pii_scrub": False, "sovereign_lock": False},
+    # User-defined OpenAI-compatible endpoints (exotic cloud or non-default local).
+    # Each entry: {"label": str, "base_url": str, "key": str}. Self-service — lets
+    # the user reach any provider with zero developer involvement.
+    "custom_providers": [],
 }
 
 
@@ -35,7 +43,16 @@ DEFAULT_SETTINGS = {
 _PERMITTED_TOP_KEYS = set(DEFAULT_SETTINGS.keys())
 _PERMITTED_API_KEYS = {"openai", "gemini", "groq", "anthropic", "bitnet", "slot_primary", "slot_specialist", "slot_velocity"}
 _PERMITTED_MODEL_KEYS = {"vision", "logic", "analysis", "NARRATIVE_ARCHITECT", "COPY_EDITOR", "TRANSCRIBER_LEAD", "MARKETING_ANALYST", "SOVEREIGN_LIAISON"}
-_PERMITTED_PREF_KEYS = {"theme", "auto_stitch", "language", "pii_scrub"}
+_PERMITTED_PREF_KEYS = {
+    "theme", "auto_stitch", "language", "pii_scrub", "sovereign_lock",
+    # [FILES-ONLY MIGRATION]: global UI/app preferences moved off browser
+    # localStorage into the vault. Non-secret; live in settings.enc preferences.
+    "onboarded", "force_primary", "local_mode", "guide_voice", "greeted",
+    "boardroom_provider", "boardroom_model", "default_provider",
+    "spell_custom_words", "spell_ignored_words", "spell_language",
+    "ui_layout",        # { <dialogId>: { pos:{x,y}, locked:bool } } for draggable panels
+    "last_project",     # Group 4: reopen the last book on launch
+}
 
 
 def _validate_settings(data: dict) -> dict:
@@ -56,6 +73,18 @@ def _validate_settings(data: dict) -> dict:
             clean[key] = {
                 k: data[key][k] for k in _PERMITTED_PREF_KEYS if k in data[key]
             }
+        elif key == "custom_providers":
+            # Keep only well-formed {label, base_url, key} entries.
+            entries = data[key] if isinstance(data[key], list) else []
+            clean[key] = [
+                {
+                    "label":    str(e.get("label", "")).strip(),
+                    "base_url": str(e.get("base_url", "")).strip(),
+                    "key":      str(e.get("key", "")),
+                }
+                for e in entries
+                if isinstance(e, dict) and str(e.get("base_url", "")).strip()
+            ]
         else:
             clean[key] = data[key]
     return clean
@@ -104,9 +133,23 @@ def save_settings(new_settings):
 
 
 def get_api_key(provider):
-    """Retrieves a specific API key from the vault or environment fallback."""
+    """Retrieves a specific API key from the vault or environment fallback.
+
+    [VAULT AUTHORITATIVE]: For the real cloud providers, a slot that EXISTS in the
+    vault wins outright — even when blank. A key the user deliberately cleared must
+    never resurrect from a stale process/OS env var (the bug where a cleared Gemini
+    key kept reappearing because GEMINI_API_KEY was hydrated at startup). The env/
+    slot fallbacks below now only apply to slot pseudo-providers / genuinely absent
+    keys, never to override an explicit vault value.
+    """
     settings = load_settings()
-    key = settings.get("api_keys", {}).get(provider.lower())
+    api_keys = settings.get("api_keys", {})
+    prov = provider.lower()
+
+    if prov in {"openai", "gemini", "groq", "anthropic"} and prov in api_keys:
+        return api_keys.get(prov) or ""
+
+    key = api_keys.get(prov)
 
     # [UPGRADE]: Map slots to branded fallbacks if slot-specific key is missing
     if not key:
@@ -140,15 +183,36 @@ def get_api_key(provider):
     return key or ""
 
 
+def detect_provider_from_key(key: str):
+    """[KEY FORENSICS]: Infer the provider brand from an API key's format.
+
+    Thin re-export of the single source of truth in `providers` so every call
+    site shares one prefix table (sk-ant-/sk-or- tested before bare sk-).
+    """
+    return providers.detect_provider_from_key(key)
+
+
 # ─── Dynamic Model Resolution Engine ─────────────────────────────────────────
 # When preferred_models has "auto", the engine queries the provider's live model
 # list and ranks candidates by role. This ensures the app never hardcodes model
 # names — it adapts to whatever the user's API key has access to.
 
-# [CACHE]: Avoid hammering the model list API on every request. Refresh every
-# 5 minutes or when keys change.
-_MODEL_CACHE = {"models": [], "provider": None, "timestamp": 0}
+# [CACHE]: Avoid hammering the model list API on every request. Keyed PER
+# PROVIDER so a multi-provider resolution (gemini + groq + …) doesn't evict
+# itself on every call. Refresh every 5 minutes or when keys change.
+_MODEL_CACHE = {}  # provider -> {"models": [...], "timestamp": float}
 _MODEL_CACHE_TTL = 300  # seconds
+
+# [SINGLE SOURCE OF TRUTH]: Anthropic portfolio fallback. Anthropic *does* expose
+# GET /v1/models (x-api-key + anthropic-version headers); this static list is only
+# used when that endpoint is unreachable. Referenced by every discovery path so
+# the three call sites can never drift apart again.
+ANTHROPIC_STATIC_PORTFOLIO = [
+    "claude-opus-4-8",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+    "claude-3-5-sonnet-20241022",
+]
 
 # [RANKING TABLE]: Priority order per role. First match wins.
 # Higher-versioned models rank first; "pro" models for reasoning,
@@ -170,14 +234,14 @@ _ROLE_RANKING = {
         # OpenAI reasoning
         "gpt-4o", "o3", "o1",
         # Anthropic
-        "claude-sonnet-4-20250514", "claude-3-5-sonnet-20241022",
+        "claude-opus-4-8", "claude-sonnet-4-6", "claude-3-5-sonnet-20241022",
     ],
     "COPY_EDITOR": [
         # Grammar, spelling, style — needs precision and linguistic fidelity
         "gemini-3.1-pro-preview", "gemini-3-pro-preview", "gemini-3.5-flash",
         "gemini-2.5-pro", "gemini-3-flash-preview",
         # Anthropic (excellent at editing)
-        "claude-sonnet-4-20250514", "claude-3-5-sonnet-20241022",
+        "claude-sonnet-4-6", "claude-opus-4-8", "claude-3-5-sonnet-20241022",
         # OpenAI
         "gpt-4o", "gpt-4o-mini",
     ],
@@ -186,7 +250,7 @@ _ROLE_RANKING = {
         "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-pro-preview",
         "gemini-2.5-flash", "gemini-2.5-pro",
         "gpt-4o", "gpt-4o-mini",
-        "claude-sonnet-4-20250514",
+        "claude-sonnet-4-6",
     ],
     "SOVEREIGN_LIAISON": [
         # General coordination — fast model
@@ -207,14 +271,12 @@ def _fetch_model_list_sync(provider: str, api_key: str) -> list:
     """[DISCOVERY PULSE]: Queries the provider's /models endpoint synchronously.
     Returns a list of model ID strings, or [] on failure."""
     import time
-    global _MODEL_CACHE
 
-    # Check cache first
+    # Check cache first (per-provider)
     now = time.time()
-    if (_MODEL_CACHE["provider"] == provider and
-            _MODEL_CACHE["models"] and
-            now - _MODEL_CACHE["timestamp"] < _MODEL_CACHE_TTL):
-        return _MODEL_CACHE["models"]
+    cached = _MODEL_CACHE.get(provider)
+    if cached and cached["models"] and now - cached["timestamp"] < _MODEL_CACHE_TTL:
+        return cached["models"]
 
     urls = {
         "gemini": "https://generativelanguage.googleapis.com/v1beta/models?key=",
@@ -232,8 +294,23 @@ def _fetch_model_list_sync(provider: str, api_key: str) -> list:
             with urllib.request.urlopen(req, timeout=3) as resp:
                 data = _json.loads(resp.read())
             models = [m["id"] for m in data.get("data", [])]
-            _MODEL_CACHE = {"models": models, "provider": provider, "timestamp": time.time()}
+            _MODEL_CACHE[provider] = {"models": models, "timestamp": time.time()}
             print(f"[MODEL DISCOVERY]: bitnet → {len(models)} model(s) available")
+            return models
+
+        # [ANTHROPIC]: Real GET /v1/models (x-api-key + version headers). Falls
+        # back to the static portfolio in the except block if unreachable.
+        if provider == "anthropic":
+            req = urllib.request.Request(
+                "https://api.anthropic.com/v1/models",
+                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = _json.loads(resp.read())
+            models = [m["id"] for m in data.get("data", []) if m.get("id")]
+            models = models or list(ANTHROPIC_STATIC_PORTFOLIO)
+            _MODEL_CACHE[provider] = {"models": models, "timestamp": now}
+            print(f"[MODEL DISCOVERY]: anthropic → {len(models)} model(s) available")
             return models
 
         if provider == "gemini":
@@ -264,11 +341,16 @@ def _fetch_model_list_sync(provider: str, api_key: str) -> list:
             # OpenAI/Groq format: {"data": [{"id": "gpt-4o", ...}]}
             models = [m["id"] for m in data["data"]]
 
-        _MODEL_CACHE = {"models": models, "provider": provider, "timestamp": now}
+        _MODEL_CACHE[provider] = {"models": models, "timestamp": now}
         print(f"[MODEL DISCOVERY]: {provider} → {len(models)} model(s) available")
         return models
     except Exception as e:
         print(f"[MODEL DISCOVERY WARNING]: Failed to query {provider}: {e}")
+        # [ANTHROPIC FALLBACK]: no public-key-free endpoint guarantee — serve the
+        # static portfolio so role resolution still works when the key is valid
+        # but the /models probe failed (network blip, header quirk).
+        if provider == "anthropic":
+            return list(ANTHROPIC_STATIC_PORTFOLIO)
         return []
 
 
@@ -298,21 +380,24 @@ def _resolve_auto_model(role_or_category: str, settings: dict = None) -> str:
     if not ranking:
         ranking = _ROLE_RANKING.get("SOVEREIGN_LIAISON", [])
 
-    # Collect all available models across all providers with keys
+    # Collect all available models across all providers with keys. Discovery is
+    # unified — _fetch_model_list_sync handles every provider (incl. anthropic),
+    # so there is no per-provider special-casing here anymore.
     all_available = set()
     for prov, key in providers_with_keys:
-        if prov == "anthropic":
-            # Anthropic has no public /models endpoint — use static portfolio
-            all_available.update([
-                "claude-sonnet-4-20250514", "claude-3-5-sonnet-20241022",
-                "claude-3-5-sonnet-latest", "claude-3-opus-20240229",
-            ])
-        else:
-            models = _fetch_model_list_sync(prov, key)
-            all_available.update(models)
+        all_available.update(_fetch_model_list_sync(prov, key))
 
     if not all_available:
         return None
+
+    # [MODALITY GATE]: Hard-filter to models that support the modality this role
+    # requires (e.g. an OCR role keeps only vision-capable models). Capability,
+    # not a name list, decides eligibility. Cloud models infer modality by rule.
+    req_mod = providers.required_modality(role_or_category)
+    eligible = {m for m in all_available if providers.model_supports(m, req_mod)}
+    if not eligible:
+        return None
+    all_available = eligible
 
     # [PRIORITY MATCH]: Walk the ranking list; first hit wins
     for candidate in ranking:
@@ -332,8 +417,68 @@ def _resolve_auto_model(role_or_category: str, settings: dict = None) -> str:
 
 def invalidate_model_cache():
     """Call when API keys change so the next model resolution re-queries."""
-    global _MODEL_CACHE
-    _MODEL_CACHE = {"models": [], "provider": None, "timestamp": 0}
+    global _MODEL_CACHE, _LOCAL_PROBE_CACHE
+    _MODEL_CACHE = {}
+    _LOCAL_PROBE_CACHE = {"engines": None, "timestamp": 0}
+
+
+# Cached localhost probe so resolving 5 roles doesn't re-scan ports 5×.
+_LOCAL_PROBE_CACHE = {"engines": None, "timestamp": 0}
+
+
+def _fetch_models_for_url(base_url: str, api_key: str = "") -> list:
+    """[GENERIC DISCOVERY]: Sync /models fetch for an arbitrary OpenAI-compatible
+    base URL (custom exotic cloud or non-default local). Cached per URL."""
+    import urllib.request
+    import json as _json
+
+    now = time.time()
+    cached = _MODEL_CACHE.get(base_url)
+    if cached and cached["models"] and now - cached["timestamp"] < _MODEL_CACHE_TTL:
+        return cached["models"]
+    try:
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        req = urllib.request.Request(base_url.rstrip("/") + "/models", headers=headers)
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = _json.loads(resp.read())
+        raw = data.get("data") or data.get("models") or []
+        models = [m.get("id") or m.get("name") for m in raw if isinstance(m, dict)]
+        models = [m for m in models if m]
+        _MODEL_CACHE[base_url] = {"models": models, "timestamp": now}
+        return models
+    except Exception as e:
+        print(f"[CUSTOM DISCOVERY WARNING]: {base_url}: {e}")
+        return []
+
+
+def _resolve_local_or_custom_endpoint(settings: dict, required_modality: str = "text"):
+    """[SOVEREIGN-LOCAL]: When no cloud key is present, route a role to a user
+    custom endpoint or a running local engine (Ollama/BitNet/…) so analysis works
+    fully offline. The model is chosen by MODALITY — a vision role (OCR) will skip
+    text-only local models and pick one that can actually see. Returns a gateway
+    config or None when no local model satisfies the required modality.
+    """
+    # 1. user-defined custom endpoints (explicit > implicit)
+    for cp in settings.get("custom_providers", []) or []:
+        base = (cp.get("base_url") or "").strip()
+        if not base:
+            continue
+        for mdl in _fetch_models_for_url(base, cp.get("key", "")):
+            if providers.model_supports(mdl, required_modality, base):
+                return {"url": providers._norm(base), "key": cp.get("key", ""),
+                        "model": mdl, "provider": "custom"}
+
+    # 2. auto-detected local engines (cached probe)
+    global _LOCAL_PROBE_CACHE
+    now = time.time()
+    if _LOCAL_PROBE_CACHE["engines"] is None or now - _LOCAL_PROBE_CACHE["timestamp"] > _MODEL_CACHE_TTL:
+        _LOCAL_PROBE_CACHE = {"engines": providers.probe_local_engines(), "timestamp": now}
+    for eng in _LOCAL_PROBE_CACHE["engines"]:
+        for mdl in eng.get("models", []):
+            if providers.model_supports(mdl, required_modality, eng["base"]):
+                return {"url": providers._norm(eng["base"]), "key": "",
+                        "model": mdl, "provider": "local"}
+    return None
 
 
 def get_preferred_model(category: str, provider: str = None):
@@ -402,6 +547,17 @@ def get_model_for_role(role: str) -> dict:
     """
     settings = load_settings()
 
+    # 0. [SOVEREIGN LOCK]: force LOCAL resolution, ignoring cloud keys entirely.
+    # If no local engine can serve the role's modality, return a 'sovereign_blocked'
+    # marker — the gateway raises an honest error and the UI asks before any cloud
+    # use. An explicit per-call override (user-confirmed cloud) still wins downstream.
+    if settings.get("preferences", {}).get("sovereign_lock"):
+        req_mod = providers.required_modality(role)
+        local = _resolve_local_or_custom_endpoint(settings, req_mod)
+        if local:
+            return local
+        return {"url": "", "key": "", "model": "", "provider": "sovereign_blocked", "modality": req_mod}
+
     # 1. Map role to category. NARRATIVE_ARCHITECT is the structural editor —
     # it needs the analysis (Gemini 3.1 Pro) tier, not vision. Vision is for
     # OCR/transcription only.
@@ -431,19 +587,20 @@ def get_model_for_role(role: str) -> dict:
     provider = _infer_provider_from_model(model)
     key = get_api_key(provider)
 
-    # 4. Construct gateway config. URL is derived from the provider so the
-    # dispatcher stays brand-agnostic.
-    bitnet_host = os.getenv("BITNET_HOST", "http://localhost:8080")
-    urls = {
-        "gemini":    "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "openai":    "https://api.openai.com/v1/",
-        "anthropic": "https://api.anthropic.com/v1/",  # adapter switches to /messages
-        "groq":      "https://api.groq.com/openai/v1/",
-        "bitnet":    f"{bitnet_host}/v1/",
-    }
+    # 3b. [SOVEREIGN-LOCAL FALLBACK]: the resolved cloud provider has no key —
+    # route to a user custom endpoint or a running local engine if one exists,
+    # so a keyless local model can drive analysis instead of guaranteeing a 401.
+    if not key and provider != "bitnet":
+        local = _resolve_local_or_custom_endpoint(settings, providers.required_modality(role))
+        if local:
+            return local
+
+    # 4. Construct gateway config. URL comes from the single provider registry
+    # so the dispatcher stays brand-agnostic and endpoints live in one place.
+    url = providers.provider_base(provider) or providers.provider_base("gemini")
 
     return {
-        "url":      urls.get(provider, urls["gemini"]),
+        "url":      url,
         "key":      key,
         "model":    model,
         "provider": provider,

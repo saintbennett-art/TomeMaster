@@ -28,18 +28,30 @@ const WorkstationViewport: React.FC<WorkstationViewportProps> = ({
     } = useWorkstationState();
     
     // Pull domain data from the Editor silo
-    const { 
-        htmlContent = "", activePage = 1, wordCount = 0, misspelledCount = 0 
+    const {
+        htmlContent = "", content = "", activePage = 1, wordCount = 0, misspelledCount = 0
     } = useEditorState();
-    
-    const { setHtmlContent, setContent, setWordCount } = useEditorActions();
-    
+
+    const { setHtmlContent, setContent, setWordCount, setChapters } = useEditorActions();
+
+    // [WORD COUNT]: derive from live content so it never reads a stale 0 after a load/restore
+    // (the editor's onChange only recalculates on typing). 0 only when the document is truly empty.
+    const liveWordCount = content.trim() ? content.trim().split(/\s+/).length : 0;
+
     // [HYDRATION BRIDGE]: Listen for manual restoration events (e.g. Loading a Sealed Manuscript)
     React.useEffect(() => {
         const handleHydrate = (e: any) => {
             if (e.detail?.html && editorRef.current) {
                 editorRef.current.setContent(e.detail.html);
                 setHtmlContent(e.detail.html);
+                // [TOC BUILD]: build the chapter list / TOC sidebar from the
+                // headings in the loaded content — client-side, no AI needed.
+                setTimeout(() => {
+                    try {
+                        const toc = editorRef.current?.generateTOC?.();
+                        if (toc && toc.length > 0) setChapters(toc);
+                    } catch { /* editor not ready */ }
+                }, 60);
             }
             if (e.detail?.content) {
                 setContent(e.detail.content);
@@ -47,7 +59,7 @@ const WorkstationViewport: React.FC<WorkstationViewportProps> = ({
         };
         window.addEventListener('tome-master-editor-hydrate', handleHydrate);
         return () => window.removeEventListener('tome-master-editor-hydrate', handleHydrate);
-    }, [setContent, setHtmlContent, editorRef]);
+    }, [setContent, setHtmlContent, setChapters, editorRef]);
 
     return (
         <div className="flex-1 flex flex-col min-w-0 relative h-full" id="main-workstation-viewport">
@@ -104,21 +116,25 @@ const WorkstationViewport: React.FC<WorkstationViewportProps> = ({
 
             <footer className="h-10 border-t border-border bg-surface flex items-center justify-between px-6 shrink-0 z-20">
                 <div className="flex items-center gap-6">
+                    {isTranscribing && (
+                        <>
+                            <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Transcription Status:</span>
+                                <span className="text-[10px] font-mono text-foreground font-bold">Page {activePage}</span>
+                            </div>
+                            <div className="h-3 w-[1px] bg-border" />
+                        </>
+                    )}
                     <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Transcription Status:</span>
-                        <span className="text-[10px] font-mono text-foreground font-bold">Page {activePage}</span>
-                    </div>
-                    <div className="h-3 w-[1px] bg-border" />
-                    <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Lexical Mass:</span>
-                        <span className="text-[10px] font-mono text-foreground font-bold">{wordCount.toLocaleString()} Words</span>
+                        <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Word Count:</span>
+                        <span className="text-[10px] font-mono text-foreground font-bold">{liveWordCount.toLocaleString()} Words</span>
                     </div>
                 </div>
 
                 <div className="flex items-center gap-4">
                     {misspelledCount > 0 && (
                         <div className="flex items-center gap-2 px-2 py-0.5 bg-rose-500/10 border border-rose-500/20 rounded text-rose-400 animate-pulse">
-                            <span className="text-[9px] font-black uppercase tracking-tighter italic">{misspelledCount} Lexical Anomalies (Spelling)</span>
+                            <span className="text-[9px] font-black uppercase tracking-tighter italic">{misspelledCount} Misspellings</span>
                         </div>
                     )}
                     <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-[0.2em] opacity-50">Sovereign Encryption Active</span>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Cpu, Lock, LockOpen, Zap } from 'lucide-react';
-import { API_BASE_HOLDER } from '@/lib/apiClient';
+import { API_BASE_HOLDER, withSessionToken } from '@/lib/apiClient';
+import { loadPreferences, getLayout, setLayout } from '@/lib/preferences';
 
 const MOVED_THRESHOLD = 20;
 
@@ -25,18 +26,33 @@ export default function NerveCenter({ isLeftSidebarOpen = true }: { isLeftSideba
     const [history, setHistory] = useState<number[]>(new Array(15).fill(0));
     const [status, setStatus] = useState<'online' | 'offline'>('offline');
     const [initPos] = useState({ x: 0, y: 162 });
-    const [position, setPosition] = useState({ x: 0, y: 162 });
+    // [FILES-ONLY]: position/lock come from vault preferences (ui_layout.nerve).
+    const [position, setPosition] = useState(() => getLayout('nerve').pos || { x: 0, y: 162 });
     const [isDragging, setIsDragging] = useState(false);
-    const [hasMoved, setHasMoved] = useState(false);
-    const [isLocked, setIsLocked] = useState(false);
+    const [hasMoved, setHasMoved] = useState(() => !!getLayout('nerve').pos);
+    const [isLocked, setIsLocked] = useState(() => getLayout('nerve').locked === true);
     const [rel, setRel] = useState({ x: 0, y: 0 });
     const [activeAgents, setActiveAgents] = useState<ActiveAgent[]>([]);
 
     useEffect(() => {
-        // Set startup position: far right, just below toolbar
-        const startX = window.innerWidth - 220;
-        setPosition({ x: startX, y: 162 });
+        // Re-hydrate once vault preferences finish loading (cache may have been
+        // empty at first render); otherwise place the default startup position.
+        (async () => {
+            await loadPreferences();
+            const saved = getLayout('nerve');
+            if (saved.pos) { setPosition(saved.pos); setHasMoved(true); }
+            else if (typeof window !== 'undefined') setPosition({ x: window.innerWidth - 220, y: 162 });
+            if (typeof saved.locked === 'boolean') setIsLocked(saved.locked);
+        })();
     }, []);
+
+    // [PERSIST]: remember the bar's position + lock across restarts (vault).
+    useEffect(() => {
+        if (hasMoved) setLayout('nerve', { pos: position });
+    }, [position, hasMoved]);
+    useEffect(() => {
+        setLayout('nerve', { locked: isLocked });
+    }, [isLocked]);
 
     const onMouseDown = (e: React.MouseEvent) => {
         if (e.button !== 0 || isLocked) return;
@@ -74,7 +90,7 @@ export default function NerveCenter({ isLeftSidebarOpen = true }: { isLeftSideba
     }, [isDragging, rel]);
 
     useEffect(() => {
-        const eventSource = new EventSource(`${API_BASE_HOLDER.current}/analysis/pulse`);
+        const eventSource = new EventSource(withSessionToken(`${API_BASE_HOLDER.current}/analysis/pulse`));
         eventSource.onmessage = (event) => {
             const data = JSON.parse(event.data);
             if (data.pulse === 'active') {
@@ -120,27 +136,29 @@ export default function NerveCenter({ isLeftSidebarOpen = true }: { isLeftSideba
                 transition: isDragging ? 'none' : 'left 0.2s ease-out, top 0.2s ease-out, width 0.5s ease'
             }}
         >
-            {/* LOCK BUTTON — appears after moved, vanishes once locked */}
-            {hasMoved && !isLocked && (
-                <button
-                    onClick={(e) => { e.stopPropagation(); setIsLocked(prev => !prev); }}
-                    title={isLocked ? 'Unlock to move' : 'Lock in place'}
-                    className={`absolute top-[-26px] right-0 flex items-center gap-1 px-2 py-1 text-[9px] font-black uppercase tracking-wider rounded-t-lg shadow-lg transition-all animate-in fade-in duration-200 cursor-pointer z-10 ${
-                        isLocked ? 'bg-emerald-500/90 hover:bg-emerald-400 text-black' : 'bg-zinc-700/90 hover:bg-zinc-600 text-zinc-300'
-                    }`}
-                >
-                    {isLocked ? <><Lock className="w-2.5 h-2.5 inline mr-0.5" />Locked</> : <><LockOpen className="w-2.5 h-2.5 inline mr-0.5" />Lock</>}
-                </button>
-            )}
-
             <div className="bg-black/90 backdrop-blur-3xl border border-white/10 rounded-xl px-3 py-2 shadow-2xl flex flex-col gap-1 hover:border-indigo-500/30 transition-all duration-500">
                 {/* Line 1: Label and Status */}
-                <div className="flex items-center justify-between pointer-events-none">
-                    <div className="flex items-center gap-1.5">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 pointer-events-none">
                         <Cpu className={`w-3 h-3 ${status === 'online' ? 'text-indigo-400' : 'text-rose-400'}`} />
                         <span className="text-[9px] font-black text-white uppercase tracking-widest leading-none">Nerve Center</span>
                     </div>
-                    <div className={`w-1.5 h-1.5 rounded-full ${status === 'online' ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+                    <div className="flex items-center gap-1.5">
+                        {/* LOCK BUTTON — lives IN the bar header so it stays reachable when docked at the top. */}
+                        {hasMoved && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setIsLocked(prev => !prev); }}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                title={isLocked ? 'Unlock to move' : 'Lock in place'}
+                                className={`flex items-center gap-0.5 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider rounded transition-all cursor-pointer ${
+                                    isLocked ? 'bg-emerald-500/90 hover:bg-emerald-400 text-black' : 'bg-zinc-700/90 hover:bg-zinc-600 text-zinc-300'
+                                }`}
+                            >
+                                {isLocked ? <><Lock className="w-2 h-2" />Locked</> : <><LockOpen className="w-2 h-2" />Lock</>}
+                            </button>
+                        )}
+                        <div className={`w-1.5 h-1.5 rounded-full ${status === 'online' ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+                    </div>
                 </div>
                 
                 {/* Line 2: Telemetry Data + Message */}

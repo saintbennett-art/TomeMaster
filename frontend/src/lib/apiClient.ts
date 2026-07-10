@@ -1,15 +1,11 @@
 import { saveBlobWithSovereignty } from './file_system_utils';
-import { Chapter } from '@/types/industrial';
-import { secureVault } from '@/lib/vault';
+import { Chapter, TranscriptionStatus } from '@/types/industrial';
+// [FILES-ONLY]: local_mode lives in vault preferences (cached), not localStorage.
+// Used only inside request functions at runtime — safe despite the cyclic import.
+import { getPref } from '@/lib/preferences';
 
-export interface TranscriptionStatus {
-    status: string;
-    progress?: number;
-    current_page?: string;
-    error_message?: string;
-    total_pages?: number;
-    processed_pages?: number;
-}
+// Single source of truth lives in types/industrial.ts
+export type { TranscriptionStatus };
 
 // [HANDSHAKE FOUNDATION]: Dynamic Resolution (Zero Hardcoding)
 export async function getLiveApiBase(): Promise<string> {
@@ -30,6 +26,53 @@ export async function getLiveApiBase(): Promise<string> {
 
 // Global root that always reflects the current successful interface
 export const API_BASE_HOLDER = { current: `/api/v1` };
+
+// [SESSION AUTH]: The launcher passes a per-launch token in the page URL
+// (?token=…). We attach it to every backend API call so other local processes
+// or stray browser tabs — which never received the token — cannot reach the
+// loopback API. Captured once here on load. Empty in dev mode (no lock) → the
+// wrapper below is a no-op, so nothing changes for the .bat dev workflow.
+let SESSION_TOKEN = '';
+if (typeof window !== 'undefined') {
+    SESSION_TOKEN = new URLSearchParams(window.location.search).get('token') || '';
+}
+
+export function getSessionToken(): string { return SESSION_TOKEN; }
+
+/** Append the session token as a query param. Used for EventSource, which
+ *  cannot send an Authorization header. No-op when there is no token. */
+export function withSessionToken(url: string): string {
+    if (!SESSION_TOKEN) return url;
+    return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(SESSION_TOKEN);
+}
+
+// Wrap window.fetch ONCE so every call site (there are ~8 files that fetch
+// directly) carries the token — without touching each one. Strictly scoped to
+// backend/loopback URLs so the token is never attached to an external host.
+if (typeof window !== 'undefined' && SESSION_TOKEN
+    && !(window as unknown as { __tomeFetchPatched?: boolean }).__tomeFetchPatched) {
+    const _origFetch = window.fetch.bind(window);
+    const _isApiUrl = (u: string) =>
+        u.includes('/api/v1') || u.startsWith('/') || /^https?:\/\/(127\.0\.0\.1|localhost)/.test(u);
+    window.fetch = (input: RequestInfo | URL, init: RequestInit = {}) => {
+        try {
+            const url = typeof input === 'string' ? input
+                : input instanceof URL ? input.toString()
+                : (input as Request).url;
+            if (_isApiUrl(url)) {
+                const headers = new Headers(
+                    init.headers || (input instanceof Request ? input.headers : undefined)
+                );
+                if (!headers.has('Authorization')) {
+                    headers.set('Authorization', `Bearer ${SESSION_TOKEN}`);
+                }
+                init = { ...init, headers };
+            }
+        } catch { /* fall through with original args */ }
+        return _origFetch(input as RequestInfo | URL, init);
+    };
+    (window as unknown as { __tomeFetchPatched?: boolean }).__tomeFetchPatched = true;
+}
 
 // Initialize the bridge immediately upon module load
 if (typeof window !== 'undefined') {
@@ -57,12 +100,23 @@ export async function uploadManuscript(file: File, isDemo: boolean = false, sign
     return res.json();
 }
 
+/** Uploads a browser-picked file to a real project folder and returns the same
+ *  shape as the native picker (/document/load), so the full load pipeline (every
+ *  format, incl. legacy Word/WordPerfect) is reused with no capability loss. */
+export async function uploadToProject(file: File): Promise<{ status: string; file_path?: string; folder_path?: string; filename?: string; is_parseable?: boolean }> {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch(`${API_BASE_HOLDER.current}/document/upload-to-project`, { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(`Upload failed (HTTP ${res.status})`);
+    return res.json();
+}
+
 export async function uploadManuscriptStream(file: File, onChunk: (data: Record<string, unknown>) => void, isDemo: boolean = false, signal?: AbortSignal) {
     const formData = new FormData();
     formData.append("file", file);
 
-    const provider = typeof window !== 'undefined' ? (localStorage.getItem('tome_master_provider') || 'gemini') : 'gemini';
-    const apiKey = typeof window !== 'undefined' ? (secureVault.load()[provider] || '') : '';
+    const provider = 'gemini';
+    const apiKey = '';
 
     formData.append("api_key", apiKey);
     const res = await fetch(`${API_BASE_HOLDER.current}/document/upload/stream?is_demo=${isDemo}`, {
@@ -107,8 +161,8 @@ export async function uploadManuscriptStream(file: File, onChunk: (data: Record<
 
 
 export async function analyzeEmotionalArc(text: string, providerOverride?: string, modelOverride?: string) {
-    const provider = providerOverride || (typeof window !== 'undefined' ? (localStorage.getItem('tome_master_provider') || 'gemini') : 'gemini');
-    const local_mode = typeof window !== 'undefined' ? localStorage.getItem('tome_master_local_mode') === 'true' : false;
+    const provider = providerOverride || 'gemini';
+    const local_mode = getPref<boolean>('local_mode', false);
 
     let lastError = null;
     for (let i = 0; i < 3; i++) {
@@ -145,9 +199,11 @@ export async function runMultiAgentAnalysis(
     localMode: boolean = false,
     synthesisMode: boolean = false,
     customPrompt?: string,
-    projectFolder?: string
+    projectFolder?: string,
+    intensity: string = 'balanced'
 ) {
-    const apiKey = typeof window !== 'undefined' ? (secureVault.load()[provider || 'gemini'] || '') : '';
+    // Keys live only in the backend vault; never sent from the browser.
+    const apiKey = '';
 
     const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/convene`, {
         method: "POST",
@@ -163,9 +219,12 @@ export async function runMultiAgentAnalysis(
             analytic_scope: analyticScope,
             user_chapters: userChapters,
             synthesis_mode: synthesisMode,
-            custom_prompt: customPrompt
+            custom_prompt: customPrompt,
+            intensity
         }),
-    });
+    // Boardroom analysis is slow (esp. chapter-by-chapter on a blocked manuscript);
+    // the default 15s timeout was firing and the error was being swallowed → no report.
+    }, 300000);
 
     if ('isNetworkError' in res) {
         throw new Error("Sovereign connection failed. The Boardroom engine is unreachable.");
@@ -255,6 +314,129 @@ export async function exportEpub(content: string, chapters: Chapter[] = [], titl
     await saveBlobWithSovereignty(blob, `${title || "Manuscript"}.epub`, "Manuscript (ePUB)");
 }
 
+export async function exportMarkdown(content: string, chapters: Chapter[] = [], title?: string, author?: string, format: string = "chicago", coverImage?: string) {
+    const res = await fetch(`${API_BASE_HOLDER.current}/document/export/md`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, chapters, title, author, format, cover_image: coverImage }),
+    });
+    if (!res.ok) throw new Error("Export failed");
+    const blob = await res.blob();
+    await saveBlobWithSovereignty(blob, `${title || "Manuscript"}.md`, "Manuscript (Markdown)");
+}
+
+export async function exportRtf(content: string, chapters: Chapter[] = [], title?: string, author?: string, format: string = "chicago", coverImage?: string) {
+    const res = await fetch(`${API_BASE_HOLDER.current}/document/export/rtf`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, chapters, title, author, format, cover_image: coverImage }),
+    });
+    if (!res.ok) throw new Error("Export failed");
+    const blob = await res.blob();
+    await saveBlobWithSovereignty(blob, `${title || "Manuscript"}.rtf`, "Manuscript (Rich Text)");
+}
+
+export async function exportHtml(content: string, chapters: Chapter[] = [], title?: string, author?: string, format: string = "chicago", coverImage?: string) {
+    const res = await fetch(`${API_BASE_HOLDER.current}/document/export/html`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, chapters, title, author, format, cover_image: coverImage }),
+    });
+    if (!res.ok) throw new Error("Export failed");
+    const blob = await res.blob();
+    await saveBlobWithSovereignty(blob, `${title || "Manuscript"}.html`, "Manuscript (HTML)");
+}
+
+export async function exportTxt(content: string, chapters: Chapter[] = [], title?: string, author?: string, format: string = "chicago", coverImage?: string) {
+    const res = await fetch(`${API_BASE_HOLDER.current}/document/export/txt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, chapters, title, author, format, cover_image: coverImage }),
+    });
+    if (!res.ok) throw new Error("Export failed");
+    const blob = await res.blob();
+    await saveBlobWithSovereignty(blob, `${title || "Manuscript"}.txt`, "Manuscript (Plain text)");
+}
+
+export async function exportOdt(content: string, chapters: Chapter[] = [], title?: string, author?: string, format: string = "chicago", coverImage?: string) {
+    const res = await fetch(`${API_BASE_HOLDER.current}/document/export/odt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, chapters, title, author, format, cover_image: coverImage }),
+    });
+    if (!res.ok) throw new Error("Export failed");
+    const blob = await res.blob();
+    await saveBlobWithSovereignty(blob, `${title || "Manuscript"}.odt`, "Manuscript (OpenDocument)");
+}
+
+export async function exportFountain(content: string, chapters: Chapter[] = [], title?: string, author?: string, format: string = "chicago", coverImage?: string) {
+    const res = await fetch(`${API_BASE_HOLDER.current}/document/export/fountain`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, chapters, title, author, format, cover_image: coverImage }),
+    });
+    if (!res.ok) throw new Error("Export failed");
+    const blob = await res.blob();
+    await saveBlobWithSovereignty(blob, `${title || "Manuscript"}.fountain`, "Screenplay (Fountain)");
+}
+
+export async function exportFdx(content: string, chapters: Chapter[] = [], title?: string, author?: string, format: string = "chicago", coverImage?: string) {
+    const res = await fetch(`${API_BASE_HOLDER.current}/document/export/fdx`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, chapters, title, author, format, cover_image: coverImage }),
+    });
+    if (!res.ok) throw new Error("Export failed");
+    const blob = await res.blob();
+    await saveBlobWithSovereignty(blob, `${title || "Manuscript"}.fdx`, "Screenplay (Final Draft)");
+}
+
+/** Shunn Standard Manuscript Format — a DOCX with format forced to "submission".
+ *  Distinct filename so a batch export alongside the regular DOCX never collides. */
+export async function exportDocxSubmission(content: string, chapters: Chapter[] = [], title?: string, author?: string, _format?: string, coverImage?: string) {
+    const res = await fetch(`${API_BASE_HOLDER.current}/document/export/docx`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, chapters, title, author, format: "submission", cover_image: coverImage }),
+    });
+    if (!res.ok) throw new Error("Export failed");
+    const blob = await res.blob();
+    await saveBlobWithSovereignty(blob, `${title || "Manuscript"} (Submission).docx`, "Manuscript (Shunn Submission)");
+}
+
+/** Signature shared by every single-format export function. */
+export type ExportFn = (
+    content: string,
+    chapters?: Chapter[],
+    title?: string,
+    author?: string,
+    format?: string,
+    coverImage?: string,
+) => Promise<void>;
+
+export interface ExportFormat {
+    id: string;        // stable key
+    label: string;     // menu label, e.g. "Word (.docx)"
+    ext: string;       // file extension
+    run: ExportFn;     // the client export function
+}
+
+/** Data-driven list of every export format. Add a format = one entry here
+ *  (the multi-select ribbon + any menu render from this list). */
+export const EXPORT_FORMATS: ExportFormat[] = [
+    { id: "docx", label: "Word (.docx)",        ext: "docx", run: exportDocx },
+    { id: "pdf",  label: "PDF (.pdf)",          ext: "pdf",  run: exportPdf },
+    { id: "epub", label: "EPUB (.epub)",        ext: "epub", run: exportEpub },
+    { id: "md",   label: "Markdown (.md)",      ext: "md",   run: exportMarkdown },
+    { id: "rtf",  label: "Rich Text (.rtf)",    ext: "rtf",  run: exportRtf },
+    { id: "html", label: "HTML (.html)",        ext: "html", run: exportHtml },
+    { id: "txt",  label: "Plain text (.txt)",   ext: "txt",  run: exportTxt },
+    { id: "odt",  label: "OpenDocument (.odt)", ext: "odt",  run: exportOdt },
+    { id: "shunn", label: "Submission — Shunn (.docx)", ext: "docx", run: exportDocxSubmission },
+    { id: "fountain", label: "Screenplay — Fountain (.fountain)", ext: "fountain", run: exportFountain },
+    { id: "fdx",  label: "Screenplay — Final Draft (.fdx)", ext: "fdx", run: exportFdx },
+];
+
 export async function startTranscription(
     folderPath: string,
     mode: 'batch' | 'live' = 'batch',
@@ -311,7 +493,7 @@ export const checkBackendHealth = async (retries = 3): Promise<boolean> => {
 
 export async function clearTranscription(): Promise<boolean> {
     try {
-        const res = await fetch(`${API_BASE_HOLDER.current}/document/transcribe/clear`, { method: 'POST' });
+        const res = await fetch(`${API_BASE_HOLDER.current}/transcribe/clear`, { method: 'POST' });
         return res.ok;
     } catch (e) {
         return false;
@@ -320,7 +502,7 @@ export async function clearTranscription(): Promise<boolean> {
 
 export async function resortTranscription(folderPath: string): Promise<boolean> {
     try {
-        const res = await fetch(`${API_BASE_HOLDER.current}/document/transcribe/resort?folder_path=${encodeURIComponent(folderPath)}`, {
+        const res = await fetch(`${API_BASE_HOLDER.current}/transcribe/resort?folder_path=${encodeURIComponent(folderPath)}`, {
             method: 'GET'
         });
         return res.ok;
@@ -331,7 +513,7 @@ export async function resortTranscription(folderPath: string): Promise<boolean> 
 
 export async function resolveAudit(pageNumber: string, applyOffset: boolean = false): Promise<boolean> {
     try {
-        const res = await fetch(`${API_BASE_HOLDER.current}/document/transcribe/resolve`, {
+        const res = await fetch(`${API_BASE_HOLDER.current}/transcribe/resolve`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ page_number: pageNumber, apply_offset: applyOffset })
@@ -344,7 +526,7 @@ export async function resolveAudit(pageNumber: string, applyOffset: boolean = fa
 
 export async function setTranscriptionOffset(delta: number): Promise<boolean> {
     try {
-        const res = await fetch(`${API_BASE_HOLDER.current}/document/transcribe/offset`, {
+        const res = await fetch(`${API_BASE_HOLDER.current}/transcribe/offset`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ delta })
@@ -374,7 +556,7 @@ export async function targetFolder(): Promise<{ status: string, folder_path: str
     throw lastError;
 }
 
-export async function pickManuscript(): Promise<{ status: string, file_path: string | null, folder_path: string | null, filename: string | null }> {
+export async function pickManuscript(): Promise<{ status: string, file_path: string | null, folder_path: string | null, filename: string | null, is_parseable?: boolean }> {
     let lastError = null;
     for (let i = 0; i < 3; i++) {
         try {
@@ -400,7 +582,7 @@ export async function readLocalFile(path: string): Promise<{ content: string, ht
 
 export async function checkTranscriptionStatus(summary: boolean = true): Promise<TranscriptionStatus> {
     try {
-        const res = await safeFetch(`${API_BASE_HOLDER.current}/document/transcribe/status?summary=${summary}`);
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/transcribe/status?summary=${summary}`);
         if ('isNetworkError' in res) {
             return { status: 'standby', error_message: "Re-establishing High-Velocity Link..." };
         }
@@ -413,9 +595,9 @@ export async function checkTranscriptionStatus(summary: boolean = true): Promise
 }
 
 export async function fetchMoodboard(text: string, providerOverride?: string, modelOverride?: string) {
-    const provider = providerOverride || (typeof window !== 'undefined' ? (localStorage.getItem('tome_master_active_slot') || 'slot_primary') : 'slot_primary');
-    const apiKey = typeof window !== 'undefined' ? (secureVault.load()[provider] || '') : '';
-    const local_mode = typeof window !== 'undefined' ? localStorage.getItem('tome_master_local_mode') === 'true' : false;
+    const provider = providerOverride || 'slot_primary';
+    const apiKey = '';
+    const local_mode = getPref<boolean>('local_mode', false);
 
     const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/moodboard`, {
         method: "POST",
@@ -436,9 +618,9 @@ export async function fetchMoodboard(text: string, providerOverride?: string, mo
 }
 
 export async function checkWorldBible(text: string, providerOverride?: string, modelOverride?: string) {
-    const provider = providerOverride || (typeof window !== 'undefined' ? (localStorage.getItem('tome_master_active_slot') || 'slot_primary') : 'slot_primary');
-    const apiKey = typeof window !== 'undefined' ? (secureVault.load()[provider] || '') : '';
-    const local_mode = typeof window !== 'undefined' ? localStorage.getItem('tome_master_local_mode') === 'true' : false;
+    const provider = providerOverride || 'slot_primary';
+    const apiKey = '';
+    const local_mode = getPref<boolean>('local_mode', false);
 
     const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/world-bible`, {
         method: "POST",
@@ -606,6 +788,68 @@ export async function fetchVaultSync(): Promise<Record<string, string>> {
     }
 }
 
+// ─── Files-only persistence (replaces browser IndexedDB/localStorage) ──────────
+
+/** Persists the full manuscript document to tome_master_project.json in the
+ *  project folder (or the backend's default workspace when folder is null). */
+export async function saveProjectState(folder: string | null, state: Record<string, unknown>): Promise<boolean> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/document/project/save`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_path: folder || null, state })
+        });
+        if ('isNetworkError' in res) return false;
+        return (res as Response).ok;
+    } catch (e) {
+        return false;
+    }
+}
+
+/** Reads the manuscript document back from the project folder ({} if none). */
+export async function loadProjectState(folder: string | null): Promise<Record<string, unknown>> {
+    try {
+        const qs = folder ? `?project_path=${encodeURIComponent(folder)}` : '';
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/document/project/load${qs}`);
+        if ('isNetworkError' in res) return {};
+        const r = res as Response;
+        if (!r.ok) return {};
+        const data = await r.json();
+        return (data && data.state) || {};
+    } catch (e) {
+        return {};
+    }
+}
+
+/** Global preferences from the encrypted vault (theme/language/etc.). */
+export async function getPreferences(): Promise<Record<string, unknown>> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/settings/`);
+        if ('isNetworkError' in res) return {};
+        const r = res as Response;
+        if (!r.ok) return {};
+        const data = await r.json();
+        return (data && data.preferences) || {};
+    } catch (e) {
+        return {};
+    }
+}
+
+/** Patch global preferences into the vault (merged server-side). */
+export async function updatePreferences(patch: Record<string, unknown>): Promise<boolean> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/settings/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ preferences: patch })
+        });
+        if ('isNetworkError' in res) return false;
+        return (res as Response).ok;
+    } catch (e) {
+        return false;
+    }
+}
+
 export async function saveVaultToEnv(keys: Record<string, string>): Promise<boolean> {
     try {
         const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/vault-save`, {
@@ -621,10 +865,58 @@ export async function saveVaultToEnv(keys: Record<string, string>): Promise<bool
     }
 }
 
+/** Fetches a head…tail masked preview of the STORED key (e.g. "AIza...5KkA") so
+ *  the user can verify what's actually in the vault and catch a wrong value.
+ *  Raw keys never cross the wire — this is the masked form only. '' = not set. */
+export async function fetchStoredKeyPreview(provider: string): Promise<string> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/settings/keys/${provider}`);
+        if ('isNetworkError' in res) return '';
+        const r = res as Response;
+        if (!r.ok) return '';
+        const data = await r.json();
+        return data.key_masked && data.key_masked !== 'NOT_FOUND' ? data.key_masked : '';
+    } catch (e) {
+        return '';
+    }
+}
+
+/** Blanks one provider's stored key in the vault so the user can recover from a
+ *  wrong value (e.g. a password pasted into the key field). */
+export async function clearVaultKey(provider: string): Promise<boolean> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/vault-clear`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider })
+        });
+        if ('isNetworkError' in res) return false;
+        return (res as Response).ok;
+    } catch (e) {
+        return false;
+    }
+}
+
+/** Live-validate stored keys; backend prunes any the provider definitively
+ *  rejects. Returns which providers are valid + which were pruned (stale). */
+export async function validateVaultKeys(): Promise<{ validity: Record<string, boolean>; pruned: string[] }> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/vault-validate`, { method: 'POST' });
+        if ('isNetworkError' in res) return { validity: {}, pruned: [] };
+        const r = res as Response;
+        if (!r.ok) return { validity: {}, pruned: [] };
+        return await r.json();
+    } catch {
+        return { validity: {}, pruned: [] };
+    }
+}
+
 export interface DiscoveredModel {
     id: string;
     name: string;
     description: string;
+    trait?: string;     // primary-trait label (Thinking/Analysis/Fast/Visual/General)
+    quality?: number;   // coarse quality score (best-first ranking)
 }
 
 /**
@@ -633,7 +925,10 @@ export interface DiscoveredModel {
  */
 export async function fetchAvailableModels(provider: string): Promise<DiscoveredModel[]> {
     try {
-        const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/models?provider=${encodeURIComponent(provider)}`);
+        // Gemini's live SDK model-list can take ~15-20s on a cold call — give discovery
+        // a generous timeout so it isn't dropped by the default 15s (which left Gemini
+        // missing from the boardroom picker while faster providers loaded).
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/models?provider=${encodeURIComponent(provider)}`, {}, 35000);
         if ('isNetworkError' in res) return [];
         const response = res as Response;
         if (!response.ok) return [];
@@ -641,6 +936,82 @@ export async function fetchAvailableModels(provider: string): Promise<Discovered
         return data.models || [];
     } catch (e) {
         return [];
+    }
+}
+
+// ─── Wave 2: local engines + custom OpenAI-compatible endpoints ──────────────
+
+export interface LocalEngine {
+    name: string;
+    base: string;
+    models: string[];
+}
+
+/** Auto-detect OpenAI-compatible engines on localhost (keyless, sub-second). */
+export async function fetchLocalEngines(): Promise<LocalEngine[]> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/local-engines`);
+        if ('isNetworkError' in res) return [];
+        const response = res as Response;
+        if (!response.ok) return [];
+        const data = await response.json();
+        return data.engines || [];
+    } catch {
+        return [];
+    }
+}
+
+export interface CustomProvider {
+    label: string;
+    base_url: string;
+    key?: string;
+}
+
+/** Persist the full custom-provider list to the encrypted vault. */
+export async function saveCustomProviders(list: CustomProvider[]): Promise<boolean> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/settings/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ custom_providers: list }),
+        });
+        if ('isNetworkError' in res) return false;
+        return (res as Response).ok;
+    } catch {
+        return false;
+    }
+}
+
+/** Load saved custom providers (keys come back masked). */
+export async function fetchCustomProviders(): Promise<CustomProvider[]> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/settings/`);
+        if ('isNetworkError' in res) return [];
+        const response = res as Response;
+        if (!response.ok) return [];
+        const data = await response.json();
+        return data.custom_providers || [];
+    } catch {
+        return [];
+    }
+}
+
+/** Validate a custom OpenAI-compatible endpoint and return its live model list. */
+export async function validateCustomEndpoint(
+    base_url: string,
+    key: string,
+): Promise<{ success: boolean; message: string; models: string[] }> {
+    try {
+        const res = await safeFetch(`${API_BASE_HOLDER.current}/analysis/validate-key`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider: 'openai-compatible', api_key: key, custom_url: base_url }),
+        });
+        if ('isNetworkError' in res) return { success: false, message: 'Network unreachable', models: [] };
+        const data = await (res as Response).json();
+        return { success: !!data.success, message: data.message || '', models: data.models || [] };
+    } catch (e) {
+        return { success: false, message: String(e), models: [] };
     }
 }
 
@@ -653,9 +1024,13 @@ export async function checkSystemHealth(): Promise<{ backend: boolean; vault: bo
         if (res.ok) health.backend = true;
     } catch (e) { }
 
-    // 2. Vault Check
-    const keys = secureVault.load();
-    if (keys && Object.keys(keys).length > 0) health.vault = true;
+    // 2. Vault Check — keys live backend-side now, so ask the backend for
+    // presence booleans. (secureVault is a deprecated stub returning {}, which
+    // left this light permanently red.)
+    try {
+        const presence = await fetchVaultSync();
+        if (presence && Object.values(presence).some(Boolean)) health.vault = true;
+    } catch (e) { }
 
     // 3. Ollama Check (Optional/Local)
     try {

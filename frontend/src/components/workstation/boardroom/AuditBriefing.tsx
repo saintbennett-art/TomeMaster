@@ -2,7 +2,16 @@
 import React from "react";
 import { Activity, Users, Info } from "lucide-react";
 
-export const AuditBriefing = ({ data, onConfirm, onCancel }) => (
+interface AuditBriefingProps {
+    data: {
+        weight: number;
+        assignments: { agent?: string; funded: boolean; recommended?: string }[];
+    };
+    onConfirm: () => void;
+    onCancel: () => void;
+}
+
+export const AuditBriefing = ({ data, onConfirm, onCancel }: AuditBriefingProps) => (
     <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-black/80 backdrop-blur-xl animate-in fade-in duration-500">
         <div className="bg-[#0c0c0c] border border-indigo-500/30 rounded-3xl p-8 w-full max-w-2xl shadow-2xl relative overflow-hidden">
             <div className="flex items-center gap-3 mb-6">

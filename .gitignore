@@ -25,11 +25,29 @@ project_ledger.json
 *.webp
 
 # Secrets & machine-bound licenses — NEVER commit these
+.env
+.env.*
 backend/.env
+# Per-launch loopback handshake signals (session token / claimed port)
+.sovereign_session
+.sovereign_port
 backend/*.lic
 *.lic
 backend/settings.json
 backend/settings.json.bak
+
+# Diagnostic / audit artifacts — may contain keys or full request payloads.
+# These are throwaway tool output; never commit (root cause of past leak risk).
+backend/audit_*.json
+backend/boardroom_audits_*/
+backend/handshake_forensics.txt
+backend/last_export_req.txt
+backend/last_export_error.txt
+backend/authorized_portfolio.txt
+backend/files.txt
+backend/files_clean.txt
+engine_p*.txt
+Gemini models from key
 
 # OS generated files
 .DS_Store
@@ -49,3 +67,13 @@ Gemini_history.txt
 
 # Windows artifacts
 *.lnk
+
+# Runtime port-handshake signals (written/deleted by the launcher + run.py)
+.sovereign_port
+.frontend_port
+
+# Local Claude Code config (machine-specific, not project source)
+.claude/
+
+# Frontend static export served by the backend (build output)
+backend/static/

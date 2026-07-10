@@ -14,6 +14,9 @@ class AuditResolutionRequest(BaseModel):
     page_number: str
     apply_offset: bool = False
 
+class OffsetRequest(BaseModel):
+    delta: int
+
 class PipelineRequest(BaseModel):
     """Request body for the CrewAI pipeline endpoint."""
     folder_path: str = "./test_batch"
@@ -25,15 +28,28 @@ class PipelineRequest(BaseModel):
 # so the frontend can poll /status regardless of which was used.
 # ─────────────────────────────────────────────────────────
 
+from services.security import validate_project_path
+
 @router.get("/ingest")
-async def ingest_project_baseline(folder_path: str):
-    """[LEDGER]: Ingests the project baseline and hydrates the UI."""
-    success = transcriber_service.ingest_project_baseline(folder_path)
+def ingest_project_baseline(folder_path: str):
+    """[LEDGER]: Ingests the project baseline and hydrates the UI.
+
+    SYNC def: acquires the blocking TRANSCRIPTION_LOCK; as async it would freeze
+    the event loop. FastAPI runs sync defs in a threadpool.
+    """
+    safe_path = validate_project_path(folder_path)
+    success = transcriber_service.ingest_project_baseline(safe_path)
     return {"status": "success" if success else "failed"}
 
 @router.get("/status")
-async def get_transcription_status(summary: bool = False):
-    """[LEDGER]: Polls the global state and delivers new pages to the UI."""
+def get_transcription_status(summary: bool = False):
+    """[LEDGER]: Polls the global state and delivers new pages to the UI.
+
+    SYNC def (CRITICAL): the frontend polls this continuously, and it holds the
+    blocking TRANSCRIPTION_LOCK. As an async endpoint, every poll competing for
+    the lock with a busy worker thread froze the entire event loop (backend
+    'disconnects'). Sync → threadpool → the loop stays free.
+    """
     with transcriber_service.TRANSCRIPTION_LOCK:
         state = dict(transcriber_service.TRANSCRIPTION_STATE)
         
@@ -55,6 +71,11 @@ def start_transcription(req: TranscribeRequestSchema):
     """Triggers the OCR background thread. All provider/model/key config resolved from Settings vault."""
     from services import settings_service
 
+    # [GUARDRAIL]: A caller-supplied folder must live under the user's home tree.
+    # (Empty/None falls through to the native folder picker.)
+    if req.folder_path:
+        req.folder_path = validate_project_path(req.folder_path)
+
     # [SOVEREIGN DISCOVERY]: Resolve vision engine from the user's configured vault
     # The API key in settings determines the provider and model — nothing is hardcoded.
     vision_model  = settings_service.get_preferred_model("TRANSCRIBER_LEAD") or \
@@ -63,16 +84,37 @@ def start_transcription(req: TranscribeRequestSchema):
     provider      = vision_config.get("provider", "gemini")
     api_key       = vision_config.get("key", "")
     model         = vision_config.get("model", vision_model)
+    # Engine endpoint for local/custom providers (Ollama, llama.cpp, user URLs) —
+    # without it the OCR dispatcher cannot reach a local vision model.
+    base_url      = vision_config.get("url", "")
+
+    # [SOVEREIGN LOCK]: locked to local but no local VISION engine for OCR — tell
+    # the user plainly (the UI can offer install / switch-to-Industrial from this).
+    if provider == "sovereign_blocked":
+        return {
+            "status": "blocked",
+            "reason": "sovereign_lock",
+            "message": (
+                "Sovereign Lock is ON and no local VISION model is installed for OCR. "
+                "Install a vision model (e.g. moondream or llava) via Ollama, or turn off "
+                "Sovereign Lock to use cloud transcription."
+            ),
+        }
 
     # [FALLBACK CHAIN]: Velocity Engine (Groq) as spectrum fallback
     fallback_config   = settings_service.get_model_for_role("COPY_EDITOR")  # closest to velocity
     fallback_provider = "groq"
     fallback_key      = settings_service.get_api_key("groq")
     fallback_model    = settings_service.get_preferred_model("logic")
+    # Groq is cloud and self-supplies its endpoint in the client factory, so no
+    # base_url is needed here. The arg is threaded through anyway so a future
+    # LOCAL fallback engine would keep its endpoint instead of silently losing it.
+    fallback_base_url = ""
 
     success, used_folder = transcriber_service.start_transcription_background(
         api_key, provider, req.folder_path, req.reset_cache, req.mode, model,
-        fallback_provider=fallback_provider, fallback_model=fallback_model
+        fallback_provider=fallback_provider, fallback_model=fallback_model,
+        base_url=base_url, fallback_base_url=fallback_base_url,
     )
     if not success:
         return {"status": "cancelled"}
@@ -84,22 +126,72 @@ def clear_transcription():
     transcriber_service.clear_transcription_state()
     return {"status": "cleared"}
 
+@router.post("/abort")
+def abort_transcription(mode: str = "current"):
+    """[DIRECTORIAL HALT]: Signals the running job to stop at the next safe point.
+
+    mode='current' — stop the active job, keep project state on disk.
+    mode='all'     — stop the job AND wipe in-memory + disk state for a fresh start.
+
+    The abort event is checked by worker threads between pages/phases; a phase
+    already in flight (e.g. a single model call) finishes before the stop takes
+    effect.
+    """
+    from services.transcriber_service import (
+        TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK, TRANSCRIPTION_ABORT,
+    )
+
+    TRANSCRIPTION_ABORT.set()
+
+    with TRANSCRIPTION_LOCK:
+        was_active = TRANSCRIPTION_STATE.get("status") in (
+            "running", "indexing", "processing", "stitching"
+        )
+        TRANSCRIPTION_STATE["status"] = "idle"
+        TRANSCRIPTION_STATE["error_message"] = (
+            "Transcription aborted by user." if was_active
+            else "No transcription was running; state reset."
+        )
+
+    if mode == "all":
+        transcriber_service.clear_transcription_state()
+
+    return {"status": "aborted", "mode": mode, "was_active": was_active}
+
 @router.post("/resolve")
 def resolve_audit(req: AuditResolutionRequest):
     """Resumes a paused transcription after user input."""
     success = transcriber_service.resolve_audit_input(req.page_number, req.apply_offset)
     return {"status": "success" if success else "failed"}
 
+@router.post("/offset")
+def set_offset(req: OffsetRequest):
+    """Adjusts the global page numbering offset."""
+    transcriber_service.set_transcription_offset(req.delta)
+    return {"status": "offset_applied"}
+
 @router.get("/resort")
-async def resort_manuscript_get(folder_path: str):
-    """Triggers manuscript unification."""
+def resort_manuscript_get(folder_path: str):
+    """Triggers manuscript unification (background thread).
+
+    SYNC def: holds TRANSCRIPTION_LOCK; async would block the event loop.
+    """
+    import glob
     import threading
     from services.transcriber_service import TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK
+    safe_path = validate_project_path(folder_path)
+
+    rtfs = glob.glob(os.path.join(safe_path, "*.rtf"))
+    src_subdir = os.path.join(safe_path, "_manuscript_source")
+    if os.path.exists(src_subdir):
+        rtfs.extend(glob.glob(os.path.join(src_subdir, "*.rtf")))
+
     with TRANSCRIPTION_LOCK:
         TRANSCRIPTION_STATE["status"] = "stitching"
-        TRANSCRIPTION_STATE["error_message"] = "Assembling manuscript from root artifacts..."
+        TRANSCRIPTION_STATE["error_message"] = f"Assembling manuscript: {len(rtfs)} pages ready for unification..."
+
     if not transcriber_service._stitching_active.is_set():
-        thread = threading.Thread(target=transcriber_service.resort_from_cache, args=(folder_path,))
+        thread = threading.Thread(target=transcriber_service.resort_from_cache, args=(safe_path,))
         thread.daemon = True
         thread.start()
     return {"status": "stitching"}
@@ -116,7 +208,9 @@ async def resort_manuscript_get(folder_path: str):
 
 def _run_pipeline_thread(folder_path: str):
     """Background thread: runs the full CrewAI TomeMasterPipeline."""
-    from services.transcriber_service import TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK
+    from services.transcriber_service import (
+        TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK, TRANSCRIPTION_ABORT,
+    )
 
     # Set initial state so the frontend shows progress
     with TRANSCRIPTION_LOCK:
@@ -134,12 +228,30 @@ def _run_pipeline_thread(folder_path: str):
         if src_path not in sys.path:
             sys.path.insert(0, src_path)
 
-        from tomemaster.main import TomeMasterPipeline, TomeMasterState
+        try:
+            from tomemaster.main import TomeMasterPipeline, TomeMasterState
+        except ImportError as ie:
+            # [HONEST FAILURE]: The CrewAI pipeline is an optional dependency.
+            # Surface a clear, actionable message instead of a raw module error.
+            with TRANSCRIPTION_LOCK:
+                TRANSCRIPTION_STATE["status"] = "error"
+                TRANSCRIPTION_STATE["error_message"] = (
+                    "Transcription engine unavailable: the CrewAI pipeline "
+                    f"dependency is not installed ({ie}). "
+                    "Run: backend\\venv\\Scripts\\pip install \"crewai[tools]\""
+                )
+            return
 
         # Override the default folder_path with the user's request
         pipeline = TomeMasterPipeline()
         pipeline.state = TomeMasterState(folder_path=folder_path)
         pipeline.kickoff()
+
+        # [ABORT CHECK]: If the user aborted while the pipeline was in flight,
+        # honor it — leave the state as the abort endpoint set it.
+        if TRANSCRIPTION_ABORT.is_set():
+            print("PIPELINE: Abort honored — discarding in-flight results.")
+            return
 
         # Pipeline complete — update state with final results
         with TRANSCRIPTION_LOCK:
@@ -157,6 +269,11 @@ def _run_pipeline_thread(folder_path: str):
 
     except Exception as e:
         import traceback
+        # An abort can surface as an exception mid-pipeline — the user's stop
+        # request wins over the error report.
+        if TRANSCRIPTION_ABORT.is_set():
+            print("PIPELINE: Abort honored during failure unwind.")
+            return
         with TRANSCRIPTION_LOCK:
             TRANSCRIPTION_STATE["status"] = "error"
             TRANSCRIPTION_STATE["error_message"] = f"Pipeline error: {str(e)}"
@@ -179,6 +296,8 @@ def start_pipeline(req: PipelineRequest):
     ui_sync_callback writes progress to the shared TRANSCRIPTION_STATE.
     """
     from services.transcriber_service import TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK
+
+    req.folder_path = validate_project_path(req.folder_path)
 
     with TRANSCRIPTION_LOCK:
         if TRANSCRIPTION_STATE.get("status") == "running":

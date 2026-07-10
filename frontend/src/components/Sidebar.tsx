@@ -4,6 +4,7 @@ import { FileText, Settings, BarChart2, Scroll, RefreshCw, HelpCircle, Activity 
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 import { checkSystemHealth } from '@/lib/apiClient';
 import { Chapter, ArcPoint } from '@/types/industrial';
+import { isFrontMatter } from '@/lib/chapters';
 
 interface SidebarProps {
   chapters: Chapter[];
@@ -173,8 +174,9 @@ function Sidebar({
                         {chapters.length > 0 ? (
                         chapters
                             .filter((chap: Chapter, i: number) => {
+                                if (isFrontMatter(chap)) return false; // skip title page, prelude, TOC, dedication, etc.
                                 const title = (chap.original_heading || chap.suggested_title || "").toLowerCase();
-                                if (title.includes('epilogue') || title.includes('prologue') || title.includes('prelude')) return true;
+                                if (title.includes('epilogue') || title.includes('prologue')) return true;
                                 if ((chap.chapter_word_count || 0) < 30) return false;
                                 if (i < 2 && (chap.chapter_word_count || 0) < 250) return false;
                                 return true;
@@ -184,7 +186,7 @@ function Sidebar({
                                 key={i} 
                                 onMouseEnter={() => ambientNotify(`Scrolling to ${chap.suggested_title || 'Chapter'}. Duration: ${chap.reading_time_mins || 1} minutes.`)}
                                 onClick={(e) => {
-                                    onChapterClick?.(chap.startingWords || "");
+                                    onChapterClick?.(chap.startingWords || chap.starting_words || "");
                                     e.currentTarget.scrollIntoView({ behavior: 'smooth', block: 'start' });
                                 }}
                                 className="text-xs py-2.5 pl-3 border-l-2 border-[#1a1a1a] hover:border-indigo-500/50 text-zinc-400 hover:text-zinc-100 cursor-pointer ml-2 transition-all mt-1 flex justify-between items-start pr-3 group hover:bg-white/5 rounded-r-md"

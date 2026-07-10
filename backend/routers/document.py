@@ -6,6 +6,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 from services import exporter, transcriber_service
+from services import export_fountain, export_fdx, export_odt
 from services.parsers import (
     parse_txt,
     parse_docx,
@@ -17,13 +18,13 @@ from services.parsers import (
 
 logger = logging.getLogger(__name__)
 
-def _safe_folder(folder_path: str) -> str:
-    """Validates that folder_path resolves inside the user's home directory."""
-    resolved = os.path.realpath(os.path.abspath(folder_path))
-    home = os.path.realpath(os.path.expanduser("~"))
-    if not resolved.startswith(home + os.sep) and resolved != home:
-        raise HTTPException(status_code=403, detail="Path outside permitted directory.")
-    return resolved
+# [SHARED GUARDRAIL]: One canonical path validator + upload-size guard for every router.
+from services.security import (
+    validate_project_path as _safe_folder,
+    read_upload_capped,
+    read_upload_capped_sync,
+    MAX_UPLOAD_BYTES,
+)
 
 router = APIRouter()
 
@@ -33,7 +34,7 @@ async def upload_document(file: UploadFile = File(...), api_key: str = "", is_de
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file uploaded")
     
-    content = await file.read()
+    content = await read_upload_capped(file)
     text = ""
     html = ""
     toc = []
@@ -93,8 +94,8 @@ async def upload_document_stream(file: UploadFile = File(...), api_key: str = ""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file uploaded")
     
-    content = await file.read()
-    
+    content = await read_upload_capped(file)
+
     # If it's a Txt or Docx we just return it immediately as a single 'done' packet because they resolve in milliseconds anyway!
     if not file.filename.lower().endswith(".pdf"):
         # We invoke standard handling, then yield the final state!
@@ -107,7 +108,16 @@ async def upload_document_stream(file: UploadFile = File(...), api_key: str = ""
             text = parsed["text"]
             html = parsed["html"]
             toc = parsed["toc"]
-        
+        else:
+            # [FIX]: Anything else previously fell through with text/html/toc
+            # unassigned -> UnboundLocalError -> raw 500. Mirror /upload's
+            # friendly rejection instead.
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported format: '{file.filename}'. Streaming upload supports .txt, .docx, and .pdf. "
+                       "If you are using an older Word 97 (.doc) file, please 'Save As' .docx and try again."
+            )
+
         if is_demo:
             truncated = truncate_for_demo({"text": text, "html": html, "toc": toc})
             text = truncated["text"]
@@ -197,88 +207,104 @@ async def export_epub(req: ExportRequest):
         logger.error("EPUB export error:\n%s", traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
-class TranscriptionRequest(BaseModel):
-    api_key: str = ""
-    provider: str = "gemini"
-    folder_path: Optional[str] = None
-    reset_cache: bool = False
-    mode: str = "batch"
-    model: Optional[str] = None
-    fallback_provider: Optional[str] = None
-    fallback_model: Optional[str] = None
 
-class AuditResolutionRequest(BaseModel):
-    page_number: str
-    apply_offset: bool = False
+# ─── Lightweight text formats: Markdown / RTF / HTML / Plain text ─────────────
+# Same ExportRequest payload as docx/pdf/epub; each delegates to exporter.generate_*.
+# A small table keeps the route bodies identical so adding a format is one entry.
+_TEXT_EXPORTS = {
+    "md":   (lambda req: exporter.generate_markdown(req.content, req.chapters, req.title, req.author, req.format, req.cover_image),
+             "text/markdown; charset=utf-8", "md", "Markdown"),
+    "html": (lambda req: exporter.generate_html(req.content, req.chapters, req.title, req.author, req.format, req.cover_image),
+             "text/html; charset=utf-8", "html", "HTML"),
+    "rtf":  (lambda req: exporter.generate_rtf(req.content, req.chapters, req.title, req.author, req.format, req.cover_image),
+             "application/rtf", "rtf", "RTF"),
+    "txt":  (lambda req: exporter.generate_txt(req.content, req.chapters, req.title, req.author, req.format, req.cover_image),
+             "text/plain; charset=utf-8", "txt", "Plain text"),
+    "fountain": (lambda req: export_fountain.generate_fountain(req.content, req.chapters, req.title, req.author, req.format, req.cover_image),
+             "text/plain; charset=utf-8", "fountain", "Fountain"),
+    "fdx":  (lambda req: export_fdx.generate_fdx(req.content, req.chapters, req.title, req.author, req.format, req.cover_image),
+             "application/xml; charset=utf-8", "fdx", "Final Draft"),
+    "odt":  (lambda req: export_odt.generate_odt(req.content, req.chapters, req.title, req.author, req.format, req.cover_image),
+             "application/vnd.oasis.opendocument.text", "odt", "OpenDocument"),
+}
 
-class OffsetRequest(BaseModel):
-    delta: int
 
-@router.post("/transcribe/start")
-def start_transcription(req: TranscriptionRequest):
-    """Drops a native folder picker over the browser and triggers the OCR background thread."""
-    # Pass the AI key and provider explicitly provided by the React Settings modal
-    success, used_folder = transcriber_service.start_transcription_background(
-        req.api_key, req.provider, req.folder_path, req.reset_cache, req.mode, req.model,
-        fallback_provider=req.fallback_provider, fallback_model=req.fallback_model
-    )
-    if not success:
-        return {"status": "cancelled"}
-    return {"status": "started", "folder_path": used_folder}
+def _run_text_export(kind: str, req: "ExportRequest"):
+    if not req.content:
+        raise HTTPException(status_code=400, detail="Content is required")
+    generate, media_type, ext, label = _TEXT_EXPORTS[kind]
+    try:
+        stream = generate(req)
+        safe_title = str(req.title).replace('"', '').replace('\n', '').replace('\r', '')
+        return StreamingResponse(
+            stream,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{safe_title}.{ext}"'},
+        )
+    except Exception as e:
+        logger.error("%s export error:\n%s", label, traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/transcribe/clear")
-def clear_transcription():
-    """Wipes the current transcription state for a fresh project start."""
-    transcriber_service.clear_transcription_state()
-    return {"status": "cleared"}
 
-@router.post("/transcribe/resolve")
-def resolve_audit(req: AuditResolutionRequest):
-    """Resumes a paused transcription after user input."""
-    success = transcriber_service.resolve_audit_input(req.page_number, req.apply_offset)
-    return {"status": "success" if success else "failed"}
+@router.post("/export/md")
+async def export_md(req: ExportRequest):
+    """Exports the manuscript to CommonMark Markdown (.md)."""
+    return _run_text_export("md", req)
 
-@router.post("/transcribe/offset")
-def set_offset(req: OffsetRequest):
-    """Adjusts the global page numbering offset."""
-    transcriber_service.set_transcription_offset(req.delta)
-    return {"status": "offset_applied"}
 
-@router.get("/transcribe/status")
-async def get_transcription_status(summary: bool = False):
-    """
-    Polls the global state. 
-    'summary=True' strips the massive 'text' and 'pages' fields for HUD performance,
-    but includes 'new_pages' from the stream buffer for the editor.
-    """
-    with transcriber_service.TRANSCRIPTION_LOCK:
-        state = dict(transcriber_service.TRANSCRIPTION_STATE)
-        
-        # [SMART STREAM]: Destructive fetch of the buffer
-        buffer = state.get("stream_buffer", [])
-        transcriber_service.TRANSCRIPTION_STATE["stream_buffer"] = []
-        
-        if summary:
-            # Drop heavy data for lightweight polling
-            state.pop("text", None)
-            state.pop("pages", None)
-            # Add the incremental updates
-            state["new_pages"] = buffer
-            
-        return state
+@router.post("/export/html")
+async def export_html(req: ExportRequest):
+    """Exports the manuscript to a self-contained HTML file (.html)."""
+    return _run_text_export("html", req)
 
-@router.post("/transcribe/resort")
-async def resort_manuscript_post(req: TranscriptionRequest):
-    """Triggers a physical re-sort of the manuscript from the cache."""
-    safe_path = _safe_folder(req.folder_path) if req.folder_path else None
-    success = transcriber_service.resort_from_cache(safe_path)
-    if success:
-        return {"status": "success"}
-    return {"status": "failed", "message": "Cache not found or corrupt."}
+
+@router.post("/export/rtf")
+async def export_rtf(req: ExportRequest):
+    """Exports the manuscript to Rich Text Format (.rtf)."""
+    return _run_text_export("rtf", req)
+
+
+@router.post("/export/txt")
+async def export_txt(req: ExportRequest):
+    """Exports the manuscript to plain UTF-8 text (.txt)."""
+    return _run_text_export("txt", req)
+
+
+@router.post("/export/fountain")
+async def export_fountain_route(req: ExportRequest):
+    """Exports the manuscript to Fountain screenplay plain text (.fountain)."""
+    return _run_text_export("fountain", req)
+
+
+@router.post("/export/fdx")
+async def export_fdx_route(req: ExportRequest):
+    """Exports the manuscript to Final Draft XML (.fdx)."""
+    return _run_text_export("fdx", req)
+
+
+@router.post("/export/odt")
+async def export_odt_route(req: ExportRequest):
+    """Exports the manuscript to OpenDocument Text (.odt)."""
+    return _run_text_export("odt", req)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [CONSOLIDATED]: The /transcribe/* endpoints that used to live here (start,
+# clear, resolve, offset, status, resort, ingest) were duplicates of
+# routers/transcribe.py with drifted behavior — notably, two status endpoints
+# destructively drained the same stream_buffer, losing pages for whichever
+# poller arrived second. The canonical surface is /api/v1/transcribe/*.
+# This router keeps document concerns only: upload, export, target, load,
+# read, photo.
+# ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/target")
-async def target_project_folder():
-    """Directorial Target: Invokes the native folder picker and returns the selected path to the UI."""
+def target_project_folder():
+    """Directorial Target: Invokes the native folder picker and returns the selected path to the UI.
+
+    SYNC def (not async): pick_directory() opens a BLOCKING native dialog. As an
+    async endpoint it would freeze the whole event loop (backend appears to
+    'disconnect' / picker never reopens). FastAPI runs sync defs in a threadpool.
+    """
     folder = transcriber_service.pick_directory()
     if not folder:
         return {"status": "cancelled", "folder_path": None}
@@ -286,8 +312,13 @@ async def target_project_folder():
     return {"status": "targeted", "folder_path": folder}
 
 @router.get("/load")
-async def load_manuscript_picker():
-    """Manuscript Load: Invokes native file picker and targets project to its directory."""
+def load_manuscript_picker():
+    """Manuscript Load: Invokes native file picker and targets project to its directory.
+
+    SYNC def (not async): pick_file() opens a BLOCKING native dialog; as an async
+    endpoint it freezes the event loop (blank screen, picker won't reopen, backend
+    'disconnects'). FastAPI runs sync defs in a threadpool so the loop stays free.
+    """
     file_path = transcriber_service.pick_file()
     if not file_path:
         return {"status": "cancelled", "file_path": None}
@@ -309,15 +340,104 @@ async def load_manuscript_picker():
         "is_parseable": is_parseable  # Frontend uses this to skip "Click Transcribe" gate
     }
 
+@router.post("/upload-to-project")
+def upload_to_project(file: UploadFile = File(...)):
+    """[BROWSER LOAD — FULL FIDELITY]: Saves an uploaded manuscript to a real
+    on-disk project folder and returns the SAME shape as /document/load, so
+    browser mode reuses the *entire* native load+transcribe pipeline — every
+    format the desktop picker supported (.txt/.md/.doc/.docx/.wpd/.wps/.odt/.pdf,
+    incl. legacy Word/WordPerfect via legacy_parser) — with no capability loss.
+
+    SYNC def (not async): the file write + parseable probe are blocking, so they
+    run in FastAPI's threadpool, never freezing the event loop. The frontend's
+    invokeTranscription does the actual ingestion/parsing afterward.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file uploaded")
+
+    base = os.path.join(os.path.expanduser("~"), "TomeMaster", "Uploads")
+    os.makedirs(base, exist_ok=True)
+    safe_name = os.path.basename(file.filename)
+    dest = os.path.join(base, safe_name)
+
+    data = read_upload_capped_sync(file)   # sync, size-capped read of the spooled upload
+    with open(dest, "wb") as fh:
+        fh.write(data)
+
+    dest_norm = dest.replace("\\", "/")
+    from services.transcriber import vision_processor
+    is_parseable = vision_processor.is_parseable_document(dest_norm)
+
+    return {
+        "status": "loaded",
+        "file_path": dest_norm,
+        "folder_path": base.replace("\\", "/"),
+        "filename": safe_name,
+        "is_parseable": is_parseable,
+    }
+
+class ProjectSaveRequest(BaseModel):
+    state: dict
+    project_path: Optional[str] = None
+
+
+@router.post("/project/save")
+def save_project(req: ProjectSaveRequest):
+    """[FILES-ONLY PERSISTENCE]: Saves the full manuscript document (draft html/text,
+    TOC, analysis artifacts, metadata) to tome_master_project.json in the project
+    folder — replacing browser IndexedDB. Falls back to ~/TomeMaster/Workspace for
+    drafts with no active folder yet. Every path goes through the home-dir guard."""
+    from services import persistence_service
+
+    target = req.project_path or persistence_service.default_workspace_dir()
+    safe = _safe_folder(target)
+    ok = persistence_service.save_project_state(safe, req.state or {})
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to write project state.")
+    return {"status": "saved", "folder_path": safe.replace("\\", "/")}
+
+
+@router.get("/project/load")
+def load_project(project_path: Optional[str] = None):
+    """[FILES-ONLY PERSISTENCE]: Reads the manuscript document back from the project
+    folder (or the default workspace). Returns {} when nothing is stored yet."""
+    from services import persistence_service
+
+    target = project_path or persistence_service.default_workspace_dir()
+    safe = _safe_folder(target)
+    return {"state": persistence_service.load_project_state(safe), "folder_path": safe.replace("\\", "/")}
+
+
+# [READ GUARD]: /read is a text-file viewer, not a general file-read primitive.
+# Session auth (main.py) already gates it against other local processes; this
+# also confines it to the manuscript/text formats it actually serves so it can't
+# be used to siphon arbitrary files under $HOME.
+_READABLE_EXTS = {".txt", ".md", ".rtf", ".html", ".htm", ".json", ".fountain"}
+
+
 @router.get("/read")
 async def read_local_file(path: str):
-    """Reads a local file and returns its content (text or html)."""
+    """Reads a local text/manuscript file and returns its content (text or html)."""
     safe_path = _safe_folder(os.path.dirname(path))
     full_path = os.path.join(safe_path, os.path.basename(path))
-    
+
+    ext = os.path.splitext(full_path)[1].lower()
+    if ext not in _READABLE_EXTS:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported file type '{ext or '(none)'}'. /read serves text formats only: "
+                   f"{', '.join(sorted(_READABLE_EXTS))}.",
+        )
+
     if not os.path.exists(full_path):
         raise HTTPException(status_code=404, detail="File not found")
-        
+
+    if os.path.getsize(full_path) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB read limit.",
+        )
+
     try:
         with open(full_path, "r", encoding="utf-8") as f:
             content = f.read()
@@ -331,38 +451,6 @@ async def read_local_file(path: str):
         return {"content": content}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/transcribe/ingest")
-async def ingest_project_baseline(folder_path: str):
-    """Ingests the project baseline."""
-    safe_path = _safe_folder(folder_path)
-    success = transcriber_service.ingest_project_baseline(safe_path)
-    return {"status": "success" if success else "failed"}
-
-@router.get("/transcribe/resort")
-async def resort_manuscript_get(folder_path: str):
-    """Triggers manuscript unification via GET (background thread)."""
-    import glob
-    import threading
-    from services.transcriber_service import TRANSCRIPTION_STATE, TRANSCRIPTION_LOCK
-
-    safe_path = _safe_folder(folder_path)
-
-    rtfs = glob.glob(os.path.join(safe_path, "*.rtf"))
-    src_subdir = os.path.join(safe_path, "_manuscript_source")
-    if os.path.exists(src_subdir):
-        rtfs.extend(glob.glob(os.path.join(src_subdir, "*.rtf")))
-    count = len(rtfs)
-
-    with TRANSCRIPTION_LOCK:
-        TRANSCRIPTION_STATE["status"] = "stitching"
-        TRANSCRIPTION_STATE["error_message"] = f"Assembling manuscript: {count} pages ready for unification..."
-
-    if not transcriber_service._stitching_active.is_set():
-        thread = threading.Thread(target=transcriber_service.resort_from_cache, args=(safe_path,))
-        thread.daemon = True
-        thread.start()
-    return {"status": "stitching"}
 
 @router.get("/photo")
 async def get_project_photo(folder_path: str, filename: str):

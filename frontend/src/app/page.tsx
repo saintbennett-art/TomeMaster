@@ -11,8 +11,8 @@ import NerveCenter from "@/components/NerveCenter";
 import StructuralAnalysisModal from "@/components/workstation/StructuralAnalysisModal";
 import AiEnhancementHub from "@/components/workstation/AiEnhancementHub";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
-import { performMasterMigration } from "@/lib/migration_gate";
-import { secureVault } from "@/lib/vault";
+import { purgeLegacyBrowserStorage } from "@/lib/migration_gate";
+import { loadPreferences, getPref, setPref } from "@/lib/preferences";
 import { useWorkstationState, useWorkstationActions } from "@/context/WorkstationContext";
 import { useEditorState } from "@/context/EditorContext";
 
@@ -23,9 +23,9 @@ export default function Home() {
 
   const { chapters, arcData } = useEditorState();
 
-  const { 
-    setIsFocusMode, setBookTitle, setAuthorName, 
-    setCoverImage, notify, establishProject
+  const {
+    setIsFocusMode, setBookTitle, setAuthorName,
+    setCoverImage, notify, establishProject, setIsReportOpen
   } = useWorkstationActions();
 
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(true);
@@ -47,17 +47,20 @@ export default function Home() {
       isOpen: false, feature: ''
   });
 
-  // 🛡️ MIGRATION GATE
+  // 🛡️ [FILES-ONLY]: purge any legacy browser-stored keys/vault/shadow on load.
   useEffect(() => {
-    performMasterMigration();
+    purgeLegacyBrowserStorage();
   }, []);
 
-  // Detect first load for onboarding
+  // [FILES-ONLY]: load global preferences from the vault, then derive onboarding /
+  // mode flags from them (no browser localStorage).
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-        const hasOnboarded = localStorage.getItem('tome_master_onboarded');
-        if (!hasOnboarded) setIsOnboardingOpen(true);
-    }
+    (async () => {
+        await loadPreferences();
+        if (!getPref<boolean>('onboarded', false)) setIsOnboardingOpen(true);
+        setForcePrimary(getPref<boolean>('force_primary', false));
+        setLocalMode(getPref<boolean>('local_mode', false));
+    })();
   }, []);
 
   // Load vault presence on mount — keys live in backend .env, not in browser
@@ -74,9 +77,19 @@ export default function Home() {
             if (Object.keys(masked).length > 0) {
                 setKeysState(masked);
             }
+
+            // [SETUP GATE]: if no cloud key is configured and the user isn't in local
+            // (Sovereign) mode, surface the startup setup screen so the app is usable.
+            const hasAnyKey = ['gemini', 'openai', 'anthropic', 'groq'].some(p => masked[p]);
+            await loadPreferences();
+            if (!hasAnyKey && getPref<boolean>('local_mode', false) !== true) {
+                setIsOnboardingOpen(true);
+            }
+
+            // [REMOVED]: the background validate-and-prune deleted VALID keys
+            // (the /models check false-negatives on some keys). SEALED now reflects
+            // vault presence only; the user manages keys manually. Never auto-delete.
         });
-        setForcePrimary(localStorage.getItem('tome_master_force_primary') === 'true');
-        setLocalMode(localStorage.getItem('tome_master_local_mode') === 'true');
     }
   }, []);
 
@@ -86,6 +99,15 @@ export default function Home() {
       const handleOpenSettings = () => setIsSettingsOpen(true);
       window.addEventListener('tome-master-open-settings', handleOpenSettings);
       return () => window.removeEventListener('tome-master-open-settings', handleOpenSettings);
+    }
+  }, []);
+
+  // Allow re-opening the AI setup / path-choice screen on demand.
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const handleOpenOnboarding = () => setIsOnboardingOpen(true);
+      window.addEventListener('tome-master-open-onboarding', handleOpenOnboarding);
+      return () => window.removeEventListener('tome-master-open-onboarding', handleOpenOnboarding);
     }
   }, []);
 
@@ -114,7 +136,7 @@ export default function Home() {
 
   // [SOVEREIGN]: Onboarding completion logic
   const handleOnboardingComplete = () => {
-    localStorage.setItem('tome_master_onboarded', 'true');
+    setPref('onboarded', true);
     setIsOnboardingOpen(false);
     window.dispatchEvent(new CustomEvent('tome-master-settings-changed'));
     notify("Industrial Architecture Established.");
@@ -152,7 +174,7 @@ export default function Home() {
         <Sidebar
           chapters={chapters}
           onChapterClick={handleChapterClick}
-          onAnalysisClick={() => setAnalysisTrigger(prev => prev + 1)}
+          onAnalysisClick={() => setIsReportOpen(true)}
           onSyncClick={() => setSyncTrigger(prev => prev + 1)}
           isOfflineMode={localMode}
           coverImage={coverImage}
@@ -179,11 +201,12 @@ export default function Home() {
 
       {/* Main content area */}
       <div className="flex-1 h-full min-w-0 flex flex-col">
-        <MainEditor 
+        <MainEditor
           scrollToText={scrollToText}
           onScrollComplete={() => setScrollToText(null)}
           onPreviewChapter={handleChapterClick}
           onCoverUpload={handleCoverUpload}
+          syncTrigger={syncTrigger}
         />
       </div>
 
@@ -211,7 +234,8 @@ export default function Home() {
         setKeys={handleSetKeys}
       />
       
-      <NerveCenter isLeftSidebarOpen={isLeftSidebarOpen} />
+      {/* Hide the Nerve Center bar while the path-choice / onboarding page is up. */}
+      {!isOnboardingOpen && <NerveCenter isLeftSidebarOpen={isLeftSidebarOpen} />}
       <StructuralAnalysisModal />
       <AiEnhancementHub />
     </div>

@@ -14,7 +14,6 @@ import { useWorkstationState, useWorkstationActions } from "@/context/Workstatio
 import { useEditorState, useEditorActions } from "@/context/EditorContext";
 import { API_BASE_HOLDER } from "@/lib/apiClient";
 import { Chapter } from "@/types/industrial";
-import { secureVault } from "@/lib/vault";
 
 const StructuralAnalysisModal = () => {
     const { 
